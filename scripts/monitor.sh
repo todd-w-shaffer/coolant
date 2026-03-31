@@ -48,7 +48,9 @@ tput civis 2>/dev/null
 
 # ─── Rendering helpers ───────────────────────────────────────
 
-cols() { tput cols 2>/dev/null || echo 60; }
+COLS=60
+refresh_cols() { COLS=$(tput cols 2>/dev/null || echo 60); }
+cols() { echo "$COLS"; }
 
 hr() {
   local w; w=$(cols)
@@ -268,9 +270,6 @@ render() {
     [[ -n "$_cpid" ]] && claude_pids+=("$_cpid")
   done < <(find_claude_pids)
 
-  # Clear and draw
-  clear
-
   # ── Header ──
   local now
   now=$(date '+%H:%M:%S')
@@ -338,8 +337,17 @@ render() {
 # ─── Main loop ────────────────────────────────────────────────
 
 main() {
+  # First frame: clear once to start clean
+  clear
   while true; do
-    render
+    # Cache terminal width before subshell capture
+    refresh_cols
+    # Render into buffer, then paint in one shot — no flash
+    local frame
+    frame=$(render)
+    tput home
+    printf '%s' "$frame"
+    tput ed
     # read with timeout doubles as our sleep — also catches 'q' to quit
     if read -rsn1 -t "$REFRESH" key 2>/dev/null; then
       [[ "$key" == "q" ]] && exit 0
