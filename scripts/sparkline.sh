@@ -150,6 +150,178 @@ sparkline_chart() {
   }'
 }
 
+# ─── Agent gauge renderer ────────────────────────────────────────
+
+# agent_gauge count max_slots width
+#   Renders a discrete braille fill bar: ⣿ for each agent, ⠂ for empty.
+#   Color thresholds: 0=dim, 1-2=green, 3-4=yellow, 5+=red
+agent_gauge() {
+  local count="${1:-0}" max_slots="${2:-8}" width="${3:-10}"
+
+  # Color by threshold
+  local color
+  if (( count == 0 )); then
+    color=$'\033[2m'
+  elif (( count <= 2 )); then
+    color=$'\033[32m'
+  elif (( count <= 4 )); then
+    color=$'\033[33m'
+  else
+    color=$'\033[31m'
+  fi
+
+  # Cap visual fill at width
+  local filled=$count
+  (( filled > width )) && filled=$width
+
+  local empty=$(( width - filled ))
+
+  local bar=""
+  local i
+  for (( i = 0; i < filled; i++ )); do
+    bar="${bar}⣿"
+  done
+  for (( i = 0; i < empty; i++ )); do
+    bar="${bar}⠂"
+  done
+
+  printf '%s%s%s' "$color" "$bar" "$_SP_RST"
+}
+
+# ─── Multi-trace line chart renderer ────────────────────────────
+
+# multitrace_chart rows width num_traces colors val1 val2 ...
+#   Renders a multi-trace LINE chart (not filled area) using braille.
+#   Colors: pipe-delimited ANSI escapes, e.g. "\033[32m|\033[31m"
+#   Values: flat list, first (width*2) belong to trace 0, next to trace 1, etc.
+multitrace_chart() {
+  local rows="$1" width="$2" num_traces="$3" colors="$4"
+  shift 4
+  local capacity=$(( width * 2 ))
+  local t i
+  for (( t = 0; t < num_traces; t++ )); do
+    for (( i = 0; i < capacity && $# > 0; i++ )); do
+      printf '%d %s\n' "$t" "$1"
+      shift
+    done
+  done | awk -v rows="$rows" -v width="$width" -v num_traces="$num_traces" -v colors="$colors" '
+  BEGIN {
+    split("1 2 4 64", left_bits)
+    split("8 16 32 128", right_bits)
+
+    capacity = width * 2
+    total_dots = rows * 4
+
+    dim = "\033[2m"
+    reset = "\033[0m"
+
+    # Parse colors
+    n_colors = split(colors, color_arr, "|")
+
+    # Initialize trace data to -1
+    for (t = 0; t < num_traces; t++) {
+      trace_count[t] = 0
+      for (i = 0; i < capacity; i++) {
+        raw[t, i] = -1
+      }
+    }
+  }
+  {
+    t = $1 + 0
+    v = $2 + 0
+    idx = trace_count[t]
+    raw[t, idx] = v
+    trace_count[t] = idx + 1
+  }
+  END {
+    # Right-align each trace
+    for (t = 0; t < num_traces; t++) {
+      nc = trace_count[t]
+      for (i = 0; i < capacity; i++) {
+        if (i < capacity - nc) {
+          d[t, i] = -1
+        } else {
+          d[t, i] = raw[t, i - (capacity - nc)]
+        }
+      }
+    }
+
+    # Render row by row (top to bottom)
+    for (r = 0; r < rows; r++) {
+      line = ""
+      for (c = 0; c < width; c++) {
+        bits = 0
+        best_val = -1
+        best_color = ""
+
+        # Track which bit positions are set (dedup guard)
+        for (bp = 0; bp < 8; bp++) bit_set[bp] = 0
+
+        # Two data columns per char column
+        for (side = 0; side < 2; side++) {
+          col = c * 2 + side
+          for (t = 0; t < num_traces; t++) {
+            val = d[t, col]
+            if (val < 0) continue
+            if (val == 0) continue
+
+            dot_y = int(val * (total_dots - 1) / 100)
+            base = (rows - 1 - r) * 4
+
+            if (dot_y >= base && dot_y < base + 4) {
+              local_dot = dot_y - base
+              bit_index = 4 - local_dot
+
+              if (side == 0) {
+                bit_val = left_bits[bit_index]
+                bit_key = "L" bit_index
+              } else {
+                bit_val = right_bits[bit_index]
+                bit_key = "R" bit_index
+              }
+
+              if (!(bit_key in cell_bits)) {
+                bits += bit_val
+                cell_bits[bit_key] = 1
+              }
+
+              if (val > best_val) {
+                best_val = val
+                best_color = color_arr[t + 1]
+              }
+            }
+          }
+        }
+
+        # Clear cell_bits for next cell
+        delete cell_bits
+
+        codepoint = 10240 + bits
+
+        if (bits == 0 && r == rows - 1) {
+          # Bottom row empty: show subtle canvas marker ⠂ (U+2802)
+          codepoint = 10242
+        }
+
+        # UTF-8 encode
+        b1 = 224 + int(codepoint / 4096)
+        b2 = 128 + int((codepoint % 4096) / 64)
+        b3 = 128 + (codepoint % 64)
+
+        if (bits == 0) {
+          col_str = dim
+        } else {
+          col_str = best_color
+        }
+
+        line = line col_str sprintf("%c%c%c", b1, b2, b3)
+      }
+      line = line reset
+      printf "%s\n", line
+    }
+  }'
+}
+
 # ─── Box-drawing frame helpers ───────────────────────────────────
 
 # box_top title subtitle value width

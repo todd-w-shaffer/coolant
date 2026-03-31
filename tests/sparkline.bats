@@ -154,3 +154,101 @@ teardown() {
   output=$(box_line "hello" 40)
   [[ "$output" == *"│"* ]]
 }
+
+# ─── agent_gauge ────────────────────────────────────────
+
+@test "agent_gauge emits correct number of filled blocks" {
+  local output
+  output=$(agent_gauge 3 8 10)
+  local stripped
+  stripped=$(echo "$output" | sed $'s/\033\\[[0-9;]*m//g')
+  local filled
+  filled=$(echo -n "$stripped" | grep -o '⣿' | wc -l | tr -d ' ')
+  [[ "$filled" -eq 3 ]]
+}
+
+@test "agent_gauge emits correct number of empty blocks" {
+  local output
+  output=$(agent_gauge 3 8 10)
+  local stripped
+  stripped=$(echo "$output" | sed $'s/\033\\[[0-9;]*m//g')
+  local empty
+  empty=$(echo -n "$stripped" | grep -o '⠂' | wc -l | tr -d ' ')
+  [[ "$empty" -eq 7 ]]
+}
+
+@test "agent_gauge uses green for 1-2 agents" {
+  local output
+  output=$(agent_gauge 2 8 10)
+  [[ "$output" == *$'\033[32m'* ]]
+}
+
+@test "agent_gauge uses yellow for 3-4 agents" {
+  local output
+  output=$(agent_gauge 4 8 10)
+  [[ "$output" == *$'\033[33m'* ]]
+}
+
+@test "agent_gauge uses red for 5+ agents" {
+  local output
+  output=$(agent_gauge 6 8 10)
+  [[ "$output" == *$'\033[31m'* ]]
+}
+
+@test "agent_gauge with zero agents is all dim" {
+  local output
+  output=$(agent_gauge 0 8 10)
+  [[ "$output" == *$'\033[2m'* ]]
+  local stripped
+  stripped=$(echo "$output" | sed $'s/\033\\[[0-9;]*m//g')
+  local filled
+  filled=$(echo -n "$stripped" | grep -o '⣿' | wc -l | tr -d ' ')
+  [[ "$filled" -eq 0 ]]
+}
+
+# ─── multitrace_chart ──────────────────────────────────
+
+@test "multitrace_chart emits correct number of rows" {
+  local output
+  output=$(multitrace_chart 3 5 1 "\033[32m" 50 50 50 50 50 50 50 50 50 50)
+  local line_count
+  line_count=$(echo "$output" | wc -l | tr -d ' ')
+  [[ "$line_count" -eq 3 ]]
+}
+
+@test "multitrace_chart with all zeros emits blank canvas" {
+  local output
+  output=$(multitrace_chart 3 5 1 "\033[32m" 0 0 0 0 0 0 0 0 0 0)
+  local stripped
+  stripped=$(echo "$output" | sed $'s/\033\\[[0-9;]*m//g')
+  [[ "$stripped" != *"⣿"* ]]
+}
+
+@test "multitrace_chart line trace does not fill area below value" {
+  local output
+  output=$(multitrace_chart 3 5 1 "\033[32m" 50 50 50 50 50 50 50 50 50 50)
+  local stripped
+  stripped=$(echo "$output" | sed $'s/\033\\[[0-9;]*m//g')
+  [[ "$stripped" != *"⣿"* ]]
+}
+
+@test "multitrace_chart with two traces shows both colors" {
+  local green=$'\033[32m'
+  local red=$'\033[31m'
+  local vals_t0="30 30 30 30 30 30 30 30 30 30"
+  local vals_t1="80 80 80 80 80 80 80 80 80 80"
+  local output
+  output=$(multitrace_chart 3 5 2 "${green}|${red}" $vals_t0 $vals_t1)
+  [[ "$output" == *$'\033[32m'* ]]
+  [[ "$output" == *$'\033[31m'* ]]
+}
+
+@test "multitrace_chart at 100% lights top row" {
+  local output
+  output=$(multitrace_chart 3 5 1 "\033[32m" 100 100 100 100 100 100 100 100 100 100)
+  local stripped
+  stripped=$(echo "$output" | sed $'s/\033\\[[0-9;]*m//g')
+  local top
+  top=$(echo "$stripped" | head -1)
+  [[ "$top" != *"⠀"* ]] || [[ $(echo -n "$top" | wc -c | tr -d ' ') -gt 15 ]]
+}

@@ -11,8 +11,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 source "${SCRIPT_DIR}/sparkline.sh"
+source "${SCRIPT_DIR}/agents.sh"
 
-# ─── Config ───────────────────────────────────────────────────
+# ─── Config ───────────────────────────────────────────────
 REFRESH="${COOLANT_REFRESH:-2}"
 MAX_EVENTS=8
 TARGET_PID=""
@@ -25,11 +26,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ─── History arrays ───────────────────────────────────────────
+# ─── History arrays ───────────────────────────────────────
 CPU_HISTORY=()
 MEM_HISTORY=()
 
-# ─── Colors ───────────────────────────────────────────────────
+# ─── Agent color palette (8 ANSI basic colors) ───────────
+AGENT_COLOR_0=$'\033[32m'     # green
+AGENT_COLOR_1=$'\033[36m'     # cyan
+AGENT_COLOR_2=$'\033[33m'     # yellow
+AGENT_COLOR_3=$'\033[35m'     # magenta
+AGENT_COLOR_4=$'\033[34m'     # blue
+AGENT_COLOR_5=$'\033[37m'     # white
+AGENT_COLOR_6=$'\033[31m'     # red
+AGENT_COLOR_7=$'\033[1;32m'   # bold green
+
+# ─── Colors ───────────────────────────────────────────────
 RST=$'\033[0m'
 BLD=$'\033[1m'
 DIM=$'\033[2m'
@@ -42,7 +53,7 @@ BGRED=$'\033[41m'
 BGYLW=$'\033[43m'
 BGGRN=$'\033[42m'
 
-# ─── Terminal setup ───────────────────────────────────────────
+# ─── Terminal setup ───────────────────────────────────────
 cleanup() {
   tput cnorm 2>/dev/null
   printf "%s\n" "$RST"
@@ -51,7 +62,7 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 tput civis 2>/dev/null
 
-# ─── Rendering helpers ───────────────────────────────────────
+# ─── Rendering helpers ───────────────────────────────────
 
 COLS=60
 refresh_cols() { COLS=$(tput cols 2>/dev/null || echo 60); }
@@ -81,7 +92,6 @@ bar() {
   (( pct >= warn )) && c="${YLW}"
   (( pct >= crit )) && c="${RED}"
 
-  # Braille density levels: ⣿ (full) ⣶ (3/4) ⡖ (half) ⠒ (1/4) ⠀ (empty)
   printf "%s" "$c"
   for (( i=0; i<filled; i++ )); do printf '⣿'; done
   printf "%s" "$DIM"
@@ -89,18 +99,22 @@ bar() {
   printf "%s" "$RST"
 }
 
-pressure_label() {
-  local mem_pct=${1:-0} swap_pct=${2:-0}
-  if (( mem_pct >= 90 || swap_pct >= 50 )); then
-    printf "${BGRED}${WHT}${BLD} CRITICAL ${RST}"
-  elif (( mem_pct >= 75 || swap_pct >= 10 )); then
-    printf "${BGYLW}${WHT}${BLD} WARN ${RST}"
+# ─── Pressure badge ──────────────────────────────────────
+
+pressure_badge() {
+  local agents=${1:-0} cpu_pct=${2:-0} mem_pct=${3:-0}
+  if (( agents >= 6 || (agents >= 4 && cpu_pct >= 80) )); then
+    printf "${BGRED}${WHT}${BLD} MELTDOWN ${RST}"
+  elif (( agents >= 4 || cpu_pct >= 70 )); then
+    printf "${BGRED}${WHT}${BLD} HOT ${RST}"
+  elif (( agents >= 2 || cpu_pct >= 50 )); then
+    printf "${BGYLW}${WHT}${BLD} WARM ${RST}"
   else
-    printf "${BGGRN}${WHT} NORMAL ${RST}"
+    printf "${BGGRN}${WHT} COOL ${RST}"
   fi
 }
 
-# ─── Sensors ──────────────────────────────────────────────────
+# ─── Sensors ──────────────────────────────────────────────
 
 read_cpu() {
   local load ncpu load1 pct
@@ -151,14 +165,12 @@ read_swap() {
 read_coolant_status() {
   if [[ -f "$COOLANT_LOCKFILE" ]]; then
     COOL_MODE="PARALLEL"
-    COOL_AGENTS=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "0")
   else
     COOL_MODE="OFF"
-    COOL_AGENTS=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "0")
   fi
 }
 
-# ─── Process tree ─────────────────────────────────────────────
+# ─── Process tree ─────────────────────────────────────────
 
 ALL_PROCS=""
 
@@ -166,17 +178,7 @@ collect_procs() {
   ALL_PROCS=$(ps -Ao pid=,ppid=,%cpu=,rss=,args= 2>/dev/null)
 }
 
-find_claude_pids() {
-  if [[ -n "$TARGET_PID" ]]; then
-    echo "$TARGET_PID"
-    return
-  fi
-  # Match CLI claude processes (not Claude.app helpers)
-  ps -eo pid=,comm= 2>/dev/null | awk '$2 == "claude" {print $1}'
-}
-
 # Render an entire process tree in a SINGLE awk call.
-# No per-node subprocess spawning — avoids fd exhaustion on large trees.
 render_tree() {
   local root_pid=$1
   local max_depth=${2:-12}
@@ -187,20 +189,17 @@ render_tree() {
     cmd = ""; for (i=5; i<=NF; i++) cmd = cmd (i>5?" ":"") $i
     if (length(cmd) > 45) cmd = substr(cmd, 1, 45)
     command[pid] = cmd
-    # Build adjacency list (space-separated children per parent)
     if (children[ppid] == "") children[ppid] = pid
     else children[ppid] = children[ppid] " " pid
   }
   END {
     if (!(root in cpu)) { print "  " DIM "pid " root " not found" RST; exit }
 
-    # Iterative DFS using parallel arrays as a stack
     sp = 1
     s_pid[sp] = root; s_prefix[sp] = ""; s_last[sp] = -1; s_depth[sp] = 0
     count = 0; tcpu = 0; tmem = 0
 
     while (sp > 0) {
-      # Pop
       p     = s_pid[sp]
       pfx   = s_prefix[sp]
       islst = s_last[sp]
@@ -214,9 +213,7 @@ render_tree() {
       tcpu += cpu[p] + 0
       tmem += rss[p] + 0
 
-      # Determine connector
       if (islst == -1) {
-        # Root node
         printf "  %s%d%s  %5s%%  %5dM  %s%s%s\n", BLD, p, RST, cpu[p], rss[p], WHT, command[p], RST
         child_pfx = "  "
       } else if (islst == 1) {
@@ -227,14 +224,12 @@ render_tree() {
         child_pfx = pfx "│ "
       }
 
-      # Collect real children
       n = split(children[p], kids, " ")
       rc = 0
       for (j = 1; j <= n; j++) {
         if (kids[j] != "" && kids[j] != p) { rc++; rkids[rc] = kids[j] }
       }
 
-      # Push children in reverse order so first child is processed first (LIFO)
       for (j = rc; j >= 1; j--) {
         sp++
         s_pid[sp]    = rkids[j]
@@ -249,7 +244,7 @@ render_tree() {
   }'
 }
 
-# ─── Event log ────────────────────────────────────────────────
+# ─── Event log ────────────────────────────────────────────
 
 read_events() {
   if [[ -f "$COOLANT_LOG" ]]; then
@@ -259,20 +254,49 @@ read_events() {
   fi
 }
 
-# ─── Render ───────────────────────────────────────────────────
+# ─── Agent legend ─────────────────────────────────────────
+
+render_agent_legend() {
+  local i slot_pid job color
+  local legend_items=()
+
+  for (( i = 0; i < MAX_AGENT_SLOTS; i++ )); do
+    eval "slot_pid=\"\$AGENT_SLOT_PID_${i}\""
+    if [[ -n "$slot_pid" ]]; then
+      eval "job=\"\$AGENT_JOB_${i}\""
+      eval "color=\"\$AGENT_COLOR_${i}\""
+      legend_items+=("${color}●${RST} ${DIM}${job}${RST}")
+    fi
+  done
+
+  if [[ ${#legend_items[@]} -gt 0 ]]; then
+    local line=""
+    for item in "${legend_items[@]}"; do
+      if [[ -n "$line" ]]; then
+        line="${line}  "
+      fi
+      line="${line}${item}"
+    done
+    printf " %s\n" "$line"
+  fi
+}
+
+# ─── Render ───────────────────────────────────────────────
 
 render() {
-  # Collect remaining data (CPU/MEM/SWAP already read in main loop for history)
   read_coolant_status
   read_events
   collect_procs
 
-  local claude_pids=()
-  while IFS= read -r _cpid; do
-    [[ -n "$_cpid" ]] && claude_pids+=("$_cpid")
-  done < <(find_claude_pids)
+  local w; w=$(cols)
+  local chart_width=$(( w - 2 ))
+  (( chart_width < 10 )) && chart_width=10
 
-  # ── Header ──
+  # Run agent scan with collected process data (sets ACTIVE_AGENT_COUNT)
+  scan_agents "$ALL_PROCS"
+  local active_agents=$ACTIVE_AGENT_COUNT
+
+  # ── Header + Agent Gauge ──
   local now
   now=$(date '+%H:%M:%S')
   printf "\n"
@@ -281,46 +305,109 @@ render() {
   else
     printf " ${CYN}${BLD}COOLANT${RST}  ${DIM}idle${RST}"
   fi
-  printf "%*s\n" $(( $(cols) - 22 )) "$now"
+  printf "%*s\n" $(( w - 22 )) "$now"
 
-  printf " agents: ${BLD}%s${RST}  threshold: %s" \
-    "$COOL_AGENTS" "$COOLANT_THRESHOLD"
+  # Agent gauge bar
+  local gauge_width=10
+  printf " "
+  agent_gauge "$active_agents" "$MAX_AGENT_SLOTS" "$gauge_width"
+  printf "  ${BLD}%s${RST} agents" "$active_agents"
+
+  # Right-align pressure badge
+  local label_width=$(( gauge_width + 12 ))  # gauge + "  N agents"
+  local badge_pad=$(( w - label_width - 13 ))  # 13 = " MELTDOWN " + margin
+  (( badge_pad < 1 )) && badge_pad=1
+  printf "%*s" "$badge_pad" ""
+  pressure_badge "$active_agents" "$CPU_PCT" "$MEM_PCT"
   printf "\n\n"
 
-  # ── System sparkline charts ──
-  local w; w=$(cols)
-  local chart_width=$(( w - 2 ))  # subtract frame borders
-  (( chart_width < 10 )) && chart_width=10
+  # ── Agent Chart ──
+  if (( active_agents > 0 )); then
+    box_top "AGENTS" "${active_agents} active" "" "$w"
 
-  # CPU chart (5 rows)
+    # Build multi-trace color string and value args
+    local trace_colors=""
+    local trace_values=()
+    local trace_count=0
+
+    for (( i = 0; i < MAX_AGENT_SLOTS; i++ )); do
+      local slot_pid
+      eval "slot_pid=\"\$AGENT_SLOT_PID_${i}\""
+      if [[ -n "$slot_pid" ]]; then
+        local color
+        eval "color=\"\$AGENT_COLOR_${i}\""
+        if [[ -n "$trace_colors" ]]; then
+          trace_colors="${trace_colors}|"
+        fi
+        trace_colors="${trace_colors}${color}"
+
+        # Pass only actual history values; renderer handles right-alignment
+        local hist_len
+        eval "hist_len=\${#AGENT_HIST_${i}[@]}"
+        local j
+        for (( j = 0; j < hist_len; j++ )); do
+          local val
+          eval "val=\${AGENT_HIST_${i}[\$j]}"
+          trace_values+=("$val")
+        done
+        (( trace_count++ ))
+      fi
+    done
+
+    if (( trace_count > 0 )); then
+      local agent_chart
+      agent_chart=$(multitrace_chart 5 "$chart_width" "$trace_count" "$trace_colors" "${trace_values[@]}")
+      while IFS= read -r _line; do
+        box_line "$_line" "$w"
+      done <<< "$agent_chart"
+    fi
+    box_bottom "$w"
+
+    # Agent legend
+    render_agent_legend
+    printf "\n"
+  else
+    # Dark cockpit: minimal agent section
+    box_top "AGENTS" "idle" "" "$w"
+    local empty_chart
+    empty_chart=$(multitrace_chart 2 "$chart_width" 1 "${DIM}" 0 0 0 0)
+    while IFS= read -r _line; do
+      box_line "$_line" "$w"
+    done <<< "$empty_chart"
+    box_bottom "$w"
+    printf "\n"
+  fi
+
+  # ── CPU (demoted to 2 rows) ──
   local mem_g; mem_g=$(awk -v u="$MEM_USED" -v t="$MEM_TOTAL" 'BEGIN {printf "%.1fG / %.1fG", u/1024, t/1024}')
   box_top "CPU" "load ${CPU_LOAD} (${CPU_NCPU} cores)" "${CPU_PCT}%" "$w"
   local cpu_chart
-  cpu_chart=$(sparkline_chart 5 "$chart_width" "${CPU_HISTORY[@]}")
+  cpu_chart=$(sparkline_chart 2 "$chart_width" "${CPU_HISTORY[@]}")
   while IFS= read -r _line; do
     box_line "$_line" "$w"
   done <<< "$cpu_chart"
   box_bottom "$w"
 
-  # MEM chart (2 rows)
-  box_top "MEM" "$mem_g" "${MEM_PCT}%" "$w"
-  local mem_chart
-  mem_chart=$(sparkline_chart 2 "$chart_width" "${MEM_HISTORY[@]}")
-  while IFS= read -r _line; do
-    box_line "$_line" "$w"
-  done <<< "$mem_chart"
-  box_bottom "$w"
-
-  # SWAP + pressure on one line
-  printf " SWAP "; bar "$SWAP_PCT" 10 10 50
+  # ── MEM + SWAP + pressure inline ──
+  printf " MEM "; bar "$MEM_PCT" 10 50 90
+  printf "  %3d%%  ${DIM}%s${RST}" "$MEM_PCT" "$mem_g"
+  printf "     SWAP "; bar "$SWAP_PCT" 5 10 50
   printf "  %3d%%  ${DIM}%sM / %sM${RST}" "$SWAP_PCT" "$SWAP_USED" "$SWAP_TOTAL"
-  printf "     "; pressure_label "$MEM_PCT" "$SWAP_PCT"
   printf "\n\n"
 
   # ── Process trees ──
   section "PROCESSES"
 
-  if [[ ${#claude_pids[@]} -eq 0 || ( ${#claude_pids[@]} -eq 1 && -z "${claude_pids[0]}" ) ]]; then
+  local claude_pids=()
+  if [[ -n "$TARGET_PID" ]]; then
+    claude_pids=("$TARGET_PID")
+  else
+    while IFS= read -r _cpid; do
+      [[ -n "$_cpid" ]] && claude_pids+=("$_cpid")
+    done < <(find_claude_pids "$ALL_PROCS")
+  fi
+
+  if [[ ${#claude_pids[@]} -eq 0 || ( ${#claude_pids[@]} -eq 1 && -z "${claude_pids[0]:-}" ) ]]; then
     printf "  ${DIM}no claude sessions detected${RST}\n"
   else
     for cpid in "${claude_pids[@]}"; do
@@ -343,19 +430,16 @@ render() {
   printf "\n"
 
   # ── Footer ──
-  printf "${DIM} refresh %ss │ q: quit │ coolant v2${RST}\n" "$REFRESH"
+  printf "${DIM} refresh %ss │ q: quit │ coolant v3${RST}\n" "$REFRESH"
 }
 
-# ─── Main loop ────────────────────────────────────────────────
+# ─── Main loop ────────────────────────────────────────────
 
 main() {
-  # First frame: clear once to start clean
   local prev_cols=0
   clear
   while true; do
-    # Cache terminal width before subshell capture
     refresh_cols
-    # Full clear on terminal resize to prevent ghosting
     if (( COLS != prev_cols )); then
       clear
       prev_cols=$COLS
@@ -368,13 +452,13 @@ main() {
     (( chart_width < 10 )) && chart_width=10
     history_push CPU_HISTORY "$CPU_PCT" $(( chart_width * 2 ))
     history_push MEM_HISTORY "$MEM_PCT" $(( chart_width * 2 ))
-    # Render into buffer, then paint in one shot — no flash
+    # Render into buffer, then paint in one shot
     local frame
     frame=$(render)
     tput home
     printf '%s' "$frame"
     tput ed
-    # read with timeout doubles as our sleep — also catches 'q' to quit
+    # read with timeout doubles as our sleep
     if read -rsn1 -t "$REFRESH" key 2>/dev/null; then
       [[ "$key" == "q" ]] && exit 0
     fi
