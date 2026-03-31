@@ -1,0 +1,13 @@
+{
+  "name": "coolant",
+  "version": "0.1.0",
+  "description": "Thermal management for Claude Code parallel agents — prevents resource exhaustion by suppressing per-edit hooks and staggering build validation when multiple agents are active.",
+  "author": {
+    "name": "Todd Shaffer",
+    "url": "https://github.com/todd-w-shaffer"
+  },
+  "license": "MIT",
+  "keywords": ["parallel", "agents", "throttle", "resource-management", "tsc", "build"],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json"
+}
