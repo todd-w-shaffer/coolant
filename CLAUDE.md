@@ -27,6 +27,30 @@ skills/parallel/SKILL.md     # /coolant:parallel skill definition
 - Monitor uses braille characters (`⣿`, `⠂`) for progress bars, matching the user's existing status bar aesthetic.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao` for sensors. No third-party tools.
 
+## TDD Workflow
+
+When working on features or bug fixes, follow test-driven development:
+
+### Test-First Rules
+- Always write failing tests BEFORE implementation
+- Use AAA pattern: Arrange-Act-Assert
+- One assertion per test when possible
+- Test names describe behavior: `should_return_empty_when_no_items`
+- When asked for a feature, write tests first
+- Tests should FAIL initially (no implementation exists)
+- Only after tests are written, implement minimal code to pass
+
+### Red-Green-Refactor Cycle
+1. **Red** — Write a failing test. Do NOT write implementation yet.
+2. **Green** — Implement the minimum code to make tests pass. Nothing more.
+3. **Refactor** — Improve code quality while keeping tests green.
+
+### Anti-Patterns
+- Never combine test writing with implementation in one step
+- Never skip the refactor phase
+- Never attempt multiple features in one TDD cycle
+- "Write tests for X" is wrong — say "Write FAILING tests for X, do NOT implement"
+
 ## Testing
 
 No test suite. To verify:
