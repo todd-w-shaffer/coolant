@@ -29,27 +29,11 @@ skills/parallel/SKILL.md     # /coolant:parallel skill definition
 
 ## TDD Workflow
 
-When working on features or bug fixes, follow test-driven development:
+Strict red-green-refactor. One feature per cycle.
 
-### Test-First Rules
-- Always write failing tests BEFORE implementation
-- Use AAA pattern: Arrange-Act-Assert
-- One assertion per test when possible
-- Test names describe behavior: `should_return_empty_when_no_items`
-- When asked for a feature, write tests first
-- Tests should FAIL initially (no implementation exists)
-- Only after tests are written, implement minimal code to pass
-
-### Red-Green-Refactor Cycle
-1. **Red** — Write a failing test. Do NOT write implementation yet.
-2. **Green** — Implement the minimum code to make tests pass. Nothing more.
-3. **Refactor** — Improve code quality while keeping tests green.
-
-### Anti-Patterns
-- Never combine test writing with implementation in one step
-- Never skip the refactor phase
-- Never attempt multiple features in one TDD cycle
-- "Write tests for X" is wrong — say "Write FAILING tests for X, do NOT implement"
+1. **Red** — Write a failing test. Do NOT write any implementation yet. Use AAA (Arrange-Act-Assert), one assertion per test, behavior-describing names (`should_return_empty_when_no_items`).
+2. **Green** — Implement the minimum code to pass. Nothing more.
+3. **Refactor** — Improve code quality while keeping tests green. Do not skip this step.
 
 ## Testing
 
