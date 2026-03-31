@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
+source "${SCRIPT_DIR}/sparkline.sh"
 
 # ─── Config ───────────────────────────────────────────────────
 REFRESH="${COOLANT_REFRESH:-2}"
@@ -23,6 +24,10 @@ while [[ $# -gt 0 ]]; do
     *) shift ;;
   esac
 done
+
+# ─── History arrays ───────────────────────────────────────────
+CPU_HISTORY=()
+MEM_HISTORY=()
 
 # ─── Colors ───────────────────────────────────────────────────
 RST=$'\033[0m'
@@ -257,10 +262,7 @@ read_events() {
 # ─── Render ───────────────────────────────────────────────────
 
 render() {
-  # Collect all data
-  read_cpu
-  read_mem
-  read_swap
+  # Collect remaining data (CPU/MEM/SWAP already read in main loop for history)
   read_coolant_status
   read_events
   collect_procs
@@ -285,25 +287,35 @@ render() {
     "$COOL_AGENTS" "$COOLANT_THRESHOLD"
   printf "\n\n"
 
-  # ── System ──
-  section "SYSTEM"
+  # ── System sparkline charts ──
+  local w; w=$(cols)
+  local chart_width=$(( w - 2 ))  # subtract frame borders
+  (( chart_width < 10 )) && chart_width=10
 
-  local bw=20
-  (( $(cols) < 50 )) && bw=12
-
-  printf " CPU  "; bar "$CPU_PCT" "$bw"
-  printf "  %3d%%  ${DIM}load %s  (%s cores)${RST}\n" "$CPU_PCT" "$CPU_LOAD" "$CPU_NCPU"
-
-  printf " MEM  "; bar "$MEM_PCT" "$bw" 75 90
+  # CPU chart (5 rows)
   local mem_g; mem_g=$(awk -v u="$MEM_USED" -v t="$MEM_TOTAL" 'BEGIN {printf "%.1fG / %.1fG", u/1024, t/1024}')
-  printf "  %3d%%  ${DIM}%s${RST}\n" "$MEM_PCT" "$mem_g"
+  box_top "CPU" "load ${CPU_LOAD} (${CPU_NCPU} cores)" "${CPU_PCT}%" "$w"
+  local cpu_chart
+  cpu_chart=$(sparkline_chart 5 "$chart_width" "${CPU_HISTORY[@]}")
+  while IFS= read -r _line; do
+    box_line "$_line" "$w"
+  done <<< "$cpu_chart"
+  box_bottom "$w"
 
-  printf " SWAP "; bar "$SWAP_PCT" "$bw" 10 50
-  printf "  %3d%%  ${DIM}%sM / %sM${RST}\n" "$SWAP_PCT" "$SWAP_USED" "$SWAP_TOTAL"
+  # MEM chart (2 rows)
+  box_top "MEM" "$mem_g" "${MEM_PCT}%" "$w"
+  local mem_chart
+  mem_chart=$(sparkline_chart 2 "$chart_width" "${MEM_HISTORY[@]}")
+  while IFS= read -r _line; do
+    box_line "$_line" "$w"
+  done <<< "$mem_chart"
+  box_bottom "$w"
 
-  printf " PRES "; pressure_label "$MEM_PCT" "$SWAP_PCT"
-  printf "\n"
-  printf "\n"
+  # SWAP + pressure on one line
+  printf " SWAP "; bar "$SWAP_PCT" 10 10 50
+  printf "  %3d%%  ${DIM}%sM / %sM${RST}" "$SWAP_PCT" "$SWAP_USED" "$SWAP_TOTAL"
+  printf "     "; pressure_label "$MEM_PCT" "$SWAP_PCT"
+  printf "\n\n"
 
   # ── Process trees ──
   section "PROCESSES"
@@ -338,10 +350,24 @@ render() {
 
 main() {
   # First frame: clear once to start clean
+  local prev_cols=0
   clear
   while true; do
     # Cache terminal width before subshell capture
     refresh_cols
+    # Full clear on terminal resize to prevent ghosting
+    if (( COLS != prev_cols )); then
+      clear
+      prev_cols=$COLS
+    fi
+    # Collect sensor data in main shell so history arrays persist
+    read_cpu
+    read_mem
+    read_swap
+    local chart_width=$(( $(cols) - 2 ))
+    (( chart_width < 10 )) && chart_width=10
+    history_push CPU_HISTORY "$CPU_PCT" $(( chart_width * 2 ))
+    history_push MEM_HISTORY "$MEM_PCT" $(( chart_width * 2 ))
     # Render into buffer, then paint in one shot — no flash
     local frame
     frame=$(render)
