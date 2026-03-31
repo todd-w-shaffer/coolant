@@ -42,7 +42,8 @@ cleanup() {
   tput cnorm 2>/dev/null
   printf "%s\n" "$RST"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 tput civis 2>/dev/null
 
 # ─── Rendering helpers ───────────────────────────────────────
@@ -153,16 +154,9 @@ read_coolant_status() {
 # ─── Process tree ─────────────────────────────────────────────
 
 ALL_PROCS=""
-TREE_CPU=0
-TREE_MEM=0
-TREE_COUNT=0
 
 collect_procs() {
   ALL_PROCS=$(ps -Ao pid=,ppid=,%cpu=,rss=,args= 2>/dev/null)
-}
-
-get_children() {
-  awk -v p="$1" '$2 == p {print $1}' <<< "$ALL_PROCS"
 }
 
 find_claude_pids() {
@@ -174,63 +168,78 @@ find_claude_pids() {
   ps -eo pid=,comm= 2>/dev/null | awk '$2 == "claude" {print $1}'
 }
 
-walk_tree() {
-  local pid=$1
-  local prefix="${2:-}"
-  local is_last="${3:--1}"
+# Render an entire process tree in a SINGLE awk call.
+# No per-node subprocess spawning — avoids fd exhaustion on large trees.
+render_tree() {
+  local root_pid=$1
+  local max_depth=${2:-12}
+  echo "$ALL_PROCS" | awk -v root="$root_pid" -v maxd="$max_depth" \
+    -v BLD=$'\033[1m' -v DIM=$'\033[2m' -v WHT=$'\033[37m' -v RST=$'\033[0m' '
+  {
+    pid = $1; ppid = $2; cpu[pid] = $3; rss[pid] = int($4/1024)
+    cmd = ""; for (i=5; i<=NF; i++) cmd = cmd (i>5?" ":"") $i
+    if (length(cmd) > 45) cmd = substr(cmd, 1, 45)
+    command[pid] = cmd
+    # Build adjacency list (space-separated children per parent)
+    if (children[ppid] == "") children[ppid] = pid
+    else children[ppid] = children[ppid] " " pid
+  }
+  END {
+    if (!(root in cpu)) { print "  " DIM "pid " root " not found" RST; exit }
 
-  local cpu mem cmd
-  local info
-  info=$(awk -v p="$pid" '$1 == p {
-    cpu=$3; rss=int($4/1024);
-    $1=$2=$3=$4=""; sub(/^ +/, "");
-    printf "%s\t%d\t%s", cpu, rss, $0;
-    exit
-  }' <<< "$ALL_PROCS")
+    # Iterative DFS using parallel arrays as a stack
+    sp = 1
+    s_pid[sp] = root; s_prefix[sp] = ""; s_last[sp] = -1; s_depth[sp] = 0
+    count = 0; tcpu = 0; tmem = 0
 
-  [[ -z "$info" ]] && return
+    while (sp > 0) {
+      # Pop
+      p     = s_pid[sp]
+      pfx   = s_prefix[sp]
+      islst = s_last[sp]
+      dep   = s_depth[sp]
+      sp--
 
-  IFS=$'\t' read -r cpu mem cmd <<< "$info"
-  cmd="${cmd:0:40}"
+      if (!(p in cpu)) continue
+      if (dep > maxd) continue
 
-  # Accumulate subtree totals
-  TREE_CPU=$(awk -v a="$TREE_CPU" -v b="${cpu:-0}" 'BEGIN {printf "%.1f", a+b}')
-  TREE_MEM=$(( TREE_MEM + ${mem:-0} ))
-  TREE_COUNT=$(( TREE_COUNT + 1 ))
+      count++
+      tcpu += cpu[p] + 0
+      tmem += rss[p] + 0
 
-  # Render this node
-  local connector=""
-  local child_prefix="$prefix"
-  if (( is_last == 1 )); then
-    connector="└─"
-    child_prefix="${prefix}  "
-  elif (( is_last == 0 )); then
-    connector="├─"
-    child_prefix="${prefix}│ "
-  fi
+      # Determine connector
+      if (islst == -1) {
+        # Root node
+        printf "  %s%d%s  %5s%%  %5dM  %s%s%s\n", BLD, p, RST, cpu[p], rss[p], WHT, command[p], RST
+        child_pfx = "  "
+      } else if (islst == 1) {
+        printf "  %s%s└─%s%-6d %5s%%  %5dM  %s\n", DIM, pfx, RST, p, cpu[p], rss[p], command[p]
+        child_pfx = pfx "  "
+      } else {
+        printf "  %s%s├─%s%-6d %5s%%  %5dM  %s\n", DIM, pfx, RST, p, cpu[p], rss[p], command[p]
+        child_pfx = pfx "│ "
+      }
 
-  if (( is_last == -1 )); then
-    # Root node
-    printf "  ${BLD}%d${RST}  %5s%%  %5dM  ${WHT}%s${RST}\n" \
-      "$pid" "${cpu:-0}" "${mem:-0}" "$cmd"
-    child_prefix="  "
-  else
-    printf "  ${DIM}%s%s${RST}%d  %5s%%  %5dM  %s\n" \
-      "$prefix" "$connector" "$pid" "${cpu:-0}" "${mem:-0}" "$cmd"
-  fi
+      # Collect real children
+      n = split(children[p], kids, " ")
+      rc = 0
+      for (j = 1; j <= n; j++) {
+        if (kids[j] != "" && kids[j] != p) { rc++; rkids[rc] = kids[j] }
+      }
 
-  # Recurse into children
-  local children=()
-  while IFS= read -r _child; do
-    [[ -n "$_child" ]] && children+=("$_child")
-  done < <(get_children "$pid")
-  local count=${#children[@]}
+      # Push children in reverse order so first child is processed first (LIFO)
+      for (j = rc; j >= 1; j--) {
+        sp++
+        s_pid[sp]    = rkids[j]
+        s_prefix[sp] = child_pfx
+        s_depth[sp]  = dep + 1
+        s_last[sp]   = (j == rc) ? 1 : 0
+      }
+    }
 
-  for (( i=0; i<count; i++ )); do
-    local last=0
-    (( i == count - 1 )) && last=1
-    walk_tree "${children[$i]}" "$child_prefix" "$last"
-  done
+    printf "  %s──────%s\n", DIM, RST
+    printf "  %ssubtree%s: %.1f%% cpu  %dM rss  %d procs\n", BLD, RST, tcpu, tmem, count
+  }'
 }
 
 # ─── Event log ────────────────────────────────────────────────
@@ -305,13 +314,7 @@ render() {
   else
     for cpid in "${claude_pids[@]}"; do
       [[ -z "$cpid" ]] && continue
-      TREE_CPU=0
-      TREE_MEM=0
-      TREE_COUNT=0
-      walk_tree "$cpid"
-      printf "  ${DIM}──────${RST}\n"
-      printf "  ${BLD}subtree${RST}: %s%% cpu  %dM rss  %d procs\n" \
-        "$TREE_CPU" "$TREE_MEM" "$TREE_COUNT"
+      render_tree "$cpid"
     done
   fi
   printf "\n"
