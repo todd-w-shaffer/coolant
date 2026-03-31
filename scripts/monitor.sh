@@ -48,6 +48,7 @@ RED=$'\033[31m'
 GRN=$'\033[32m'
 YLW=$'\033[33m'
 CYN=$'\033[36m'
+BLK=$'\033[30m'
 WHT=$'\033[37m'
 BGRED=$'\033[41m'
 BGYLW=$'\033[43m'
@@ -102,13 +103,18 @@ bar() {
 # ─── Pressure badge ──────────────────────────────────────
 
 pressure_badge() {
-  local agents=${1:-0} cpu_pct=${2:-0} mem_pct=${3:-0}
-  if (( agents >= 6 || (agents >= 4 && cpu_pct >= 80) )); then
+  local agents=${1:-0} cpu_pct=${2:-0} mem_pct=${3:-0} sensed=${4:-0}
+  # Sensed activity counts as 2 agents for badge calculation
+  local effective_agents=$agents
+  if (( sensed == 1 && agents == 0 )); then
+    effective_agents=2
+  fi
+  if (( effective_agents >= 6 || (effective_agents >= 4 && cpu_pct >= 80) )); then
     printf "${BGRED}${WHT}${BLD} MELTDOWN ${RST}"
-  elif (( agents >= 4 || cpu_pct >= 70 )); then
+  elif (( effective_agents >= 4 || cpu_pct >= 70 )); then
     printf "${BGRED}${WHT}${BLD} HOT ${RST}"
-  elif (( agents >= 2 || cpu_pct >= 50 )); then
-    printf "${BGYLW}${WHT}${BLD} WARM ${RST}"
+  elif (( effective_agents >= 2 || cpu_pct >= 50 )); then
+    printf "${BGYLW}${BLK}${BLD} WARM ${RST}"
   else
     printf "${BGGRN}${WHT} COOL ${RST}"
   fi
@@ -187,7 +193,14 @@ render_tree() {
   {
     pid = $1; ppid = $2; cpu[pid] = $3; rss[pid] = int($4/1024)
     cmd = ""; for (i=5; i<=NF; i++) cmd = cmd (i>5?" ":"") $i
-    if (length(cmd) > 45) cmd = substr(cmd, 1, 45)
+    # Trim common prefixes for readability
+    gsub(/\/usr\/local\/bin\//, "", cmd)
+    gsub(/\/opt\/homebrew\/Cellar\/[^ ]*\//, "", cmd)
+    # Shorten home dir paths: /Users/foo/bar -> ~/bar
+    if (match(cmd, /\/Users\/[a-zA-Z0-9._-]+\//)) {
+      cmd = "~/" substr(cmd, RSTART + RLENGTH)
+    }
+    if (length(cmd) > 50) cmd = substr(cmd, 1, 47) "..."
     command[pid] = cmd
     if (children[ppid] == "") children[ppid] = pid
     else children[ppid] = children[ppid] " " pid
@@ -213,14 +226,22 @@ render_tree() {
       tcpu += cpu[p] + 0
       tmem += rss[p] + 0
 
+      # Format memory: GB if >= 1024M, else M
+      mem_str = ""
+      if (rss[p] >= 1024) {
+        mem_str = sprintf("%.1fG", rss[p] / 1024.0)
+      } else {
+        mem_str = sprintf("%dM", rss[p])
+      }
+
       if (islst == -1) {
-        printf "  %s%d%s  %5s%%  %5dM  %s%s%s\n", BLD, p, RST, cpu[p], rss[p], WHT, command[p], RST
+        printf "  %s%6d%s  %5.1f%%  %6s  %s%s%s\n", BLD, p, RST, cpu[p]+0, mem_str, WHT, command[p], RST
         child_pfx = "  "
       } else if (islst == 1) {
-        printf "  %s%s└─%s%-6d %5s%%  %5dM  %s\n", DIM, pfx, RST, p, cpu[p], rss[p], command[p]
+        printf "  %s%s└─%s%6d  %5.1f%%  %6s  %s\n", DIM, pfx, RST, p, cpu[p]+0, mem_str, command[p]
         child_pfx = pfx "  "
       } else {
-        printf "  %s%s├─%s%-6d %5s%%  %5dM  %s\n", DIM, pfx, RST, p, cpu[p], rss[p], command[p]
+        printf "  %s%s├─%s%6d  %5.1f%%  %6s  %s\n", DIM, pfx, RST, p, cpu[p]+0, mem_str, command[p]
         child_pfx = pfx "│ "
       }
 
@@ -240,7 +261,7 @@ render_tree() {
     }
 
     printf "  %s──────%s\n", DIM, RST
-    printf "  %ssubtree%s: %.1f%% cpu  %dM rss  %d procs\n", BLD, RST, tcpu, tmem, count
+    printf "  %ssubtree%s: %5.1f%% cpu  %6s rss  %d procs\n", BLD, RST, tcpu, (tmem >= 1024 ? sprintf("%.1fG", tmem/1024.0) : sprintf("%dM", tmem)), count
   }'
 }
 
@@ -313,12 +334,22 @@ render() {
   agent_gauge "$active_agents" "$MAX_AGENT_SLOTS" "$gauge_width"
   printf "  ${BLD}%s${RST} agents" "$active_agents"
 
+  # Sensed activity indicator
+  local sensed_label=""
+  if (( SENSED_ACTIVE == 1 && active_agents == 0 )); then
+    sensed_label=" ${YLW}${DIM}(sensed)${RST}"
+  fi
+  printf "%s" "$sensed_label"
+
   # Right-align pressure badge
   local label_width=$(( gauge_width + 12 ))  # gauge + "  N agents"
+  if [[ -n "$sensed_label" ]]; then
+    (( label_width += 10 ))  # account for " (sensed)"
+  fi
   local badge_pad=$(( w - label_width - 13 ))  # 13 = " MELTDOWN " + margin
   (( badge_pad < 1 )) && badge_pad=1
   printf "%*s" "$badge_pad" ""
-  pressure_badge "$active_agents" "$CPU_PCT" "$MEM_PCT"
+  pressure_badge "$active_agents" "$CPU_PCT" "$MEM_PCT" "$SENSED_ACTIVE"
   printf "\n\n"
 
   # ── Agent Chart ──
@@ -437,6 +468,15 @@ render() {
 
 main() {
   local prev_cols=0
+  local FAST_TICK=0.3
+  local SENSE_CPU_THRESH=10
+  local SENSE_CHILD_THRESH=2
+  local SENSE_WINDOW=10
+  local SENSE_TRIP_COUNT=4
+  local prev_sensed=0
+  local sensed_stable_count=0    # how many consecutive ticks in current state
+  local SENSED_DEBOUNCE=6        # require 6 consecutive ticks (~2s) before logging
+
   clear
   while true; do
     refresh_cols
@@ -458,10 +498,46 @@ main() {
     tput home
     printf '%s' "$frame"
     tput ed
-    # read with timeout doubles as our sleep
-    if read -rsn1 -t "$REFRESH" key 2>/dev/null; then
-      [[ "$key" == "q" ]] && exit 0
-    fi
+
+    # ── Fast-tick burst detection between renders ──
+    # Sample lightweight ps at ~300ms intervals to detect agent-like activity.
+    local ticks=$(( ${REFRESH%%.*} * 3 ))  # ~3 fast ticks per second of refresh
+    (( ticks < 1 )) && ticks=1
+    local claude_pid=""
+    # Find claude PID once per render cycle
+    claude_pid=$(ps -Ao pid=,args= 2>/dev/null | awk '/claude.*--permission-mode/ && !/awk/ {print $1; exit}')
+
+    local t
+    for (( t = 0; t < ticks; t++ )); do
+      if read -rsn1 -t "$FAST_TICK" key 2>/dev/null; then
+        [[ "$key" == "q" ]] && exit 0
+      fi
+
+      # Lightweight ps for burst detection
+      if [[ -n "$claude_pid" ]]; then
+        local light_ps
+        light_ps=$(ps -Ao pid=,ppid=,%cpu= 2>/dev/null)
+        local signal
+        signal=$(sense_activity "$light_ps" "$claude_pid" "$SENSE_CPU_THRESH" "$SENSE_CHILD_THRESH")
+        sense_push "$signal" "$SENSE_WINDOW" "$SENSE_TRIP_COUNT"
+
+        # Debounced log transitions — require stable signal before logging
+        if (( SENSED_ACTIVE != prev_sensed )); then
+          (( sensed_stable_count++ ))
+          if (( sensed_stable_count >= SENSED_DEBOUNCE )); then
+            if (( SENSED_ACTIVE == 1 )); then
+              coolant_log "activity sensed (cpu elevated + burst pattern)"
+            else
+              coolant_log "sensed activity cleared"
+            fi
+            prev_sensed=$SENSED_ACTIVE
+            sensed_stable_count=0
+          fi
+        else
+          sensed_stable_count=0
+        fi
+      fi
+    done
   done
 }
 

@@ -134,3 +134,70 @@ teardown() {
   [[ ${#AGENT_HIST_0[@]} -ge 1 ]]
   [[ "${AGENT_HIST_0[0]}" == "42" ]]
 }
+
+# ─── sense_activity ─────────────────────────────────────
+
+@test "sense_activity returns 1 when claude CPU elevated and bash children present" {
+  local procs
+  procs="100 1 25.0
+200 100 0.0
+300 100 0.0"
+  local result
+  result=$(sense_activity "$procs" 100 10 2)
+  [[ "$result" == "1" ]]
+}
+
+@test "sense_activity returns 0 when claude CPU low" {
+  local procs
+  procs="100 1 3.0
+200 100 0.0
+300 100 0.0"
+  local result
+  result=$(sense_activity "$procs" 100 10 2)
+  [[ "$result" == "0" ]]
+}
+
+@test "sense_activity trips on subtree CPU even when claude PID itself is low" {
+  local procs
+  procs="100 1 4.0
+200 100 8.0
+300 100 6.0"
+  local result
+  # claude=4 + child1=8 + child2=6 = 18 subtree total, threshold 10
+  result=$(sense_activity "$procs" 100 10 2)
+  [[ "$result" == "1" ]]
+}
+
+@test "sense_activity returns 0 when no children despite high CPU" {
+  local procs
+  procs="100 1 25.0
+500 1 0.0"
+  local result
+  result=$(sense_activity "$procs" 100 10 2)
+  [[ "$result" == "0" ]]
+}
+
+# ─── sense_push / SENSED_ACTIVE ────────────────────────
+
+@test "sense_push trips SENSED_ACTIVE after threshold positive samples" {
+  SENSE_HISTORY=()
+  SENSED_ACTIVE=0
+  # Push 4 positive signals (default trip count is 4, window is 10)
+  sense_push 1 10 4
+  sense_push 1 10 4
+  sense_push 1 10 4
+  [[ "$SENSED_ACTIVE" == "0" ]]
+  sense_push 1 10 4
+  [[ "$SENSED_ACTIVE" == "1" ]]
+}
+
+@test "sense_push clears SENSED_ACTIVE when signals drop" {
+  SENSE_HISTORY=()
+  SENSED_ACTIVE=0
+  # Trip it
+  for i in 1 2 3 4 5; do sense_push 1 10 4; done
+  [[ "$SENSED_ACTIVE" == "1" ]]
+  # Push enough zeros to dilute below threshold
+  for i in 1 2 3 4 5 6 7; do sense_push 0 10 4; done
+  [[ "$SENSED_ACTIVE" == "0" ]]
+}

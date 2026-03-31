@@ -204,6 +204,63 @@ _bulk_agent_data() {
   '
 }
 
+# ─── Burst detection (sensed agents) ───────────────────────
+# Rolling window to detect agent-like activity from CPU + child burst pattern.
+
+SENSE_HISTORY=()
+SENSED_ACTIVE=0
+
+# sense_activity(lightweight_ps_data, claude_pid, cpu_thresh, child_thresh)
+# Single-sample check. Returns "1" if claude subtree has elevated CPU AND enough
+# bash children, "0" otherwise. Takes lightweight ps output (pid ppid cpu).
+# Sums CPU across claude PID + all its children (subtree total).
+sense_activity() {
+  local procs="$1"
+  local claude_pid="$2"
+  local cpu_thresh="${3:-10}"
+  local child_thresh="${4:-2}"
+
+  echo "$procs" | awk -v cpid="$claude_pid" -v ct="$cpu_thresh" -v cht="$child_thresh" '
+  {
+    pid = $1; ppid = $2; cpu = $3 + 0
+    if (pid == cpid) { subtree_cpu += cpu; found = 1 }
+    if (ppid == cpid && pid != cpid) { children++; subtree_cpu += cpu }
+  }
+  END {
+    if (found && subtree_cpu + 0 >= ct && children + 0 >= cht) print 1
+    else print 0
+  }'
+}
+
+# sense_push(signal, window_size, trip_count)
+# Push a 0/1 signal into the rolling window. Sets SENSED_ACTIVE.
+sense_push() {
+  local signal="$1"
+  local window="${2:-10}"
+  local trip="${3:-4}"
+
+  SENSE_HISTORY+=("$signal")
+
+  # Trim to window size
+  local len=${#SENSE_HISTORY[@]}
+  if (( len > window )); then
+    SENSE_HISTORY=("${SENSE_HISTORY[@]:$((len - window))}")
+  fi
+
+  # Sum positive signals
+  local sum=0
+  local v
+  for v in "${SENSE_HISTORY[@]}"; do
+    (( sum += v ))
+  done
+
+  if (( sum >= trip )); then
+    SENSED_ACTIVE=1
+  else
+    SENSED_ACTIVE=0
+  fi
+}
+
 # ─── scan_agents(all_procs_data) ────────────────────────────
 # Main per-tick function. Detects claude PIDs, manages slots, updates history.
 # Sets ACTIVE_AGENT_COUNT as a side effect.
