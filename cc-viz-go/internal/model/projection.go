@@ -10,15 +10,16 @@ const (
 // WeightClass maps process type codes to estimated memory usage in bytes.
 // V1: hardcoded heuristics. V2 will learn from observed RSS.
 var WeightClass = map[string]int64{
-	"V": 1 * GB,    // vitest — V8 heap per worker
-	"N": 1 * GB,    // node — general node process
+	"V": 1 * GB,    // vitest/jest — V8 heap per worker
+	"N": 1 * GB,    // node/deno/bun — general runtime
 	"T": 300 * MB,  // tsc — TypeScript compiler
-	"P": 200 * MB,  // python
-	"C": 100 * MB,  // claude subprocesses
-	"G": 20 * MB,   // grep
+	"B": 300 * MB,  // bundlers/linters/compilers
+	"P": 200 * MB,  // python/ruby/java/docker
+	"C": 50 * MB,   // git/curl/cat — utilities
+	"G": 20 * MB,   // grep/ag
 	"R": 20 * MB,   // ripgrep
-	"F": 20 * MB,   // find
-	"S": 20 * MB,   // sed/shell
+	"F": 20 * MB,   // find/fd
+	"S": 20 * MB,   // bash/sh/zsh/sed/awk
 	"X": 50 * MB,   // unknown
 }
 

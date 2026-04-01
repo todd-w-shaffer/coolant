@@ -16,6 +16,15 @@ var TypeColor = map[string]lipgloss.Color{
 	"X": lipgloss.Color("8"),   // gray — other
 }
 
+// Category colors — what Claude is doing, not what executable is running.
+var CategoryColor = map[string]lipgloss.Color{
+	"test":   lipgloss.Color("1"),   // red — the machine killer
+	"build":  lipgloss.Color("208"), // orange — heavy but finite
+	"run":    lipgloss.Color("3"),   // yellow — runtime processes
+	"search": lipgloss.Color("4"),   // blue — lightweight exploration
+	"shell":  lipgloss.Color("8"),   // gray — ephemeral
+}
+
 // Threshold defaults.
 const (
 	SpawnWarn = 10

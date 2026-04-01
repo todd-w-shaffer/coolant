@@ -9,23 +9,63 @@ import (
 )
 
 // commToType maps a process name to a single-char type code.
+// These feed into TypeToCategory in types.go for higher-level grouping.
 var commToType = map[string]string{
-	"node":    "N",
-	"nodejs":  "N",
-	"vitest":  "V",
-	"jest":    "V",
-	"tsc":     "T",
-	"python":  "P",
-	"python3": "P",
-	"grep":    "G",
-	"rg":      "R",
-	"ripgrep": "R",
-	"find":    "F",
-	"sed":     "S",
-	"sh":      "S",
-	"bash":    "S",
-	"zsh":     "S",
-	"cat":     "C",
+	// Testing (V)
+	"vitest":   "V",
+	"jest":     "V",
+	"mocha":    "V",
+	"pytest":   "V",
+	"phpunit":  "V",
+
+	// Build (T = compilers, B = bundlers/linters)
+	"tsc":      "T",
+	"webpack":  "B",
+	"esbuild":  "B",
+	"swc":      "B",
+	"rollup":   "B",
+	"vite":     "B",
+	"turbo":    "B",
+	"eslint":   "B",
+	"prettier": "B",
+	"rustc":    "B",
+	"cargo":    "B",
+	"go":       "B",
+	"javac":    "B",
+	"gcc":      "B",
+	"clang":    "B",
+	"make":     "B",
+
+	// Runtime (N = node, P = python/etc)
+	"node":     "N",
+	"nodejs":   "N",
+	"deno":     "N",
+	"bun":      "N",
+	"python":   "P",
+	"python3":  "P",
+	"ruby":     "P",
+	"java":     "P",
+	"docker":   "P",
+	"podman":   "P",
+
+	// Search (G = grep-like, R = ripgrep, F = find)
+	"grep":     "G",
+	"rg":       "R",
+	"ripgrep":  "R",
+	"find":     "F",
+	"fd":       "F",
+	"ag":       "G",
+
+	// Shell (S = shell/scripting, C = utilities)
+	"sh":       "S",
+	"bash":     "S",
+	"zsh":      "S",
+	"sed":      "S",
+	"awk":      "S",
+	"cat":      "C",
+	"git":      "C",
+	"curl":     "C",
+	"wget":     "C",
 }
 
 // classifyComm returns the type code for a process name.

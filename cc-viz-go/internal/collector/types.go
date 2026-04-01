@@ -103,3 +103,48 @@ func (s Snapshot) PIDs() map[int]bool {
 	}
 	return pids
 }
+
+// Category represents what Claude is doing, not what executable is running.
+type Category struct {
+	Name  string // "test", "build", "run", "search", "shell"
+	Label string // Display label
+	Order int    // Sort order (0 = first/most dangerous)
+}
+
+// Default categories — hardcoded V1, will be config-driven later.
+var Categories = []Category{
+	{Name: "test", Label: "test", Order: 0},
+	{Name: "build", Label: "build", Order: 1},
+	{Name: "run", Label: "run", Order: 2},
+	{Name: "search", Label: "search", Order: 3},
+	{Name: "shell", Label: "shell", Order: 4},
+}
+
+// TypeToCategory maps single-char type codes to category names.
+// Designed as a lookup table so it's easy to swap for config-driven mapping later.
+var TypeToCategory = map[string]string{
+	"V": "test",   // vitest, jest, mocha, pytest
+	"T": "build",  // tsc
+	"B": "build",  // bundlers, linters, compilers
+	"N": "run",    // node, deno, bun
+	"P": "run",    // python, ruby, java, docker
+	"G": "search", // grep, ag
+	"R": "search", // ripgrep
+	"F": "search", // find, fd
+	"S": "shell",  // bash, sh, zsh, sed, awk
+	"C": "shell",  // cat, git, curl, wget
+	"X": "shell",  // unknown
+}
+
+// CategoryCounts returns category → count from type counts.
+func CategoryCounts(typeCounts map[string]int) map[string]int {
+	cats := make(map[string]int)
+	for typeCode, count := range typeCounts {
+		cat, ok := TypeToCategory[typeCode]
+		if !ok {
+			cat = "shell"
+		}
+		cats[cat] += count
+	}
+	return cats
+}

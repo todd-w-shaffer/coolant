@@ -2,12 +2,15 @@ package widgets
 
 import (
 	"fmt"
+	"math"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/toddwshaffer/coolant/cc-viz-go/internal/collector"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
 )
 
-// ThreatColor maps threat levels to lipgloss colors.
+// ThreatColor maps threat levels to lipgloss colors (used by alerts too).
 var ThreatColor = map[model.ThreatLevel]lipgloss.Color{
 	model.ThreatCool:     lipgloss.Color("2"),   // green
 	model.ThreatWarm:     lipgloss.Color("3"),   // yellow
@@ -15,8 +18,17 @@ var ThreatColor = map[model.ThreatLevel]lipgloss.Color{
 	model.ThreatMeltdown: lipgloss.Color("1"),   // red
 }
 
-// Headline renders the top status line:
-// ◉ WARM  sessions: 3  procs: 47  |  CPU 34%  MEM 11.2/16GB (70%)  SWAP 0MB  headroom: ~4.8GB
+// Overall thermal gradient — same 5-level scheme as category boxes.
+var overallGradient = []thermalLevel{
+	{lipgloss.Color("236"), lipgloss.Color("233")}, // cold
+	{lipgloss.Color("2"), lipgloss.Color("233")},    // cool: green text
+	{lipgloss.Color("3"), lipgloss.Color("234")},    // warm: yellow text
+	{lipgloss.Color("208"), lipgloss.Color("235")},  // hot: orange text
+	{lipgloss.Color("196"), lipgloss.Color("52")},   // critical: red on dark red
+}
+
+// Headline renders the unified thermal bar:
+// [ Claude's humming along  | test:004 | build:008 | run:018 | search:005 | shell:004 ]
 type Headline struct {
 	width int
 	state *model.AppState
@@ -35,66 +47,92 @@ func (h *Headline) Update(state *model.AppState) {
 }
 
 func (h *Headline) View() string {
-	if h.state == nil || h.state.Current == nil {
+	if h.state == nil {
 		return ""
 	}
-	s := h.state
-	snap := s.Current
 
-	color := ThreatColor[s.ThreatLevel]
-	dot := lipgloss.NewStyle().Foreground(color).Render("◉")
-	level := lipgloss.NewStyle().Foreground(color).Bold(true).Render(s.ThreatLevel.String())
-	quip := lipgloss.NewStyle().Foreground(color).Render(s.StableQuip())
+	numCats := len(collector.Categories)
 
-	memUsedGB := float64(snap.System.MemUsedBytes) / float64(1<<30)
-	memTotalGB := float64(snap.System.MemTotalBytes) / float64(1<<30)
-	memPct := snap.System.MemPercent()
-	swapMB := snap.System.SwapUsedBytes / (1 << 20)
+	// 50/50 split: overall gets half, categories share the other half
+	overallWidth := h.width / 2
+	if overallWidth < 20 {
+		overallWidth = 20
+	}
+	catTotalWidth := h.width - overallWidth
+	catCellWidth := catTotalWidth / numCats
+	if catCellWidth < 10 {
+		catCellWidth = 10
+	}
 
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	// Build overall cell
+	overallLevel := threatToThermal(h.state.ThreatLevel)
+	overallThermal := overallGradient[overallLevel]
+	quip := h.state.StableQuip()
 
-	// Build left section: threat + counts
-	left := fmt.Sprintf("%s %s  %s", dot, level, quip)
+	// Pad quip to fill overall cell
+	if len(quip) > overallWidth-2 {
+		quip = quip[:overallWidth-2]
+	}
+	overallContent := fmt.Sprintf(" %-*s", overallWidth-1, quip)
+	overallCell := lipgloss.NewStyle().
+		Foreground(overallThermal.fg).
+		Background(overallThermal.bg).
+		Render(overallContent)
 
-	// Build right section: system stats
-	memColor := thresholdColor(memPct, 60, 80)
-	cpuColor := thresholdColor(snap.System.CPUPercent, 70, 90)
+	// Build category cells
+	var catCells []string
+	for _, cat := range collector.Categories {
+		smoothed := h.state.SmoothedCats[cat.Name]
+		count := int(math.Round(smoothed))
+		level := thermalLevelFor(cat.Name, count)
+		thermal := thermalGradient[level]
 
-	right := fmt.Sprintf("%s %s  %s  %s",
-		lipgloss.NewStyle().Foreground(cpuColor).Render(fmt.Sprintf("CPU %d%%", int(snap.System.CPUPercent))),
-		lipgloss.NewStyle().Foreground(memColor).Render(fmt.Sprintf("MEM %.1f/%.0fGB (%d%%)", memUsedGB, memTotalGB, int(memPct))),
-		formatSwap(swapMB),
-		dim.Render(fmt.Sprintf("headroom: ~%s", model.FormatBytes(s.Headroom.MemAvailBytes))),
-	)
+		content := fmt.Sprintf("%s:%03d", cat.Label, count)
 
-	// Counts in the middle
-	counts := fmt.Sprintf("%s  %s",
-		dim.Render(fmt.Sprintf("sessions: %d", s.SessionCount)),
-		dim.Render(fmt.Sprintf("procs: %d", snap.TotalProcs())),
-	)
+		// Center in cell
+		padTotal := catCellWidth - len(content)
+		padLeft := padTotal / 2
+		padRight := padTotal - padLeft
+		if padLeft < 0 {
+			padLeft = 0
+		}
+		if padRight < 0 {
+			padRight = 0
+		}
 
-	sep := dim.Render("  |  ")
+		padded := strings.Repeat(" ", padLeft) + content + strings.Repeat(" ", padRight)
+		cell := lipgloss.NewStyle().
+			Foreground(thermal.fg).
+			Background(thermal.bg).
+			Render(padded)
 
-	return left + "  " + counts + sep + right
+		catCells = append(catCells, cell)
+	}
+
+	return overallCell + strings.Join(catCells, "")
 }
 
-func formatSwap(mb int64) string {
-	if mb == 0 {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render("SWAP 0MB")
+func threatToThermal(t model.ThreatLevel) int {
+	switch t {
+	case model.ThreatCool:
+		return 1
+	case model.ThreatWarm:
+		return 2
+	case model.ThreatHot:
+		return 3
+	case model.ThreatMeltdown:
+		return 4
+	default:
+		return 0
 	}
-	color := lipgloss.Color("1") // red — any swap is bad
-	if mb < 1024 {
-		return lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("SWAP %dMB", mb))
-	}
-	return lipgloss.NewStyle().Foreground(color).Render(fmt.Sprintf("SWAP %.1fGB", float64(mb)/1024))
 }
 
 func thresholdColor(val, warn, crit float64) lipgloss.Color {
 	if val >= crit {
-		return lipgloss.Color("1") // red
+		return lipgloss.Color("1")
 	}
 	if val >= warn {
-		return lipgloss.Color("3") // yellow
+		return lipgloss.Color("3")
 	}
-	return lipgloss.Color("7") // white
+	return lipgloss.Color("7")
 }

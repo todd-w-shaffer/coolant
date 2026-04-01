@@ -30,6 +30,8 @@ type AppState struct {
 	NetRate      float64
 	TypeCounts       map[string]int
 	SmoothedCounts   map[string]float64 // EMA-smoothed type counts for calm display
+	CategoryCounts   map[string]int     // category → count (test, build, run, search, shell)
+	SmoothedCats     map[string]float64 // EMA-smoothed category counts
 	SessionCount     int
 	PluginActive     bool
 
@@ -125,6 +127,29 @@ func (s *AppState) Update(snap collector.Snapshot) {
 			}
 		}
 	}
+	// Category counts — raw and smoothed
+	s.CategoryCounts = collector.CategoryCounts(s.TypeCounts)
+	if s.SmoothedCats == nil {
+		s.SmoothedCats = make(map[string]float64)
+	}
+	for cat, count := range s.CategoryCounts {
+		if prev, ok := s.SmoothedCats[cat]; ok {
+			s.SmoothedCats[cat] = alpha*float64(count) + (1-alpha)*prev
+		} else {
+			s.SmoothedCats[cat] = float64(count)
+		}
+	}
+	for cat, prev := range s.SmoothedCats {
+		if _, ok := s.CategoryCounts[cat]; !ok {
+			decayed := (1 - alpha) * prev
+			if decayed < 0.5 {
+				delete(s.SmoothedCats, cat)
+			} else {
+				s.SmoothedCats[cat] = decayed
+			}
+		}
+	}
+
 	s.SessionCount = len(snap.Sessions)
 
 	// Headroom projection
