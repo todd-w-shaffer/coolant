@@ -102,6 +102,12 @@ func (h *Heatmap) View() string {
 		row.WriteString(label)
 		row.WriteString(" ")
 
+		// Right-align: pad empty columns on the left
+		empty := h.maxSnaps - len(h.snapshots)
+		if empty > 0 {
+			row.WriteString(strings.Repeat(" ", empty))
+		}
+
 		for _, snap := range h.snapshots {
 			count := snap[t]
 			bg := cellBg(count)
@@ -112,12 +118,6 @@ func (h *Heatmap) View() string {
 			} else {
 				row.WriteString(" ")
 			}
-		}
-
-		// Pad remaining columns
-		remaining := h.maxSnaps - len(h.snapshots)
-		if remaining > 0 {
-			row.WriteString(strings.Repeat(" ", remaining))
 		}
 
 		lines = append(lines, row.String())

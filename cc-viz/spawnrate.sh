@@ -56,16 +56,18 @@ render_sparkline_row() {
     # Pad label to LABEL_WIDTH
     printf ' %-*s' "$LABEL_WIDTH" "$label"
 
-    local cols=$((COLS - LABEL_WIDTH - 2))
-    if [ "$cols" -lt 1 ]; then cols=1; fi
+    # Available sparkline width: total cols minus label minus 1 trailing space
+    local spark_width=$((COLS - LABEL_WIDTH - 1))
+    if [ "$spark_width" -lt 1 ]; then spark_width=1; fi
 
-    # Only show the last $cols values
+    # Only show the last spark_width values
     local total=${#values[@]}
     local start=0
-    if [ "$total" -gt "$cols" ]; then
-        start=$((total - cols))
+    if [ "$total" -gt "$spark_width" ]; then
+        start=$((total - spark_width))
     fi
 
+    local drawn=0
     local i
     for (( i = start; i < total; i++ )); do
         local v="${values[$i]}"
@@ -74,12 +76,12 @@ render_sparkline_row() {
         local color
         color=$(spark_color "$cfunc" "$v")
         printf '%s%s%s' "$color" "$ch" "$RST"
+        drawn=$((drawn + 1))
     done
 
-    # Pad remaining columns if history is shorter than width
-    local drawn=$((total - start))
-    if [ "$drawn" -lt "$cols" ]; then
-        local pad=$((cols - drawn))
+    # Pad remaining columns so line fills exactly to COLS
+    if [ "$drawn" -lt "$spark_width" ]; then
+        local pad=$((spark_width - drawn))
         printf "%${pad}s" ""
     fi
 
@@ -145,7 +147,8 @@ render() {
     local peak_sign=""
     if [ "$peak_net" -ge 0 ] 2>/dev/null; then peak_sign="+"; fi
 
-    printf '  %sspawns: %d/s%s  %sdeaths: %d/s%s  %snet: %s%d/s%s  %speak_net: %s%d/s%s\n' \
+    # Compact summary — fits narrow panes
+    printf '  %s+%d/s%s %s-%d/s%s %snet:%s%d/s%s %spk:%s%d%s\n' \
         "$sc" "$curr_spawns" "$RST" \
         "$dc" "$curr_deaths" "$RST" \
         "$nc" "$net_sign" "$curr_net" "$RST" \

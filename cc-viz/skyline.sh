@@ -87,7 +87,7 @@ YLW="$FG_YELLOW"
 RED="$FG_RED"
 
 render() {
-  local max_height=$(( ROWS - 2 ))  # separator + footer
+  local max_height=$(( ROWS - 1 ))  # separator only, no footer
   if (( max_height < 1 )); then max_height=1; fi
   local visible=$SNAP_COUNT
 
@@ -150,24 +150,7 @@ render() {
   for (( i = 0; i < COLS; i++ )); do
     sep="${sep}─"
   done
-  printf '%s%s%s\n' "${DIM}${WHT}" "$sep" "${RST}"
-
-  # Footer: total count per column, right-aligned in 3-char cell
-  local footer=""
-  for (( col = 0; col < visible; col++ )); do
-    eval "col_count=\${COLCOUNT_${col}}"
-    local count_color="${BLD}${WHT}"
-    if (( col_count >= 50 )); then
-      count_color="${BLD}${RED}"
-    elif (( col_count >= 20 )); then
-      count_color="${BLD}${YLW}"
-    fi
-    footer="${footer}$(printf '%s%2d%s ' "$count_color" "$col_count" "$RST")"
-  done
-  local footer_used=$(( visible * COL_WIDTH ))
-  local footer_pad=$(( COLS - footer_used ))
-  if (( footer_pad < 0 )); then footer_pad=0; fi
-  printf '%s%*s' "$footer" "$footer_pad" ""
+  printf '%s%s%s' "${DIM}${WHT}" "$sep" "${RST}"
 }
 
 # ─── Cleanup ─────────────────────────────────────────────

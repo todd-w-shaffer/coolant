@@ -31,8 +31,16 @@ func Run(path string, interval time.Duration, done <-chan struct{}) {
 		default:
 		}
 
-		// Randomly spawn 0-5 new processes
+		// Age existing processes first (before spawning, so new procs keep Age=0)
+		for i := range procs {
+			procs[i].Age++
+		}
+
+		// Randomly spawn new processes (occasional bursts to trigger alerts)
 		spawns := rand.Intn(6)
+		if rand.Intn(10) == 0 {
+			spawns = 10 + rand.Intn(15) // burst: 10-24 new procs
+		}
 		for i := 0; i < spawns; i++ {
 			procs = append(procs, jsonl.Proc{
 				PID:  nextPID,
@@ -40,11 +48,6 @@ func Run(path string, interval time.Duration, done <-chan struct{}) {
 				Age:  0,
 			})
 			nextPID++
-		}
-
-		// Age all processes
-		for i := range procs {
-			procs[i].Age++
 		}
 
 		// Randomly kill some processes (10-30% chance each)
