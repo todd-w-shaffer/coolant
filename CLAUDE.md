@@ -4,7 +4,7 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 ## Project structure
 
-Pure shell plugin. No build step, no package manager, no runtime dependencies.
+Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization.
 
 ```
 .claude-plugin/plugin.json   # plugin manifest
@@ -15,19 +15,60 @@ scripts/toggle.sh            # manual parallel mode on/off/status
 scripts/parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode
 scripts/agent-start.sh       # SubagentStart hook: increment counter
 scripts/agent-stop.sh        # SubagentStop hook: decrement counter
+cc-viz/collector.sh          # JSONL snapshot collector (bash, ps + jq)
+cc-viz/cc-viz.sh             # tmux launcher (starts collector + Go binary)
+cc-viz/common.sh             # shared colors, thresholds, JSONL parser (bash)
+cc-viz-go/                   # Go visualization binary (see below)
 skills/parallel/SKILL.md     # /coolant:parallel skill definition
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
 tests/*.bats                 # bats test files, one per script
 ```
 
+### cc-viz-go (Go visualization)
+
+```
+cc-viz-go/
+├── cmd/cc-viz/main.go       # bubbletea app entry point
+├── internal/
+│   ├── jsonl/jsonl.go        # JSONL parser + file tailer
+│   ├── demo/demo.go          # synthetic data generator (--demo mode)
+│   ├── ui/
+│   │   ├── colors.go         # type colors, thresholds
+│   │   └── layout.go         # 2x2 grid layout renderer
+│   └── panes/
+│       ├── heatmap.go        # heatmap spectrogram (type × time)
+│       ├── waveform.go       # braille spawn/death waveform
+│       ├── waterfall.go      # per-process lifetime bars
+│       ├── breakdown.go      # type breakdown bar chart
+│       ├── phasering.go      # system state trajectory dots
+│       └── alertlog.go       # scrolling event log
+├── go.mod
+└── go.sum
+```
+
+**Dependencies:** Go 1.26+, `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`, `github.com/charmbracelet/bubbles`.
+
+**Build:** `cd cc-viz-go && go build ./cmd/cc-viz/`
+
+**Run:** `./cc-viz-go/cc-viz --demo` (synthetic data) or `./cc-viz-go/cc-viz --data /tmp/cc-procs.jsonl` (live)
+
 ## Key conventions
+
+### Bash (hooks, plumbing, collector)
 
 - All scripts must be bash 3.2 compatible (macOS system bash). No `mapfile`, no associative arrays, no `|&`.
 - All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_THRESHOLD`).
 - All hook scripts log events via `coolant_log "message"` from common.sh.
 - State lives in `/tmp/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime.
-- Monitor uses braille characters (`⣿`, `⠂`) for progress bars, matching the user's existing status bar aesthetic.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao` for sensors. No third-party tools.
+
+### Go (visualization)
+
+- bubbletea Elm architecture: `Init` → `Update(msg)` → `View()`. No manual cursor management.
+- Each pane is its own struct in `internal/panes/` with `SetSize()`, `Update()`, and `View()` methods.
+- JSONL tailer runs in a goroutine, sends `tickMsg` into bubbletea's program.
+- Type colors defined once in `internal/ui/colors.go`, shared across all panes.
+- Braille rendering done natively in Go (no awk, no subshells).
 
 ## TDD Workflow
 

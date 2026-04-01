@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cc-viz — Claude Code subprocess visualizer launcher
-# Creates a tmux 2x2 grid with skyline, spawn rate, breakdown, and alert log.
+# Creates a tmux 2x2 grid: heatmap, waveform, waterfall, breakdown + phase ring in status bar.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,7 +146,16 @@ printf "%sCollector started (PID %s)%s\n" "$DIM" "$COLLECTOR_PID" "$RST"
 # Give collector a moment to create the data file
 sleep 1
 
-# ─── Create tmux session with 2x2 grid ──────────────────
+# ─── Create tmux session with 2x2 grid + phase ring ─────
+#
+#  Layout:
+#   ┌──────────────┬──────────────┐
+#   │   heatmap    │   waveform   │
+#   ├──────────────┼──────────────┤
+#   │  waterfall   │  breakdown   │
+#   └──────────────┴──────────────┘
+#   phase ring in tmux status-right
+#
 tmux kill-session -t "$CC_VIZ_SESSION" 2>/dev/null || true
 
 TERM_COLS=$(tput cols 2>/dev/null || echo 120)
@@ -158,10 +167,16 @@ tmux split-window -v -t "${CC_VIZ_SESSION}:0.0"
 tmux split-window -v -t "${CC_VIZ_SESSION}:0.1"
 
 # ─── Send commands to each pane ──────────────────────────
-tmux send-keys -t "${CC_VIZ_SESSION}:0.0" "${PANE_ENV} bash '${SCRIPT_DIR}/skyline.sh'" Enter
-tmux send-keys -t "${CC_VIZ_SESSION}:0.1" "${PANE_ENV} bash '${SCRIPT_DIR}/spawnrate.sh'" Enter
-tmux send-keys -t "${CC_VIZ_SESSION}:0.2" "${PANE_ENV} bash '${SCRIPT_DIR}/breakdown.sh'" Enter
-tmux send-keys -t "${CC_VIZ_SESSION}:0.3" "${PANE_ENV} bash '${SCRIPT_DIR}/alertlog.sh'" Enter
+tmux send-keys -t "${CC_VIZ_SESSION}:0.0" "${PANE_ENV} bash '${SCRIPT_DIR}/heatmap.sh'" Enter
+tmux send-keys -t "${CC_VIZ_SESSION}:0.1" "${PANE_ENV} bash '${SCRIPT_DIR}/waveform.sh'" Enter
+tmux send-keys -t "${CC_VIZ_SESSION}:0.2" "${PANE_ENV} bash '${SCRIPT_DIR}/waterfall.sh'" Enter
+tmux send-keys -t "${CC_VIZ_SESSION}:0.3" "${PANE_ENV} bash '${SCRIPT_DIR}/breakdown.sh'" Enter
+
+# ─── Phase ring in tmux status bar ───────────────────────
+tmux set -t "$CC_VIZ_SESSION" status on
+tmux set -t "$CC_VIZ_SESSION" status-right-length 80
+tmux set -t "$CC_VIZ_SESSION" status-right "#(${PANE_ENV} bash '${SCRIPT_DIR}/phase-ring.sh' --inline)"
+tmux set -t "$CC_VIZ_SESSION" status-interval 1
 
 # ─── Attach ──────────────────────────────────────────────
 printf "%s%scc-viz%s %sattaching to tmux session...%s\n" "$FG_CYAN" "$BOLD" "$RST" "$DIM" "$RST"
