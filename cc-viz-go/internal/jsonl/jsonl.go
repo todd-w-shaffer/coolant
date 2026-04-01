@@ -87,7 +87,7 @@ func Tail(path string, ch chan<- Tick, done <-chan struct{}) {
 		if err != nil {
 			if err == io.EOF {
 				// No new data yet — poll
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 				continue
 			}
 			return

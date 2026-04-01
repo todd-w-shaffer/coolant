@@ -7,8 +7,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/toddwshaffer/coolant/cc-viz-go/internal/collector"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/demo"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/jsonl"
+	"github.com/toddwshaffer/coolant/cc-viz-go/internal/layout"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/panes"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/ui"
 )
@@ -16,10 +18,11 @@ import (
 // ── Messages ────────────────────────────────────────────────
 
 type tickMsg jsonl.Tick
+type snapshotMsg collector.Snapshot
 
-// ── Model ───────────────────────────────────────────────────
+// ── Legacy Model (old 2x2 grid) ────────────────────────────
 
-type model struct {
+type legacyModel struct {
 	width  int
 	height int
 
@@ -38,8 +41,8 @@ type model struct {
 	done     chan struct{}
 }
 
-func newModel(dataPath string) model {
-	return model{
+func newLegacyModel(dataPath string) legacyModel {
+	return legacyModel{
 		heatmap:   panes.NewHeatmap(),
 		waveform:  panes.NewWaveform(),
 		waterfall: panes.NewWaterfall(),
@@ -54,7 +57,7 @@ func newModel(dataPath string) model {
 
 var tickChan chan jsonl.Tick
 
-func (m model) Init() tea.Cmd {
+func (m legacyModel) Init() tea.Cmd {
 	tickChan = make(chan jsonl.Tick, 16)
 	go jsonl.Tail(m.dataPath, tickChan, m.done)
 	return waitForTick()
@@ -70,7 +73,7 @@ func waitForTick() tea.Cmd {
 	}
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m legacyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -87,34 +90,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		tick := jsonl.Tick(msg)
 		m.lastTick = tick
-
-		// Update deltas
 		m.deltas.Update(tick)
-
-		// Update all panes
 		m.heatmap.Update(tick)
 		m.waveform.Update(m.deltas.Spawns, m.deltas.Deaths, m.deltas.Net)
-
-		// Phase classification
 		spawns := tick.Spawns()
 		phase := panes.ClassifyPhase(tick.Count, spawns, m.deltas.Net)
 		m.phaseRing.Push(phase)
 		m.alertLog.Check(tick.Count, spawns, m.deltas.Net, phase)
-
 		return m, waitForTick()
 	}
 
 	return m, nil
 }
 
-func (m *model) updateSizes() {
+func (m *legacyModel) updateSizes() {
 	if m.width < 4 || m.height < 4 {
 		return
 	}
 	halfW := m.width / 2
 	leftW := halfW
 	rightW := m.width - halfW
-
 	statusH := 2
 	gridH := m.height - statusH
 	if gridH < 2 {
@@ -122,31 +117,96 @@ func (m *model) updateSizes() {
 	}
 	topH := gridH / 2
 	bottomH := gridH - topH
-
 	m.heatmap.SetSize(leftW, topH)
 	m.waveform.SetSize(rightW, topH)
 	m.waterfall.SetSize(leftW, bottomH)
 	m.breakdown.SetSize(rightW, bottomH)
 }
 
-func (m model) View() string {
+func (m legacyModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-
 	topLeft := m.heatmap.View()
 	topRight := m.waveform.View()
 	bottomLeft := m.waterfall.View(m.lastTick)
 	bottomRight := m.breakdown.View(m.lastTick)
-
-	// Status row: phase ring + alert log last entry
 	statusRow := fmt.Sprintf("  %s", m.phaseRing.View())
 	alertView := m.alertLog.View(1)
 	if alertView != "" {
 		statusRow += "\n" + alertView
 	}
-
 	return ui.RenderGrid(topLeft, topRight, bottomLeft, bottomRight, statusRow, m.width, m.height)
+}
+
+// ── New Model (horizontal/vertical layouts) ─────────────────
+
+type v2Model struct {
+	width    int
+	height   int
+	layout   *layout.Horizontal
+	done     chan struct{}
+	demoMode bool
+	snapChan chan collector.Snapshot
+}
+
+func newV2Model(demoMode bool) v2Model {
+	return v2Model{
+		layout:   layout.NewHorizontal(),
+		done:     make(chan struct{}),
+		demoMode: demoMode,
+		snapChan: make(chan collector.Snapshot, 16),
+	}
+}
+
+func (m v2Model) Init() tea.Cmd {
+	if m.demoMode {
+		go demo.RunV2(m.snapChan, 250*time.Millisecond, m.done)
+	} else {
+		go collector.Run(m.snapChan, 500*time.Millisecond, m.done)
+	}
+	return waitForSnapshot(m.snapChan)
+}
+
+func waitForSnapshot(ch <-chan collector.Snapshot) tea.Cmd {
+	return func() tea.Msg {
+		snap, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return snapshotMsg(snap)
+	}
+}
+
+func (m v2Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			close(m.done)
+			return m, tea.Quit
+		}
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.layout.SetSize(m.width, m.height)
+
+	case snapshotMsg:
+		snap := collector.Snapshot(msg)
+		m.layout.State().Update(snap)
+		m.layout.Update(m.layout.State())
+		return m, waitForSnapshot(m.snapChan)
+	}
+
+	return m, nil
+}
+
+func (m v2Model) View() string {
+	if m.width == 0 || m.height == 0 {
+		return ""
+	}
+	return m.layout.View()
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -154,17 +214,26 @@ func (m model) View() string {
 func main() {
 	dataPath := flag.String("data", "/tmp/cc-procs.jsonl", "Path to JSONL data file")
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
+	horizontal := flag.Bool("horizontal", false, "Horizontal strip layout (bottom tmux pane)")
+	vertical := flag.Bool("vertical", false, "Vertical panel layout (right tmux pane)")
 	flag.Parse()
 
-	if *demoMode {
-		done := make(chan struct{})
-		go demo.Run(*dataPath, 1*time.Second, done)
-		defer close(done)
-		// Give demo a moment to write first line
-		time.Sleep(200 * time.Millisecond)
+	var m tea.Model
+
+	if *horizontal || *vertical {
+		// New v2 layout
+		m = newV2Model(*demoMode)
+	} else {
+		// Legacy 2x2 grid
+		if *demoMode {
+			done := make(chan struct{})
+			go demo.Run(*dataPath, 250*time.Millisecond, done)
+			defer close(done)
+			time.Sleep(200 * time.Millisecond)
+		}
+		m = newLegacyModel(*dataPath)
 	}
 
-	m := newModel(*dataPath)
 	p := tea.NewProgram(m,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
