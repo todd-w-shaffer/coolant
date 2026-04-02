@@ -20,7 +20,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/agent-start.sh",
-            "timeout": 5
+            "timeout": 5,
+            "statusMessage": "Coolant: agent starting..."
           }
         ]
       }
@@ -32,7 +33,8 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/agent-stop.sh",
-            "timeout": 5
+            "timeout": 5,
+            "statusMessage": "Coolant: agent stopping..."
           }
         ]
       }

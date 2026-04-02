@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # PostToolUse hook: suppress tsc when coolant parallel mode is active
 # If the lockfile exists, skip typecheck and emit a system message.
 # If not, exit cleanly and let the project's normal hooks handle it.

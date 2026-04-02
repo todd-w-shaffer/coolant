@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
@@ -17,40 +18,40 @@ type AlertEntry struct {
 
 // AppState holds the rolling history, computed metrics, and UI state.
 type AppState struct {
-	Current      *collector.Snapshot
-	History      []collector.Snapshot
-	PrevPIDs     map[int]bool
+	Current  *collector.Snapshot
+	History  []collector.Snapshot
+	PrevPIDs map[int]bool
 
 	// Computed
-	ThreatLevel  ThreatLevel
-	PrevThreat   ThreatLevel
-	Headroom     HeadroomInfo
-	SpawnRate    float64
-	DeathRate    float64
-	NetRate      float64
-	TypeCounts       map[string]int
-	SmoothedCounts   map[string]float64 // EMA-smoothed type counts for calm display
-	CategoryCounts   map[string]int     // category → count (test, build, run, search, shell)
-	SmoothedCats     map[string]float64 // EMA-smoothed category counts
-	SessionCount     int
-	PluginActive     bool
-	Online           bool
-	OnlineLog        []bool // tracks online/offline per tick, same length as History
-	OfflineSince     time.Time // when we went offline
-	OfflineDuration  time.Duration
+	ThreatLevel     ThreatLevel
+	PrevThreat      ThreatLevel
+	Headroom        HeadroomInfo
+	SpawnRate       float64
+	DeathRate       float64
+	NetRate         float64
+	TypeCounts      map[string]int
+	SmoothedCounts  map[string]float64 // EMA-smoothed type counts for calm display
+	CategoryCounts  map[string]int     // category → count (test, build, run, search, shell)
+	SmoothedCats    map[string]float64 // EMA-smoothed category counts
+	SessionCount    int
+	PluginActive    bool
+	Online          bool
+	OnlineLog       []bool    // tracks online/offline per tick, same length as History
+	OfflineSince    time.Time // when we went offline
+	OfflineDuration time.Duration
 
 	// Rate tracking
 	recentSpawns []int
 	recentDeaths []int
 
 	// Alerts
-	Alerts       []AlertEntry
-	maxAlerts    int
+	Alerts    []AlertEntry
+	maxAlerts int
 
 	// Personality
-	IdleCycle    int
-	idleTicker   int
-	stableQuip   string
+	IdleCycle  int
+	idleTicker int
+	stableQuip string
 }
 
 // NewAppState creates an initialized AppState.
@@ -64,10 +65,12 @@ func NewAppState() *AppState {
 func (s *AppState) Update(snap collector.Snapshot) {
 	s.Current = &snap
 
-	// Append to history ring buffer
+	// Append to history — copy to new slice to release the old backing array
 	s.History = append(s.History, snap)
 	if len(s.History) > maxHistory {
-		s.History = s.History[len(s.History)-maxHistory:]
+		trimmed := make([]collector.Snapshot, maxHistory)
+		copy(trimmed, s.History[len(s.History)-maxHistory:])
+		s.History = trimmed
 	}
 
 	// Compute spawn/death deltas
@@ -99,7 +102,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		if spawns >= 8 {
 			s.addAlert(AlertEntry{
 				Time:    snap.Timestamp,
-				Message: "spawn burst -- " + string(rune('0'+spawns)) + " new procs",
+				Message: "spawn burst -- " + strconv.Itoa(spawns) + " new procs",
 				Level:   ThreatHot,
 			})
 		}
@@ -170,10 +173,12 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		s.OfflineDuration = snap.Timestamp.Sub(s.OfflineSince)
 	}
 
-	// Track online/offline per tick (same ring buffer as History)
+	// Track online/offline per tick — copy to release old backing array
 	s.OnlineLog = append(s.OnlineLog, snap.Online)
 	if len(s.OnlineLog) > maxHistory {
-		s.OnlineLog = s.OnlineLog[len(s.OnlineLog)-maxHistory:]
+		trimmed := make([]bool, maxHistory)
+		copy(trimmed, s.OnlineLog[len(s.OnlineLog)-maxHistory:])
+		s.OnlineLog = trimmed
 	}
 
 	// Headroom projection
@@ -297,7 +302,9 @@ func (s *AppState) LastDeaths() int {
 func (s *AppState) addAlert(a AlertEntry) {
 	s.Alerts = append(s.Alerts, a)
 	if len(s.Alerts) > s.maxAlerts {
-		s.Alerts = s.Alerts[len(s.Alerts)-s.maxAlerts:]
+		trimmed := make([]AlertEntry, s.maxAlerts)
+		copy(trimmed, s.Alerts[len(s.Alerts)-s.maxAlerts:])
+		s.Alerts = trimmed
 	}
 }
 

@@ -12,6 +12,7 @@ const (
 	ThreatMeltdown                    // red — swap active, degradation underway
 )
 
+// String returns the human-readable name of the threat level.
 func (t ThreatLevel) String() string {
 	switch t {
 	case ThreatCool:

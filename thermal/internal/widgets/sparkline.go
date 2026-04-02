@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// SparkThresholds define the warn/crit boundaries for per-dot coloring.
+// SparkThresholds defines the warn/crit boundaries for per-dot coloring.
 type SparkThresholds struct {
 	Warn float64
 	Crit float64
@@ -203,17 +203,17 @@ var rainbowColors = []string{
 // Random braille patterns for offline mode — irreverent dot positions.
 // Left column dots: 1(1), 2(2), 3(4), 7(64). Mix and match freely.
 var funBraille = []rune{
-	0x2800 + 64,      // ⡀ bottom only
-	0x2800 + 1,       // ⠁ top only
-	0x2800 + 2,       // ⠂ second from top
-	0x2800 + 4,       // ⠄ third from top
-	0x2800 + 64 + 1,  // ⡁ top + bottom
-	0x2800 + 2 + 4,   // ⠆ middle two
-	0x2800 + 1 + 4,   // ⠅ top + third
-	0x2800 + 1 + 64,  // ⡁ top + bottom
-	0x2800 + 2 + 64,  // ⡂ second + bottom
-	0x2800 + 1 + 2,   // ⠃ top two
-	0x2800 + 4 + 64,  // ⡄ third + bottom
+	0x2800 + 64,         // ⡀ bottom only
+	0x2800 + 1,          // ⠁ top only
+	0x2800 + 2,          // ⠂ second from top
+	0x2800 + 4,          // ⠄ third from top
+	0x2800 + 64 + 1,     // ⡁ top + bottom
+	0x2800 + 2 + 4,      // ⠆ middle two
+	0x2800 + 1 + 4,      // ⠅ top + third
+	0x2800 + 1 + 64,     // ⡁ top + bottom
+	0x2800 + 2 + 64,     // ⡂ second + bottom
+	0x2800 + 1 + 2,      // ⠃ top two
+	0x2800 + 4 + 64,     // ⡄ third + bottom
 	0x2800 + 1 + 4 + 64, // ⡅ top + third + bottom
 	0x2800 + 2 + 4 + 64, // ⡆ middle two + bottom
 	0x2800 + 1 + 2 + 64, // ⡃ top two + bottom

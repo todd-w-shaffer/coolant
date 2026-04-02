@@ -328,8 +328,10 @@ scan_agents() {
       local slot_pid
       eval "slot_pid=\"\$AGENT_SLOT_PID_${i}\""
       if [[ -n "$slot_pid" ]]; then
-        local cpu_val job_val
-        eval "$(echo "$bulk_data" | awk -v pid="$slot_pid" '$1 == pid { printf "cpu_val=%d; job_val=%s", $2, $3 }')"
+        local cpu_val job_val _line
+        _line=$(echo "$bulk_data" | awk -v pid="$slot_pid" '$1 == pid { print $2, $3 }')
+        cpu_val="${_line%% *}"
+        job_val="${_line#* }"
         cpu_val="${cpu_val:-0}"
         job_val="${job_val:-idle}"
         history_push "AGENT_HIST_${i}" "$cpu_val" 20

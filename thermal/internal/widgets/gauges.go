@@ -12,9 +12,9 @@ var gaugeDots = []struct {
 	dot   string
 	color string
 }{
-	{"●", "\033[37m"},  // cpu — white dot
-	{"●", "\033[36m"},  // mem — cyan dot
-	{"●", "\033[35m"},  // swap — magenta dot
+	{"●", "\033[37m"}, // cpu — white dot
+	{"●", "\033[36m"}, // mem — cyan dot
+	{"●", "\033[35m"}, // swap — magenta dot
 }
 
 // Gauges renders 3 sparklines: CPU%, MEM%, SWAP.
@@ -53,12 +53,12 @@ func (g *Gauges) View() string {
 	}
 
 	type gauge struct {
-		data   []float64
+		data    []float64
 		current float64
-		max    float64
-		thresh SparkThresholds
-		dot    string
-		dotClr string
+		max     float64
+		thresh  SparkThresholds
+		dot     string
+		dotClr  string
 	}
 
 	gauges := []gauge{

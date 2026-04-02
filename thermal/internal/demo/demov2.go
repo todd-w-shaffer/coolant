@@ -23,7 +23,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 	tick := 0
 
 	// Base system stats (realistic M-series Mac)
-	baseMem := int64(6 * (1 << 30))  // 6GB base usage
+	baseMem := int64(6 * (1 << 30))   // 6GB base usage
 	totalMem := int64(16 * (1 << 30)) // 16GB total
 
 	for {
@@ -38,7 +38,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 
 		// Age existing procs
 		for i := range procs {
-			procs[i].RSSBytes += int64(rand.Intn(10*(1<<20))) // slow RSS growth
+			procs[i].RSSBytes += int64(rand.Intn(10 * (1 << 20))) // slow RSS growth
 		}
 
 		// Spawn new procs based on phase

@@ -4,13 +4,13 @@ import "time"
 
 // SystemStats holds system-wide resource utilization from sysctl/vm_stat.
 type SystemStats struct {
-	CPUPercent    float64 // load1 / ncpu * 100, capped at 100
-	MemUsedBytes  int64   // active + wired + compressed pages
-	MemTotalBytes int64   // hw.memsize
-	SwapUsedBytes int64
+	CPUPercent     float64 // load1 / ncpu * 100, capped at 100
+	MemUsedBytes   int64   // active + wired + compressed pages
+	MemTotalBytes  int64   // hw.memsize
+	SwapUsedBytes  int64
 	SwapTotalBytes int64
-	NCPUs         int
-	Timestamp     time.Time
+	NCPUs          int
+	Timestamp      time.Time
 }
 
 // MemPercent returns memory utilization as 0-100.
@@ -76,11 +76,12 @@ func (s SessionTree) TypeCounts() map[string]int {
 
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {
-	System    SystemStats
-	Sessions  []SessionTree  // one per Claude root process
-	AllProcs  []ProcessInfo  // flat list of all Claude descendants
-	Online    bool           // can we reach the Claude API?
-	Timestamp time.Time
+	System      SystemStats
+	Sessions    []SessionTree // one per Claude root process
+	AllProcs    []ProcessInfo // flat list of all Claude descendants
+	Online      bool          // can we reach the Claude API?
+	Timestamp   time.Time
+	CollectErrs []string // non-nil when collection partially failed
 }
 
 // TotalProcs returns the total number of Claude descendant processes.

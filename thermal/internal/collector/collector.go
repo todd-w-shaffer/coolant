@@ -29,10 +29,12 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 }
 
 func collect() Snapshot {
-	ctx := context.Background()
+	// 5s deadline protects against hanging syscalls or DNS — any collector
+	// goroutine that outlives this context gets cancelled via exec.CommandContext.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	now := time.Now()
 
-	// Collect system stats, process tree, and network state concurrently
 	type sysResult struct {
 		stats SystemStats
 		err   error
@@ -56,24 +58,43 @@ func collect() Snapshot {
 		procCh <- procResult{sessions, allProcs, err}
 	}()
 	go func() {
-		netCh <- CheckOnline()
+		netCh <- CheckOnline(ctx)
 	}()
-
-	sysRes := <-sysCh
-	procRes := <-procCh
-	online := <-netCh
 
 	snap := Snapshot{
 		Timestamp: now,
-		Online:    online,
 	}
 
-	if sysRes.err == nil {
-		snap.System = sysRes.stats
+	// Receive with timeout — if a collector hangs past the deadline,
+	// return a partial snapshot rather than deadlocking.
+	select {
+	case r := <-sysCh:
+		if r.err == nil {
+			snap.System = r.stats
+		} else {
+			snap.CollectErrs = append(snap.CollectErrs, "system: "+r.err.Error())
+		}
+	case <-ctx.Done():
+		return snap
 	}
-	if procRes.err == nil {
-		snap.Sessions = procRes.sessions
-		snap.AllProcs = procRes.allProcs
+
+	select {
+	case r := <-procCh:
+		if r.err == nil {
+			snap.Sessions = r.sessions
+			snap.AllProcs = r.allProcs
+		} else {
+			snap.CollectErrs = append(snap.CollectErrs, "procs: "+r.err.Error())
+		}
+	case <-ctx.Done():
+		return snap
+	}
+
+	select {
+	case online := <-netCh:
+		snap.Online = online
+	case <-ctx.Done():
+		return snap
 	}
 
 	return snap

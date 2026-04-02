@@ -21,8 +21,8 @@ bash ${CLAUDE_SKILL_DIR}/../../scripts/toggle.sh $ARGUMENTS
 
 Follow these rules for the remainder of the session:
 
-1. **Cap concurrent agents at 4.** Do not launch more than 4 agents at once. If more work remains, wait for running agents to finish before launching the next batch.
-2. **Do not run `npm run check`, `npm run build`, `tsc`, or `vitest` inside parallel agents.** Let agents write code only.
+1. **Cap concurrent agents at 4** (this is guidance for the LLM, not enforced by coolant). Do not launch more than 4 agents at once. If more work remains, wait for running agents to finish before launching the next batch.
+2. **Do not run validation inside parallel agents** (`tsc`, `vitest`, project-specific build/check commands). Let agents write code only.
 3. **After all agents return**, run validation sequentially in the main context:
    ```bash
    npm run check    # typecheck + tests

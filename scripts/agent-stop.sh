@@ -1,9 +1,12 @@
 #!/bin/bash
+set -euo pipefail
 # SubagentStop hook: decrement agent counter, auto-disengage when all agents done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
+# Atomic decrement via mkdir mutex (see common.sh)
+coolant_lock
 current=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "1")
 next=$((current - 1))
 
@@ -13,6 +16,7 @@ if [ "$next" -lt 0 ]; then
 fi
 
 echo "$next" > "$COOLANT_COUNTER"
+coolant_unlock
 
 coolant_log "agent stopped ($next remaining)"
 

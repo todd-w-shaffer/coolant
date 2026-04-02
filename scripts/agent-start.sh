@@ -1,13 +1,16 @@
 #!/bin/bash
+set -euo pipefail
 # SubagentStart hook: increment agent counter, auto-engage parallel mode at threshold
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# Atomic-ish increment (good enough for our use case)
+# Atomic increment via mkdir mutex (see common.sh)
+coolant_lock
 current=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "0")
 next=$((current + 1))
 echo "$next" > "$COOLANT_COUNTER"
+coolant_unlock
 
 coolant_log "agent started ($next active)"
 

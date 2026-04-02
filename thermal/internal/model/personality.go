@@ -41,13 +41,13 @@ var threatQuips = map[ThreatLevel][]string{
 
 // Alert message templates for threshold crossings.
 var alertTemplates = map[string]string{
-	"spawn_burst":    "spawn burst detected -- %d new procs",
-	"mem_headroom":   "memory headroom below %s",
-	"swap_active":    "swap is active -- %s used",
-	"phase_up":       "%s -- %s",
-	"phase_down":     "cooling down -- %s",
-	"session_new":    "new Claude session detected (pid %d)",
-	"session_gone":   "Claude session ended (pid %d)",
+	"spawn_burst":  "spawn burst detected -- %d new procs",
+	"mem_headroom": "memory headroom below %s",
+	"swap_active":  "swap is active -- %s used",
+	"phase_up":     "%s -- %s",
+	"phase_down":   "cooling down -- %s",
+	"session_new":  "new Claude session detected (pid %d)",
+	"session_gone": "Claude session ended (pid %d)",
 }
 
 // IdleMessage returns a cycling idle message.

@@ -10,27 +10,27 @@ const (
 // WeightClass maps process type codes to estimated memory usage in bytes.
 // V1: hardcoded heuristics. V2 will learn from observed RSS.
 var WeightClass = map[string]int64{
-	"V": 1 * GB,    // vitest/jest — V8 heap per worker
-	"N": 1 * GB,    // node/deno/bun — general runtime
-	"T": 300 * MB,  // tsc — TypeScript compiler
-	"B": 300 * MB,  // bundlers/linters/compilers
-	"P": 200 * MB,  // python/ruby/java/docker
-	"C": 50 * MB,   // git/curl/cat — utilities
-	"G": 20 * MB,   // grep/ag
-	"R": 20 * MB,   // ripgrep
-	"F": 20 * MB,   // find/fd
-	"S": 20 * MB,   // bash/sh/zsh/sed/awk
-	"X": 50 * MB,   // unknown
+	"V": 1 * GB,   // vitest/jest — V8 heap per worker
+	"N": 1 * GB,   // node/deno/bun — general runtime
+	"T": 300 * MB, // tsc — TypeScript compiler
+	"B": 300 * MB, // bundlers/linters/compilers
+	"P": 200 * MB, // python/ruby/java/docker
+	"C": 50 * MB,  // git/curl/cat — utilities
+	"G": 20 * MB,  // grep/ag
+	"R": 20 * MB,  // ripgrep
+	"F": 20 * MB,  // find/fd
+	"S": 20 * MB,  // bash/sh/zsh/sed/awk
+	"X": 50 * MB,  // unknown
 }
 
 // HeadroomInfo summarizes projected memory state.
 type HeadroomInfo struct {
-	MemAvailBytes    int64  // total - used (before swap)
-	EstCommitted     int64  // sum of weight class estimates for Claude procs
-	HeadroomBytes    int64  // available - committed (can be negative)
-	HeavyProcs       int    // count of HEAVY weight class procs (V, N)
-	HeavyEstimate    int64  // just the heavy proc estimate
-	Warning          string // human-readable warning, empty if fine
+	MemAvailBytes int64  // total - used (before swap)
+	EstCommitted  int64  // sum of weight class estimates for Claude procs
+	HeadroomBytes int64  // available - committed (can be negative)
+	HeavyProcs    int    // count of HEAVY weight class procs (V, N)
+	HeavyEstimate int64  // just the heavy proc estimate
+	Warning       string // human-readable warning, empty if fine
 }
 
 // EstimateHeadroom computes projected memory commitment from type counts and system stats.

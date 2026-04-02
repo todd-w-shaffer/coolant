@@ -2,21 +2,21 @@ package ui
 
 import "github.com/charmbracelet/lipgloss"
 
-// Type colors — consistent across all panes.
+// TypeColor maps process type codes to lipgloss colors, shared across all widgets.
 var TypeColor = map[string]lipgloss.Color{
-	"N": lipgloss.Color("2"),   // green — node
-	"G": lipgloss.Color("3"),   // yellow — grep
-	"V": lipgloss.Color("1"),   // red — vitest
-	"S": lipgloss.Color("6"),   // cyan — shell
-	"R": lipgloss.Color("5"),   // magenta — ripgrep
-	"F": lipgloss.Color("4"),   // blue — find
-	"C": lipgloss.Color("7"),   // white — claude
-	"P": lipgloss.Color("11"),  // bright yellow — python
-	"T": lipgloss.Color("14"),  // bright cyan — tsc
-	"X": lipgloss.Color("8"),   // gray — other
+	"N": lipgloss.Color("2"),  // green — node
+	"G": lipgloss.Color("3"),  // yellow — grep
+	"V": lipgloss.Color("1"),  // red — vitest
+	"S": lipgloss.Color("6"),  // cyan — shell
+	"R": lipgloss.Color("5"),  // magenta — ripgrep
+	"F": lipgloss.Color("4"),  // blue — find
+	"C": lipgloss.Color("7"),  // white — claude
+	"P": lipgloss.Color("11"), // bright yellow — python
+	"T": lipgloss.Color("14"), // bright cyan — tsc
+	"X": lipgloss.Color("8"),  // gray — other
 }
 
-// Category colors — what Claude is doing, not what executable is running.
+// CategoryColor maps activity categories to lipgloss colors.
 var CategoryColor = map[string]lipgloss.Color{
 	"test":   lipgloss.Color("1"),   // red — the machine killer
 	"build":  lipgloss.Color("208"), // orange — heavy but finite

@@ -11,12 +11,13 @@ import (
 
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).
 // Layout order:
-//   Line 1:  [i] plugin CTA (if no plugin)
-//   Line 2:  [ overall temp + msg | test:004 | build:008 | run:018 | search:005 | shell:004 ]
-//   Lines 3-6: sparklines (procs, cpu%, mem%, swap)
-//   Line 7:  spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11/16GB  SWAP:00000MB
-//   Lines 8-9: alerts
-//   Line 10: (overflow)
+//
+//	Line 1:  [i] plugin CTA (if no plugin)
+//	Line 2:  [ overall temp + msg | test:004 | build:008 | run:018 | search:005 | shell:004 ]
+//	Lines 3-6: sparklines (procs, cpu%, mem%, swap)
+//	Line 7:  spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11/16GB  SWAP:00000MB
+//	Lines 8-9: alerts
+//	Line 10: (overflow)
 type Horizontal struct {
 	width    int
 	height   int
@@ -40,7 +41,6 @@ func NewHorizontal() *Horizontal {
 func (h *Horizontal) State() *model.AppState {
 	return h.state
 }
-
 
 func (h *Horizontal) SetSize(w, height int) {
 	h.width = w

@@ -21,10 +21,10 @@ var ThreatColor = map[model.ThreatLevel]lipgloss.Color{
 // Overall thermal gradient — same 5-level scheme as category boxes.
 var overallGradient = []thermalLevel{
 	{lipgloss.Color("236"), lipgloss.Color("233")}, // cold
-	{lipgloss.Color("2"), lipgloss.Color("233")},    // cool: green text
-	{lipgloss.Color("3"), lipgloss.Color("234")},    // warm: yellow text
-	{lipgloss.Color("208"), lipgloss.Color("235")},  // hot: orange text
-	{lipgloss.Color("196"), lipgloss.Color("52")},   // critical: red on dark red
+	{lipgloss.Color("2"), lipgloss.Color("233")},   // cool: green text
+	{lipgloss.Color("3"), lipgloss.Color("234")},   // warm: yellow text
+	{lipgloss.Color("208"), lipgloss.Color("235")}, // hot: orange text
+	{lipgloss.Color("196"), lipgloss.Color("52")},  // critical: red on dark red
 }
 
 // Headline renders the unified thermal bar:
@@ -73,8 +73,8 @@ func (h *Headline) View() string {
 		}
 		overallContent := fmt.Sprintf(" %-*s", overallWidth-1, quip)
 		overallCell = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("0")).   // black text
-			Background(lipgloss.Color("67")).  // steel blue bg
+			Foreground(lipgloss.Color("0")).  // black text
+			Background(lipgloss.Color("67")). // steel blue bg
 			Render(overallContent)
 	} else {
 		overallLevel := threatToThermal(h.state.ThreatLevel)

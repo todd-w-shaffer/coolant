@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Toggle coolant parallel mode on/off/status
 # Usage: toggle.sh [on|off|status]
 
