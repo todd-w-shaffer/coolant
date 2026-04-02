@@ -26,31 +26,53 @@ tests/*.bats                 # bats test files, one per script
 
 ### cc-viz-go (Go visualization)
 
+Two layout modes: `--horizontal` (bottom tmux strip) and `--vertical` (right panel, WIP).
+Legacy 2x2 grid mode runs when no layout flag is passed.
+
 ```
 cc-viz-go/
-├── cmd/cc-viz/main.go       # bubbletea app entry point
+├── cmd/cc-viz/main.go       # bubbletea app, flag parsing, model selection
 ├── internal/
-│   ├── jsonl/jsonl.go        # JSONL parser + file tailer
-│   ├── demo/demo.go          # synthetic data generator (--demo mode)
+│   ├── collector/
+│   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
+│   │   ├── system.go         # CPU/MEM/SWAP via sysctl/vm_stat
+│   │   ├── procs.go          # Claude process discovery + descendant trees
+│   │   └── collector.go      # orchestrates collection, sends Snapshots
+│   ├── model/
+│   │   ├── state.go          # AppState: rolling history, smoothed counts
+│   │   ├── threat.go         # ThreatLevel: COOL/WARM/HOT/MELTDOWN
+│   │   ├── projection.go     # memory weight classes, headroom estimation
+│   │   └── personality.go    # idle messages, threat quips
+│   ├── widgets/
+│   │   ├── widget.go         # Widget interface
+│   │   ├── sparkline.go      # braille severity bars (⡀ green/⡄ yellow/⡆ red)
+│   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
+│   │   ├── gauges.go         # CPU/MEM/SWAP braille sparklines
+│   │   ├── procbar.go        # thermal category boxes (test/build/run/search/shell)
+│   │   ├── rates.go          # spawn/death/net + system stats, fixed-width
+│   │   └── alerts.go         # scrolling alert log
+│   ├── layout/
+│   │   └── horizontal.go     # bottom-strip layout compositor
 │   ├── ui/
-│   │   ├── colors.go         # type colors, thresholds
-│   │   └── layout.go         # 2x2 grid layout renderer
-│   └── panes/
-│       ├── heatmap.go        # heatmap spectrogram (type × time)
-│       ├── waveform.go       # braille spawn/death waveform
-│       ├── waterfall.go      # per-process lifetime bars
-│       ├── breakdown.go      # type breakdown bar chart
-│       ├── phasering.go      # system state trajectory dots
-│       └── alertlog.go       # scrolling event log
+│   │   ├── colors.go         # type colors, category colors, thresholds
+│   │   └── layout.go         # legacy 2x2 grid renderer
+│   ├── jsonl/jsonl.go        # JSONL parser + file tailer (legacy)
+│   ├── demo/
+│   │   ├── demo.go           # legacy synthetic data (JSONL)
+│   │   └── demov2.go         # v2 synthetic Snapshots with system stats
+│   └── panes/                # legacy 2x2 panes (kept for backward compat)
 ├── go.mod
 └── go.sum
 ```
 
-**Dependencies:** Go 1.26+, `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`, `github.com/charmbracelet/bubbles`.
+**Dependencies:** Go 1.26+, `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`.
 
 **Build:** `cd cc-viz-go && go build ./cmd/cc-viz/`
 
-**Run:** `./cc-viz-go/cc-viz --demo` (synthetic data) or `./cc-viz-go/cc-viz --data /tmp/cc-procs.jsonl` (live)
+**Run:**
+- `./cc-viz-go/cc-viz --demo --horizontal` (thermal dashboard, synthetic data)
+- `./cc-viz-go/cc-viz --horizontal` (thermal dashboard, live system data)
+- `./cc-viz-go/cc-viz --demo` (legacy 2x2 grid, synthetic JSONL)
 
 ## Key conventions
 

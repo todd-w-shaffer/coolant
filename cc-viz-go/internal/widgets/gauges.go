@@ -66,8 +66,8 @@ func (g *Gauges) View() string {
 		{g.state.MemHistory(), g.state.Current.System.MemPercent(), 100,
 			SparkThresholds{Warn: 60, Crit: 80},
 			gaugeDots[1].dot, gaugeDots[1].color},
-		{g.state.SwapHistory(), g.state.Current.System.SwapPercent(), 100,
-			SparkThresholds{Warn: 1, Crit: 50},
+		{g.state.SwapHistory(), g.state.Current.System.SwapPercent(), 0,
+			SparkThresholds{Warn: 10, Crit: 100},
 			gaugeDots[2].dot, gaugeDots[2].color},
 	}
 

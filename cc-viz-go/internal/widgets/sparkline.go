@@ -70,10 +70,10 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 			color = sparkRed
 		}
 
-		// Zero value = empty
+		// Zero value = minimum green dot (always show something)
 		if v == 0 {
-			bar = brailleBars[0]
-			color = sparkDim
+			bar = brailleBars[1]
+			color = sparkGreen
 		}
 
 		sb.WriteString(color)
@@ -84,31 +84,10 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 	return sb.String()
 }
 
-// RenderSparklineCompact downsamples data to fit width, then renders.
+// RenderSparklineCompact renders the most recent `width` data points.
+// No downsampling — each dot is one real sample. The rightmost dot
+// always represents the most recent value, matching the percentage display.
 func RenderSparklineCompact(data []float64, width int, maxOverride float64, thresh *SparkThresholds) string {
-	if width <= 0 || len(data) == 0 {
-		return ""
-	}
-
-	// Downsample by averaging if data is wider than available space
-	if len(data) > width {
-		binSize := len(data) / width
-		var downsampled []float64
-		for i := 0; i < width; i++ {
-			start := i * binSize
-			end := start + binSize
-			if end > len(data) {
-				end = len(data)
-			}
-			sum := 0.0
-			for _, v := range data[start:end] {
-				sum += v
-			}
-			downsampled = append(downsampled, sum/float64(end-start))
-		}
-		data = downsampled
-	}
-
 	return RenderSparkline(data, width, maxOverride, thresh)
 }
 

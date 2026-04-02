@@ -21,12 +21,13 @@ func (s SystemStats) MemPercent() float64 {
 	return float64(s.MemUsedBytes) / float64(s.MemTotalBytes) * 100
 }
 
-// SwapPercent returns swap utilization as 0-100.
+// SwapPercent returns swap as a percentage of physical RAM (not swap partition).
+// 85GB swap on 16GB RAM = 531%. Tells you how far past physical memory you are.
 func (s SystemStats) SwapPercent() float64 {
-	if s.SwapTotalBytes == 0 {
+	if s.MemTotalBytes == 0 {
 		return 0
 	}
-	return float64(s.SwapUsedBytes) / float64(s.SwapTotalBytes) * 100
+	return float64(s.SwapUsedBytes) / float64(s.MemTotalBytes) * 100
 }
 
 // ProcessInfo holds a single process from the Claude descendant tree.
