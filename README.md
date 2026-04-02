@@ -26,27 +26,23 @@ Coolant sits between Claude Code and your hardware. It senses system state, trac
 
 - **Event logging** — Every mode change, agent start/stop, and hook suppression is logged with timestamps, visible in the monitor's event panel.
 
-### Subprocess visualizer (cc-viz)
+### Thermal dashboard (cc-viz)
 
-A fullscreen terminal dashboard that monitors the process tree spawned by Claude Code in real time. Built in Go with [bubbletea](https://github.com/charmbracelet/bubbletea) and [lipgloss](https://github.com/charmbracelet/lipgloss) — a single binary renders all six panes with no tmux required. A bash collector (`cc-viz/collector.sh`) writes per-second JSONL snapshots; the Go binary tails the file and renders.
+A terminal dashboard that monitors Claude Code's process tree in real time. Built in Go with [bubbletea](https://github.com/charmbracelet/bubbletea) and [lipgloss](https://github.com/charmbracelet/lipgloss) — a single binary collects system data directly and renders a thermal strip.
 
-- **Heatmap spectrogram** — Rows are process types, columns are time ticks. Cell color intensity encodes count (black → gray → orange → red). Reveals which type is hot *when* — synchronized bands mean correlated activity, staggered bands mean cascading spawns.
+- **Thermal headline** — Overall threat level with personality quip + five category boxes (test/build/run/search/shell) that glow from invisible to red based on per-category danger thresholds.
 
-- **Braille waveform** — Overlaid spawn and death traces at braille resolution (4 dots per character row). Two waveforms on one canvas so crossovers, divergence, and convergence are visible as shapes — the moment deaths overtake spawns is a crossing of two traces, not a number to compute mentally.
+- **Braille sparklines** — CPU%, MEM%, and SWAP history as severity-colored braille bars (green/yellow/red), each dot colored by its own value.
 
-- **Process waterfall** — Each row is one alive process, bar length proportional to age, colored by type with age-based intensity (bright for new spawns, dim for old workers). The only view that tracks individual processes from birth to death. Many short bars = churn. Few long bars = stable workers.
+- **Rates + stats** — Spawn/death/net rates and current system metrics (CPU, MEM, SWAP) in fixed-width format.
 
-- **Phase ring** — Classifies each tick into CALM/RAMPING/EXPLODING/COOLING based on multi-signal analysis, then displays the trajectory as a rolling sequence of colored dots. The 30,000-foot view — one glance tells you the story of the last minute.
-
-- **Type breakdown** — Horizontal bar chart of currently alive processes grouped by type. Bars proportional to count, colored by type, with threshold-colored totals.
-
-- **Alert log** — Scrolling event log of threshold crossings, burst detections, and mode changes with timestamps.
+- **Offline detection** — Detects API connectivity loss and switches to a distinct visual mode with rainbow sparklines.
 
 ## Prerequisites
 
 - **macOS or Linux** (bash 3.2+)
 - **Go 1.26+** — for building the cc-viz visualizer (`brew install go`)
-- **jq** — used by the JSONL collector (`brew install jq`)
+- **jq** — used by the bash JSONL collector (`brew install jq`), optional if running Go binary standalone
 - **tmux** — optional, if you want to run cc-viz alongside your Claude session in a split (`brew install tmux`)
 - **bats-core** — optional, for running tests (`brew install bats-core`)
 
@@ -78,27 +74,20 @@ Coolant works automatically once installed. Hooks count active agents and engage
 /coolant:parallel status  # check current state
 ```
 
-### cc-viz (subprocess visualizer)
+### cc-viz (thermal dashboard)
 
 ```bash
+# Standalone — Go binary collects system data directly
+./cc-viz-go/cc-viz
+
 # Demo mode — synthetic data, no live Claude session needed
 ./cc-viz-go/cc-viz --demo
 
-# Live mode — auto-detects Claude Code process
+# Via tmux launcher — starts bash collector + Go binary together
 bash cc-viz/cc-viz.sh
 
-# Live mode — specific PID
+# Via tmux launcher — specific PID
 bash cc-viz/cc-viz.sh --pid 12345
-```
-
-The launcher (`cc-viz.sh`) starts the bash collector and the Go binary together. Or run them separately:
-
-```bash
-# Terminal 1: start collector
-bash cc-viz/collector.sh --pid 12345
-
-# Terminal 2: start visualizer
-./cc-viz-go/cc-viz --data /tmp/cc-procs.jsonl
 ```
 
 Press `q` to quit.
@@ -178,14 +167,15 @@ coolant/
 │   ├── cc-viz.sh            # launcher (starts collector + Go binary)
 │   ├── collector.sh         # JSONL snapshot collector (ps + jq → /tmp/cc-procs.jsonl)
 │   └── common.sh            # shared colors, thresholds, JSONL parser
-├── cc-viz-go/               # Go — visualization binary
+├── cc-viz-go/               # Go — thermal dashboard binary
 │   ├── cmd/cc-viz/main.go   # bubbletea app entry point
 │   ├── internal/
-│   │   ├── jsonl/            # JSONL parser + file tailer
+│   │   ├── collector/        # system stats + process tree scanning
+│   │   ├── model/            # AppState, threat classification, personality
+│   │   ├── widgets/          # headline, gauges, rates, alerts, sparklines
+│   │   ├── layout/           # horizontal strip compositor
 │   │   ├── demo/             # synthetic data generator (--demo)
-│   │   ├── ui/               # colors, thresholds, grid layout
-│   │   └── panes/            # heatmap, waveform, waterfall, breakdown,
-│   │                         # phase ring, alert log
+│   │   └── ui/               # colors, thresholds
 │   ├── go.mod
 │   └── go.sum
 ├── skills/
@@ -198,7 +188,7 @@ coolant/
     └── *.bats                # per-script test files
 ```
 
-The bash collector writes JSONL snapshots to `/tmp/cc-procs.jsonl`. The Go binary tails that file and renders all six panes in a single fullscreen terminal UI. No tmux required for the visualizer itself.
+The Go binary collects system data directly via `sysctl`, `vm_stat`, and `ps` — no external dependencies for standalone use. The bash collector (`cc-viz/collector.sh`) is used by the tmux launcher workflow.
 
 ## Testing
 
