@@ -2,6 +2,10 @@
 
 A resource management layer for Claude Code — prevents machines from melting when parallel agents run unthrottled.
 
+## ABSOLUTE RULES
+
+**NEVER delete files or directories without explicit permission.** No exceptions. No "cleanup." No "safe to delete." ASK FIRST. Always. Even if the file looks stale, orphaned, or unnecessary. Even if you created it. Even if it's untracked. The user runs with permissive settings — that trust must not be abused for destructive operations.
+
 ## Project structure
 
 Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization.
@@ -26,17 +30,17 @@ tests/*.bats                 # bats test files, one per script
 
 ### cc-viz-go (Go visualization)
 
-Two layout modes: `--horizontal` (bottom tmux strip) and `--vertical` (right panel, WIP).
-Legacy 2x2 grid mode runs when no layout flag is passed.
+Thermal dashboard rendered via bubbletea. Runs as a bottom tmux strip or standalone.
 
 ```
 cc-viz-go/
-├── cmd/cc-viz/main.go       # bubbletea app, flag parsing, model selection
+├── cmd/cc-viz/main.go       # bubbletea app, flag parsing
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
 │   │   ├── system.go         # CPU/MEM/SWAP via sysctl/vm_stat
 │   │   ├── procs.go          # Claude process discovery + descendant trees
+│   │   ├── network.go        # API connectivity check
 │   │   └── collector.go      # orchestrates collection, sends Snapshots
 │   ├── model/
 │   │   ├── state.go          # AppState: rolling history, smoothed counts
@@ -48,19 +52,14 @@ cc-viz-go/
 │   │   ├── sparkline.go      # braille severity bars (⡀ green/⡄ yellow/⡆ red)
 │   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
 │   │   ├── gauges.go         # CPU/MEM/SWAP braille sparklines
-│   │   ├── procbar.go        # thermal category boxes (test/build/run/search/shell)
 │   │   ├── rates.go          # spawn/death/net + system stats, fixed-width
 │   │   └── alerts.go         # scrolling alert log
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
 │   ├── ui/
-│   │   ├── colors.go         # type colors, category colors, thresholds
-│   │   └── layout.go         # legacy 2x2 grid renderer
-│   ├── jsonl/jsonl.go        # JSONL parser + file tailer (legacy)
-│   ├── demo/
-│   │   ├── demo.go           # legacy synthetic data (JSONL)
-│   │   └── demov2.go         # v2 synthetic Snapshots with system stats
-│   └── panes/                # legacy 2x2 panes (kept for backward compat)
+│   │   └── colors.go         # type colors, category colors, thresholds
+│   └── demo/
+│       └── demov2.go         # synthetic Snapshots with system stats
 ├── go.mod
 └── go.sum
 ```
@@ -70,9 +69,8 @@ cc-viz-go/
 **Build:** `cd cc-viz-go && go build ./cmd/cc-viz/`
 
 **Run:**
-- `./cc-viz-go/cc-viz --demo --horizontal` (thermal dashboard, synthetic data)
-- `./cc-viz-go/cc-viz --horizontal` (thermal dashboard, live system data)
-- `./cc-viz-go/cc-viz --demo` (legacy 2x2 grid, synthetic JSONL)
+- `./cc-viz-go/cc-viz --demo` (thermal dashboard, synthetic data)
+- `./cc-viz-go/cc-viz` (thermal dashboard, live system data)
 
 ## Key conventions
 
@@ -87,9 +85,9 @@ cc-viz-go/
 ### Go (visualization)
 
 - bubbletea Elm architecture: `Init` → `Update(msg)` → `View()`. No manual cursor management.
-- Each pane is its own struct in `internal/panes/` with `SetSize()`, `Update()`, and `View()` methods.
-- JSONL tailer runs in a goroutine, sends `tickMsg` into bubbletea's program.
-- Type colors defined once in `internal/ui/colors.go`, shared across all panes.
+- Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View()` methods.
+- Collector runs in a goroutine, sends `snapshotMsg` into bubbletea's program.
+- Type colors defined once in `internal/ui/colors.go`, shared across all widgets.
 - Braille rendering done natively in Go (no awk, no subshells).
 
 ## TDD Workflow

@@ -23,7 +23,6 @@ type Horizontal struct {
 	state    *model.AppState
 	headline *widgets.Headline
 	gauges   *widgets.Gauges
-	procbar  *widgets.ProcBar // kept for reference but headline now has thermal boxes
 	rates    *widgets.Rates
 	alerts   *widgets.Alerts
 }
@@ -33,7 +32,6 @@ func NewHorizontal() *Horizontal {
 		state:    model.NewAppState(),
 		headline: widgets.NewHeadline(),
 		gauges:   widgets.NewGauges(),
-		procbar:  widgets.NewProcBar(),
 		rates:    widgets.NewRates(),
 		alerts:   widgets.NewAlerts(),
 	}
@@ -49,7 +47,6 @@ func (h *Horizontal) SetSize(w, height int) {
 	h.height = height
 	h.headline.SetSize(w, 1)
 	h.gauges.SetSize(w, 4)
-	h.procbar.SetSize(w, 1)
 	h.rates.SetSize(w, 1)
 	h.alerts.SetSize(w, 2)
 }
@@ -58,7 +55,6 @@ func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
 	h.headline.Update(state)
 	h.gauges.Update(state)
-	h.procbar.Update(state)
 	h.rates.Update(state)
 	h.alerts.Update(state)
 }

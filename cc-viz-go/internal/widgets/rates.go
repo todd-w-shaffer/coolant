@@ -50,9 +50,9 @@ func (r *Rates) View() string {
 
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
-	// Spawn/death/net — fixed width with sign
-	spawnStr := fmt.Sprintf("spawn:%+04d/s", s.LastSpawns())
-	deathStr := fmt.Sprintf("death:-%03d/s", s.LastDeaths())
+	// Warm/cool/net — fixed width with sign
+	spawnStr := fmt.Sprintf("warm:%+04d/s", s.LastSpawns())
+	deathStr := fmt.Sprintf("cool:-%03d/s", s.LastDeaths())
 	netVal := int(s.NetRate)
 	netStr := fmt.Sprintf("net:%+04d/s", netVal)
 
@@ -83,8 +83,8 @@ func (r *Rates) View() string {
 	sep := dim.Render("  |  ")
 
 	rates := fmt.Sprintf(" %s  %s  %s",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(spawnStr),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(deathStr),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render(spawnStr),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(deathStr),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(netStr),
 	)
 

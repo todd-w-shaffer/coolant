@@ -152,8 +152,8 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		}
 
 		if !isOnline {
-			// Offline: rainbow with random braille patterns
-			ch, color := rainbowChar(i, tick)
+			// Offline: static rainbow confetti — random but stable per position
+			ch, color := rainbowChar(i)
 			sb.WriteString(color)
 			sb.WriteRune(ch)
 			sb.WriteString(sparkReset)
@@ -219,11 +219,11 @@ var funBraille = []rune{
 	0x2800 + 1 + 2 + 64, // ⡃ top two + bottom
 }
 
-// rainbowChar picks a random-ish braille pattern and rainbow color for position i at tick t.
-func rainbowChar(i, tick int) (rune, string) {
-	// Use position + tick to create pseudo-random but smooth pattern
-	patIdx := (i*7 + tick*3) % len(funBraille)
-	colorIdx := (i + tick) % len(rainbowColors)
+// rainbowChar picks a random braille pattern and rainbow color for position i.
+// Deterministic per position — once generated, it stays put. No animation.
+func rainbowChar(i int) (rune, string) {
+	patIdx := (i*7 + i*i*3) % len(funBraille)
+	colorIdx := (i*3 + i*i) % len(rainbowColors)
 	return funBraille[patIdx], rainbowColors[colorIdx]
 }
 
