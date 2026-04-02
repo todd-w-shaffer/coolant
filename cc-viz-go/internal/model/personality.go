@@ -1,6 +1,10 @@
 package model
 
-import "math/rand"
+import (
+	"fmt"
+	"math/rand"
+	"time"
+)
 
 // Idle messages cycle when no Claude processes are detected.
 var idleMessages = []string{
@@ -68,4 +72,25 @@ func ThreatQuipStable(level ThreatLevel) string {
 		return level.String()
 	}
 	return quips[0]
+}
+
+// Offline messages — delightful, not alarming.
+var offlineMessages = []string{
+	"OFFLINE — go touch grass",
+	"OFFLINE — enjoy a coffee",
+	"OFFLINE — stretch your legs",
+	"OFFLINE — look out the window",
+	"OFFLINE — take a breath",
+}
+
+// OfflineMessage returns a cycling offline message with duration.
+func OfflineMessage(dur time.Duration, cycle int) string {
+	msg := offlineMessages[cycle%len(offlineMessages)]
+	if dur > 0 {
+		if dur < time.Minute {
+			return fmt.Sprintf("%s (%ds)", msg, int(dur.Seconds()))
+		}
+		return fmt.Sprintf("%s (%dm)", msg, int(dur.Minutes()))
+	}
+	return msg
 }

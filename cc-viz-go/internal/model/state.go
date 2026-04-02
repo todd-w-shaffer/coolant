@@ -34,6 +34,10 @@ type AppState struct {
 	SmoothedCats     map[string]float64 // EMA-smoothed category counts
 	SessionCount     int
 	PluginActive     bool
+	Online           bool
+	OnlineLog        []bool // tracks online/offline per tick, same length as History
+	OfflineSince     time.Time // when we went offline
+	OfflineDuration  time.Duration
 
 	// Rate tracking
 	recentSpawns []int
@@ -151,6 +155,26 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	}
 
 	s.SessionCount = len(snap.Sessions)
+
+	// Network state
+	if snap.Online {
+		s.Online = true
+		s.OfflineSince = time.Time{}
+		s.OfflineDuration = 0
+	} else {
+		if s.Online || s.OfflineSince.IsZero() {
+			// Just went offline
+			s.OfflineSince = snap.Timestamp
+		}
+		s.Online = false
+		s.OfflineDuration = snap.Timestamp.Sub(s.OfflineSince)
+	}
+
+	// Track online/offline per tick (same ring buffer as History)
+	s.OnlineLog = append(s.OnlineLog, snap.Online)
+	if len(s.OnlineLog) > maxHistory {
+		s.OnlineLog = s.OnlineLog[len(s.OnlineLog)-maxHistory:]
+	}
 
 	// Headroom projection
 	s.Headroom = EstimateHeadroom(

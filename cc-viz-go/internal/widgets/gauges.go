@@ -18,11 +18,12 @@ var gaugeDots = []struct {
 }
 
 // Gauges renders 3 sparklines: CPU%, MEM%, SWAP.
-// Each dot in the sparkline is independently colored green/yellow/red.
-// Left edge shows a colored dot indicator instead of a text label.
+// Each dot is severity-colored when online, rainbow when offline.
+// Transitions are seamless — rainbow dots sit inline in the timeline.
 type Gauges struct {
 	width int
 	state *model.AppState
+	tick  int
 }
 
 func NewGauges() *Gauges {
@@ -35,6 +36,7 @@ func (g *Gauges) SetSize(w, h int) {
 
 func (g *Gauges) Update(state *model.AppState) {
 	g.state = state
+	g.tick++
 }
 
 func (g *Gauges) View() string {
@@ -43,20 +45,20 @@ func (g *Gauges) View() string {
 	}
 
 	// Layout: " ● <sparkline> NNN%"
-	dotWidth := 3    // " ● "
-	valueWidth := 5  // " 100%"
+	dotWidth := 3   // " ● "
+	valueWidth := 5 // " 100%"
 	sparkWidth := g.width - dotWidth - valueWidth - 1
 	if sparkWidth < 1 {
 		sparkWidth = 1
 	}
 
 	type gauge struct {
-		data    []float64
+		data   []float64
 		current float64
-		max     float64
-		thresh  SparkThresholds
-		dot     string
-		dotClr  string
+		max    float64
+		thresh SparkThresholds
+		dot    string
+		dotClr string
 	}
 
 	gauges := []gauge{
@@ -72,18 +74,26 @@ func (g *Gauges) View() string {
 	}
 
 	var lines []string
-	for _, ga := range gauges {
+	for i, ga := range gauges {
 		dot := ga.dotClr + ga.dot + sparkReset
-		spark := RenderSparklineCompact(ga.data, sparkWidth, ga.max, &ga.thresh)
 
-		valColor := sparkGreen
-		if ga.current >= ga.thresh.Crit {
-			valColor = sparkRed
-		} else if ga.current >= ga.thresh.Warn {
-			valColor = sparkYellow
+		// Render with online/offline mask — rainbow dots inline with real data
+		spark := RenderSparklineWithMask(ga.data, g.state.OnlineLog, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)
+
+		// Current value — colored by threshold, dim if offline
+		var coloredVal string
+		if !g.state.Online {
+			coloredVal = "\033[2;36m" + "----" + sparkReset
+		} else {
+			valColor := sparkGreen
+			if ga.current >= ga.thresh.Crit {
+				valColor = sparkRed
+			} else if ga.current >= ga.thresh.Warn {
+				valColor = sparkYellow
+			}
+			valStr := fmt.Sprintf("%3d%%", int(ga.current))
+			coloredVal = valColor + valStr + sparkReset
 		}
-		valStr := fmt.Sprintf("%3d%%", int(ga.current))
-		coloredVal := valColor + valStr + sparkReset
 
 		lines = append(lines, fmt.Sprintf(" %s %s %s", dot, spark, coloredVal))
 	}

@@ -64,20 +64,31 @@ func (h *Headline) View() string {
 		catCellWidth = 10
 	}
 
-	// Build overall cell
-	overallLevel := threatToThermal(h.state.ThreatLevel)
-	overallThermal := overallGradient[overallLevel]
-	quip := h.state.StableQuip()
-
-	// Pad quip to fill overall cell
-	if len(quip) > overallWidth-2 {
-		quip = quip[:overallWidth-2]
+	// Build overall cell — offline gets its own look
+	var overallCell string
+	if !h.state.Online {
+		quip := model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
+		if len(quip) > overallWidth-2 {
+			quip = quip[:overallWidth-2]
+		}
+		overallContent := fmt.Sprintf(" %-*s", overallWidth-1, quip)
+		overallCell = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("0")).   // black text
+			Background(lipgloss.Color("67")).  // steel blue bg
+			Render(overallContent)
+	} else {
+		overallLevel := threatToThermal(h.state.ThreatLevel)
+		overallThermal := overallGradient[overallLevel]
+		quip := h.state.StableQuip()
+		if len(quip) > overallWidth-2 {
+			quip = quip[:overallWidth-2]
+		}
+		overallContent := fmt.Sprintf(" %-*s", overallWidth-1, quip)
+		overallCell = lipgloss.NewStyle().
+			Foreground(overallThermal.fg).
+			Background(overallThermal.bg).
+			Render(overallContent)
 	}
-	overallContent := fmt.Sprintf(" %-*s", overallWidth-1, quip)
-	overallCell := lipgloss.NewStyle().
-		Foreground(overallThermal.fg).
-		Background(overallThermal.bg).
-		Render(overallContent)
 
 	// Build category cells
 	var catCells []string

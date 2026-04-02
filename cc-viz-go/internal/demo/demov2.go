@@ -137,6 +137,12 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 			cpuPct = 100
 		}
 
+		// Simulate offline every ~40 ticks for 10 ticks
+		online := true
+		if (tick/40)%3 == 2 && (tick%40) < 10 {
+			online = false
+		}
+
 		snap := collector.Snapshot{
 			System: collector.SystemStats{
 				CPUPercent:     cpuPct,
@@ -149,6 +155,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 			},
 			Sessions:  sessions,
 			AllProcs:  procs,
+			Online:    online,
 			Timestamp: time.Now(),
 		}
 

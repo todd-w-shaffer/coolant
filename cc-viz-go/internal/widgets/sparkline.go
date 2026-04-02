@@ -91,6 +91,142 @@ func RenderSparklineCompact(data []float64, width int, maxOverride float64, thre
 	return RenderSparkline(data, width, maxOverride, thresh)
 }
 
+// RenderSparklineWithMask renders a sparkline where offline ticks become
+// rainbow dots instead of severity bars. The mask indicates online (true)
+// or offline (false) for each data point. Seamless transitions — rainbow
+// dots sit inline with real data in the timeline.
+func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	// Align data and mask to same length (use shorter)
+	n := len(data)
+	if len(online) < n {
+		n = len(online)
+	}
+	if n == 0 {
+		return RenderSparkline(data, width, maxOverride, thresh)
+	}
+
+	// Trim both to visible window from the end
+	startData := 0
+	startMask := 0
+	if n > width {
+		startData = len(data) - width
+		startMask = len(online) - width
+		n = width
+	} else {
+		startData = len(data) - n
+		startMask = len(online) - n
+	}
+
+	visibleData := data[startData:]
+	visibleMask := online[startMask:]
+
+	// Find peak for auto-scaling (only online values)
+	peak := maxOverride
+	if peak <= 0 {
+		for i, v := range visibleData {
+			if i < len(visibleMask) && visibleMask[i] && v > peak {
+				peak = v
+			}
+		}
+	}
+	if peak <= 0 {
+		peak = 1
+	}
+
+	var sb strings.Builder
+
+	// Right-align padding
+	pad := width - len(visibleData)
+	if pad > 0 {
+		sb.WriteString(strings.Repeat(" ", pad))
+	}
+
+	for i, v := range visibleData {
+		isOnline := true
+		if i < len(visibleMask) {
+			isOnline = visibleMask[i]
+		}
+
+		if !isOnline {
+			// Offline: rainbow with random braille patterns
+			ch, color := rainbowChar(i, tick)
+			sb.WriteString(color)
+			sb.WriteRune(ch)
+			sb.WriteString(sparkReset)
+			continue
+		}
+
+		// Online: severity dot
+		if v < 0 {
+			v = 0
+		}
+
+		var bar rune
+		var color string
+
+		if v == 0 {
+			bar = brailleBars[1]
+			color = sparkGreen
+		} else if thresh == nil || v < thresh.Warn {
+			bar = brailleBars[1]
+			color = sparkGreen
+		} else if v < thresh.Crit {
+			bar = brailleBars[2]
+			color = sparkYellow
+		} else {
+			bar = brailleBars[3]
+			color = sparkRed
+		}
+
+		sb.WriteString(color)
+		sb.WriteRune(bar)
+		sb.WriteString(sparkReset)
+	}
+
+	return sb.String()
+}
+
+// Rainbow colors for offline mode sparklines.
+var rainbowColors = []string{
+	"\033[31m", // red
+	"\033[33m", // yellow
+	"\033[32m", // green
+	"\033[36m", // cyan
+	"\033[34m", // blue
+	"\033[35m", // magenta
+}
+
+// Random braille patterns for offline mode — irreverent dot positions.
+// Left column dots: 1(1), 2(2), 3(4), 7(64). Mix and match freely.
+var funBraille = []rune{
+	0x2800 + 64,      // ⡀ bottom only
+	0x2800 + 1,       // ⠁ top only
+	0x2800 + 2,       // ⠂ second from top
+	0x2800 + 4,       // ⠄ third from top
+	0x2800 + 64 + 1,  // ⡁ top + bottom
+	0x2800 + 2 + 4,   // ⠆ middle two
+	0x2800 + 1 + 4,   // ⠅ top + third
+	0x2800 + 1 + 64,  // ⡁ top + bottom
+	0x2800 + 2 + 64,  // ⡂ second + bottom
+	0x2800 + 1 + 2,   // ⠃ top two
+	0x2800 + 4 + 64,  // ⡄ third + bottom
+	0x2800 + 1 + 4 + 64, // ⡅ top + third + bottom
+	0x2800 + 2 + 4 + 64, // ⡆ middle two + bottom
+	0x2800 + 1 + 2 + 64, // ⡃ top two + bottom
+}
+
+// rainbowChar picks a random-ish braille pattern and rainbow color for position i at tick t.
+func rainbowChar(i, tick int) (rune, string) {
+	// Use position + tick to create pseudo-random but smooth pattern
+	patIdx := (i*7 + tick*3) % len(funBraille)
+	colorIdx := (i + tick) % len(rainbowColors)
+	return funBraille[patIdx], rainbowColors[colorIdx]
+}
+
 // FormatFixedWidth formats a value with a fixed total width, right-aligned.
 func FormatFixedWidth(format string, width int, args ...interface{}) string {
 	s := fmt.Sprintf(format, args...)

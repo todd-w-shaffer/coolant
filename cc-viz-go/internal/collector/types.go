@@ -79,6 +79,7 @@ type Snapshot struct {
 	System    SystemStats
 	Sessions  []SessionTree  // one per Claude root process
 	AllProcs  []ProcessInfo  // flat list of all Claude descendants
+	Online    bool           // can we reach the Claude API?
 	Timestamp time.Time
 }
 

@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
@@ -32,6 +33,20 @@ func (r *Rates) View() string {
 	}
 	s := r.state
 	snap := s.Current
+
+	// Offline: show duration instead of rates
+	if !s.Online {
+		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+		cyan := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+		durStr := "just now"
+		if s.OfflineDuration >= time.Minute {
+			durStr = fmt.Sprintf("%dm %ds", int(s.OfflineDuration.Minutes()), int(s.OfflineDuration.Seconds())%60)
+		} else if s.OfflineDuration > 0 {
+			durStr = fmt.Sprintf("%ds", int(s.OfflineDuration.Seconds()))
+		}
+		return " " + cyan.Render(fmt.Sprintf("OFFLINE %s", durStr)) +
+			dim.Render("  —  no API connection, processes will wind down")
+	}
 
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 

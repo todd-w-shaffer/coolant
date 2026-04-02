@@ -32,7 +32,7 @@ func collect() Snapshot {
 	ctx := context.Background()
 	now := time.Now()
 
-	// Collect system stats and process tree concurrently
+	// Collect system stats, process tree, and network state concurrently
 	type sysResult struct {
 		stats SystemStats
 		err   error
@@ -45,6 +45,7 @@ func collect() Snapshot {
 
 	sysCh := make(chan sysResult, 1)
 	procCh := make(chan procResult, 1)
+	netCh := make(chan bool, 1)
 
 	go func() {
 		stats, err := CollectSystem(ctx)
@@ -54,12 +55,17 @@ func collect() Snapshot {
 		sessions, allProcs, err := CollectProcs(ctx)
 		procCh <- procResult{sessions, allProcs, err}
 	}()
+	go func() {
+		netCh <- CheckOnline()
+	}()
 
 	sysRes := <-sysCh
 	procRes := <-procCh
+	online := <-netCh
 
 	snap := Snapshot{
 		Timestamp: now,
+		Online:    online,
 	}
 
 	if sysRes.err == nil {
