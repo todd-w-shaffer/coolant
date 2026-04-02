@@ -7,9 +7,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/collector"
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/demo"
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/layout"
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/demo"
+	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 )
 
 // ── Messages ────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
 // Rates renders spawn/death/net rates + system stats, all fixed-width:

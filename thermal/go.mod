@@ -1,4 +1,4 @@
-module github.com/toddwshaffer/coolant/cc-viz-go
+module github.com/toddwshaffer/coolant/thermal
 
 go 1.26.1
 

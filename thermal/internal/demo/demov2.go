@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 )
 
 var demoTypes = []string{"N", "G", "V", "S", "R", "F", "C", "P", "T", "X"}

@@ -1,6 +1,6 @@
 package model
 
-import "github.com/toddwshaffer/coolant/cc-viz-go/internal/collector"
+import "github.com/toddwshaffer/coolant/thermal/internal/collector"
 
 // ThreatLevel represents the system thermal state.
 type ThreatLevel int

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
 // Gauge dot colors — left-edge indicator per row.

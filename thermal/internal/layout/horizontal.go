@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/widgets"
+	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
 )
 
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).

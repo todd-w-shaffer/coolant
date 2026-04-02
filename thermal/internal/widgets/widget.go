@@ -1,6 +1,6 @@
 package widgets
 
-import "github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
+import "github.com/toddwshaffer/coolant/thermal/internal/model"
 
 // Widget is the interface all composable UI components implement.
 type Widget interface {

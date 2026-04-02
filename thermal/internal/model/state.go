@@ -3,7 +3,7 @@ package model
 import (
 	"time"
 
-	"github.com/toddwshaffer/coolant/cc-viz-go/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 )
 
 const maxHistory = 300 // ~5 min at 1Hz

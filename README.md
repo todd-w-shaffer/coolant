@@ -26,7 +26,7 @@ Coolant sits between Claude Code and your hardware. It senses system state, trac
 
 - **Event logging** — Every mode change, agent start/stop, and hook suppression is logged with timestamps, visible in the monitor's event panel.
 
-### Thermal dashboard (cc-viz)
+### Thermal dashboard
 
 A terminal dashboard that monitors Claude Code's process tree in real time. Built in Go with [bubbletea](https://github.com/charmbracelet/bubbletea) and [lipgloss](https://github.com/charmbracelet/lipgloss) — a single binary collects system data directly and renders a thermal strip.
 
@@ -41,9 +41,8 @@ A terminal dashboard that monitors Claude Code's process tree in real time. Buil
 ## Prerequisites
 
 - **macOS or Linux** (bash 3.2+)
-- **Go 1.26+** — for building the cc-viz visualizer (`brew install go`)
-- **jq** — used by the bash JSONL collector (`brew install jq`), optional if running Go binary standalone
-- **tmux** — optional, if you want to run cc-viz alongside your Claude session in a split (`brew install tmux`)
+- **Go 1.26+** — for building the thermal dashboard (`brew install go`)
+- **tmux** — optional, if you want to run the thermal dashboard alongside your Claude session in a split (`brew install tmux`)
 - **bats-core** — optional, for running tests (`brew install bats-core`)
 
 ## Installation
@@ -55,9 +54,8 @@ claude plugin install ./coolant --scope user
 # Or symlink for development
 claude --plugin-dir /path/to/coolant
 
-# 2. Build the cc-viz visualizer
-cd cc-viz-go
-go build ./cmd/cc-viz/
+# 2. Build the thermal dashboard
+cd thermal && go build -o ../bin/thermal ./cmd/thermal/
 ```
 
 ## Usage
@@ -74,20 +72,14 @@ Coolant works automatically once installed. Hooks count active agents and engage
 /coolant:parallel status  # check current state
 ```
 
-### cc-viz (thermal dashboard)
+### Thermal dashboard
 
 ```bash
 # Standalone — Go binary collects system data directly
-./cc-viz-go/cc-viz
+./bin/thermal
 
 # Demo mode — synthetic data, no live Claude session needed
-./cc-viz-go/cc-viz --demo
-
-# Via tmux launcher — starts bash collector + Go binary together
-bash cc-viz/cc-viz.sh
-
-# Via tmux launcher — specific PID
-bash cc-viz/cc-viz.sh --pid 12345
+./bin/thermal --demo
 ```
 
 Press `q` to quit.
@@ -163,12 +155,8 @@ coolant/
 │   ├── parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode
 │   ├── agent-start.sh       # SubagentStart hook: increment counter
 │   └── agent-stop.sh        # SubagentStop hook: decrement counter
-├── cc-viz/                  # bash — collector + launcher
-│   ├── cc-viz.sh            # launcher (starts collector + Go binary)
-│   ├── collector.sh         # JSONL snapshot collector (ps + jq → /tmp/cc-procs.jsonl)
-│   └── common.sh            # shared colors, thresholds, JSONL parser
-├── cc-viz-go/               # Go — thermal dashboard binary
-│   ├── cmd/cc-viz/main.go   # bubbletea app entry point
+├── thermal/                 # Go — thermal dashboard binary
+│   ├── cmd/thermal/main.go  # bubbletea app entry point
 │   ├── internal/
 │   │   ├── collector/        # system stats + process tree scanning
 │   │   ├── model/            # AppState, threat classification, personality
@@ -188,7 +176,7 @@ coolant/
     └── *.bats                # per-script test files
 ```
 
-The Go binary collects system data directly via `sysctl`, `vm_stat`, and `ps` — no external dependencies for standalone use. The bash collector (`cc-viz/collector.sh`) is used by the tmux launcher workflow.
+The Go binary collects system data directly via `sysctl`, `vm_stat`, and `ps` — no external dependencies.
 
 ## Testing
 
@@ -197,8 +185,8 @@ The Go binary collects system data directly via `sysctl`, `vm_stat`, and `ps` �
 bats tests/
 bats tests/agents.bats
 
-# Go tests (visualization)
-cd cc-viz-go && go test ./...
+# Go tests (thermal dashboard)
+cd thermal && go test ./...
 ```
 
 ## Roadmap

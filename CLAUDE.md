@@ -19,22 +19,19 @@ scripts/toggle.sh            # manual parallel mode on/off/status
 scripts/parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode
 scripts/agent-start.sh       # SubagentStart hook: increment counter
 scripts/agent-stop.sh        # SubagentStop hook: decrement counter
-cc-viz/collector.sh          # JSONL snapshot collector (bash, ps + jq)
-cc-viz/cc-viz.sh             # tmux launcher (starts collector + Go binary)
-cc-viz/common.sh             # shared colors, thresholds, JSONL parser (bash)
-cc-viz-go/                   # Go visualization binary (see below)
+thermal/                     # Go thermal dashboard binary (see below)
 skills/parallel/SKILL.md     # /coolant:parallel skill definition
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
 tests/*.bats                 # bats test files, one per script
 ```
 
-### cc-viz-go (Go visualization)
+### thermal/ (Go thermal dashboard)
 
 Thermal dashboard rendered via bubbletea. Runs as a bottom tmux strip or standalone.
 
 ```
-cc-viz-go/
-├── cmd/cc-viz/main.go       # bubbletea app, flag parsing
+thermal/
+├── cmd/thermal/main.go      # bubbletea app, flag parsing
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
@@ -66,11 +63,11 @@ cc-viz-go/
 
 **Dependencies:** Go 1.26+, `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`.
 
-**Build:** `cd cc-viz-go && go build ./cmd/cc-viz/`
+**Build:** `cd thermal && go build -o ../bin/thermal ./cmd/thermal/`
 
 **Run:**
-- `./cc-viz-go/cc-viz --demo` (thermal dashboard, synthetic data)
-- `./cc-viz-go/cc-viz` (thermal dashboard, live system data)
+- `./bin/thermal --demo` (thermal dashboard, synthetic data)
+- `./bin/thermal` (thermal dashboard, live system data)
 
 ## Key conventions
 
