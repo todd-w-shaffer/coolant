@@ -43,6 +43,7 @@ func (h *Horizontal) State() *model.AppState {
 	return h.state
 }
 
+
 func (h *Horizontal) SetSize(w, height int) {
 	h.width = w
 	h.height = height
@@ -85,22 +86,22 @@ func (h *Horizontal) View() string {
 		lines = append(lines, h.headline.View())
 	}
 
-	// Lines 3-6: Sparklines
-	if h.height >= 6 {
+	// Lines 3-5: Sparklines (cpu%, mem%, swap — 3 rows)
+	if h.height >= 5 {
 		for _, line := range strings.Split(h.gauges.View(), "\n") {
 			lines = append(lines, line)
 		}
 	} else if h.height >= 4 {
 		// Compact: just cpu% and mem%
 		gaugeLines := strings.Split(h.gauges.View(), "\n")
-		if len(gaugeLines) >= 3 {
-			lines = append(lines, gaugeLines[1]) // cpu%
-			lines = append(lines, gaugeLines[2]) // mem%
+		if len(gaugeLines) >= 2 {
+			lines = append(lines, gaugeLines[0]) // cpu%
+			lines = append(lines, gaugeLines[1]) // mem%
 		}
 	}
 
 	// Stats line: spawn/death/net + CPU/MEM/SWAP
-	if h.height >= 7 {
+	if h.height >= 6 {
 		lines = append(lines, h.rates.View())
 	}
 

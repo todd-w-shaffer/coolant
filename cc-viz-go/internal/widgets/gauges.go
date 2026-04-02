@@ -4,11 +4,22 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/toddwshaffer/coolant/cc-viz-go/internal/model"
 )
 
-// Gauges renders labeled sparklines for procs, CPU%, MEM%, SWAP.
+// Gauge dot colors — left-edge indicator per row.
+var gaugeDots = []struct {
+	dot   string
+	color string
+}{
+	{"●", "\033[37m"},  // cpu — white dot
+	{"●", "\033[36m"},  // mem — cyan dot
+	{"●", "\033[35m"},  // swap — magenta dot
+}
+
+// Gauges renders 3 sparklines: CPU%, MEM%, SWAP.
+// Each dot in the sparkline is independently colored green/yellow/red.
+// Left edge shows a colored dot indicator instead of a text label.
 type Gauges struct {
 	width int
 	state *model.AppState
@@ -31,51 +42,50 @@ func (g *Gauges) View() string {
 		return ""
 	}
 
-	labelWidth := 6 // "procs " / "cpu%  " / etc.
-	valueWidth := 5 // " 100%"
-	sparkWidth := g.width - labelWidth - valueWidth - 2
-	if sparkWidth < 5 {
-		sparkWidth = 5
+	// Layout: " ● <sparkline> NNN%"
+	dotWidth := 3    // " ● "
+	valueWidth := 5  // " 100%"
+	sparkWidth := g.width - dotWidth - valueWidth - 1
+	if sparkWidth < 1 {
+		sparkWidth = 1
 	}
 
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-
 	type gauge struct {
-		label   string
 		data    []float64
 		current float64
 		max     float64
-		unit    string
-		warn    float64
-		crit    float64
+		thresh  SparkThresholds
+		dot     string
+		dotClr  string
 	}
 
 	gauges := []gauge{
-		{"procs", g.state.ProcCountHistory(), float64(g.state.Current.TotalProcs()), 0, "", 50, 100},
-		{"cpu%", g.state.CPUHistory(), g.state.Current.System.CPUPercent, 100, "%", 70, 90},
-		{"mem%", g.state.MemHistory(), g.state.Current.System.MemPercent(), 100, "%", 60, 80},
-		{"swap", g.state.SwapHistory(), g.state.Current.System.SwapPercent(), 100, "%", 1, 50},
+		{g.state.CPUHistory(), g.state.Current.System.CPUPercent, 100,
+			SparkThresholds{Warn: 70, Crit: 90},
+			gaugeDots[0].dot, gaugeDots[0].color},
+		{g.state.MemHistory(), g.state.Current.System.MemPercent(), 100,
+			SparkThresholds{Warn: 60, Crit: 80},
+			gaugeDots[1].dot, gaugeDots[1].color},
+		{g.state.SwapHistory(), g.state.Current.System.SwapPercent(), 100,
+			SparkThresholds{Warn: 1, Crit: 50},
+			gaugeDots[2].dot, gaugeDots[2].color},
 	}
 
 	var lines []string
 	for _, ga := range gauges {
-		label := dim.Render(fmt.Sprintf("%-5s", ga.label))
-		spark := RenderSparkline(ga.data, sparkWidth, ga.max)
+		dot := ga.dotClr + ga.dot + sparkReset
+		spark := RenderSparklineCompact(ga.data, sparkWidth, ga.max, &ga.thresh)
 
-		// Color the sparkline based on current value
-		sparkColor := thresholdColor(ga.current, ga.warn, ga.crit)
-		coloredSpark := lipgloss.NewStyle().Foreground(sparkColor).Render(spark)
-
-		// Format current value
-		var valStr string
-		if ga.unit == "%" {
-			valStr = fmt.Sprintf("%3d%%", int(ga.current))
-		} else {
-			valStr = fmt.Sprintf("%4.0f", ga.current)
+		valColor := sparkGreen
+		if ga.current >= ga.thresh.Crit {
+			valColor = sparkRed
+		} else if ga.current >= ga.thresh.Warn {
+			valColor = sparkYellow
 		}
-		coloredVal := lipgloss.NewStyle().Foreground(sparkColor).Render(valStr)
+		valStr := fmt.Sprintf("%3d%%", int(ga.current))
+		coloredVal := valColor + valStr + sparkReset
 
-		lines = append(lines, fmt.Sprintf(" %s %s %s", label, coloredSpark, coloredVal))
+		lines = append(lines, fmt.Sprintf(" %s %s %s", dot, spark, coloredVal))
 	}
 
 	return strings.Join(lines, "\n")
