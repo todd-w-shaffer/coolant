@@ -73,8 +73,8 @@ func (h *Headline) View() string {
 		}
 		overallContent := fmt.Sprintf(" %-*s", overallWidth-1, quip)
 		overallCell = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("0")).  // black text
-			Background(lipgloss.Color("67")). // steel blue bg
+			Foreground(lipgloss.Color("#000000")). // true black text
+			Background(lipgloss.Color("67")).      // steel blue bg
 			Render(overallContent)
 	} else {
 		overallLevel := threatToThermal(h.state.ThreatLevel)
