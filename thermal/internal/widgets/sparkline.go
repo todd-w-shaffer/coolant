@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	colorful "github.com/lucasb-eyer/go-colorful"
@@ -31,31 +32,69 @@ func mustHex(hex string) colorful.Color {
 	return c
 }
 
+// Edge fade: rightmost N characters fade in, leftmost N fade out.
+const fadeChars = 3
+
+// Brightness ramp per character from edge inward.
+// Index 0 = outermost char (dimmest), last = transition to full brightness.
+var fadeRamp = [fadeChars]float64{0.35, 0.60, 0.82}
+
+// edgeFade returns the brightness multiplier for a character at charIdx
+// in a sparkline of numChars width. Returns 1.0 for characters in the
+// middle, <1.0 for characters near either edge.
+func edgeFade(charIdx, numChars int) float64 {
+	// Left edge fade-out
+	if charIdx < fadeChars {
+		return fadeRamp[charIdx]
+	}
+	// Right edge fade-in
+	fromRight := numChars - 1 - charIdx
+	if fromRight < fadeChars {
+		return fadeRamp[fromRight]
+	}
+	return 1.0
+}
+
+// rainbowEntry holds a pre-rendered offline rainbow character.
+type rainbowEntry struct {
+	ch    rune
+	color string
+}
+
+// severityColorful returns the perceptual gradient color for a value.
+// Green→yellow below warn, yellow→red between warn and crit, red above crit.
+func severityColorful(v float64, thresh *SparkThresholds) colorful.Color {
+	if thresh == nil {
+		return gradGreen
+	}
+	switch {
+	case v >= thresh.Crit:
+		return gradRed
+	case v >= thresh.Warn:
+		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
+		return gradYellow.BlendHcl(gradRed, ratio).Clamped()
+	default:
+		if thresh.Warn <= 0 {
+			return gradGreen
+		}
+		ratio := v / thresh.Warn
+		return gradGreen.BlendHcl(gradYellow, ratio).Clamped()
+	}
+}
+
 // severityColor returns a truecolor ANSI escape for a value relative to
 // thresholds. Interpolates green→yellow below warn, yellow→red between
 // warn and crit, solid red above crit. Produces smooth per-dot gradients.
 func severityColor(v float64, thresh *SparkThresholds) string {
-	if thresh == nil {
-		return truecolorFg(gradGreen)
-	}
+	return truecolorFg(severityColorful(v, thresh))
+}
 
-	var c colorful.Color
-	switch {
-	case v >= thresh.Crit:
-		c = gradRed
-	case v >= thresh.Warn:
-		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
-		c = gradYellow.BlendHcl(gradRed, ratio).Clamped()
-	default:
-		if thresh.Warn <= 0 {
-			c = gradGreen
-		} else {
-			ratio := v / thresh.Warn
-			c = gradGreen.BlendHcl(gradYellow, ratio).Clamped()
-		}
-	}
-
-	return truecolorFg(c)
+// dimmedFg blends a color toward black by alpha (0=black, 1=full brightness)
+// and returns a truecolor ANSI foreground escape.
+func dimmedFg(c colorful.Color, alpha float64) string {
+	black, _ := colorful.MakeColor(color.Black)
+	dimmed := black.BlendLab(c, alpha).Clamped()
+	return truecolorFg(dimmed)
 }
 
 // truecolorFg emits \033[38;2;R;G;Bm for 24-bit foreground color.
@@ -98,10 +137,10 @@ var rightBits = [5]rune{
 const maxLevels = 4
 
 // valueToLevel maps a value to a braille height level (0–4).
-// Values below 5% of peak render as 0 (invisible) to suppress ghost dots
-// from interpolation midpoints near the zero-padding boundary.
+// Values below 2% of peak render as 0 (invisible noise floor).
+// Values between 2–5% render as level 1 (faint dot, visible with dim color).
 func valueToLevel(v, peak float64) int {
-	if v <= 0 || v < peak*0.05 {
+	if v <= 0 || v < peak*0.02 {
 		return 0
 	}
 	level := int((v / peak) * float64(maxLevels))
@@ -187,6 +226,7 @@ func prepareSparkMask(mask []bool, width int) []bool {
 // RenderSparkline renders a double-resolution braille sparkline. Each character
 // packs two samples (left column + right column), doubling visible history.
 // HEIGHT is proportional (auto-scaled to visible peak), COLOR encodes severity.
+// Edge fades dim the outermost characters for smooth data entry and exit.
 func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) string {
 	if width <= 0 {
 		return ""
@@ -207,16 +247,18 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		peak = 1
 	}
 
+	numChars := (len(visible) + 1) / 2
 	var sb strings.Builder
 
 	for i := 0; i < len(visible); i += 2 {
+		charIdx := i / 2
+
 		vL := visible[i]
 		if vL < 0 {
 			vL = 0
 		}
 		lev := valueToLevel(vL, peak)
 
-		// Right column: next sample, or empty if odd count
 		var vR float64
 		var revR int
 		if i+1 < len(visible) {
@@ -227,16 +269,20 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 			revR = valueToLevel(vR, peak)
 		}
 
-		ch := 0x2800 | leftBits[lev] | rightBits[revR]
-
-		// Color: use higher severity of the pair
+		bits := leftBits[lev] | rightBits[revR]
 		colorVal := vL
 		if vR > colorVal {
 			colorVal = vR
 		}
 
-		sb.WriteString(severityColor(colorVal, thresh))
-		sb.WriteRune(ch)
+		// Edge fade
+		alpha := edgeFade(charIdx, numChars)
+		if bits != 0 && alpha < 1.0 {
+			sb.WriteString(dimmedFg(severityColorful(colorVal, thresh), alpha))
+		} else {
+			sb.WriteString(severityColor(colorVal, thresh))
+		}
+		sb.WriteRune(0x2800 | bits)
 		sb.WriteString(sparkReset)
 	}
 
@@ -245,6 +291,7 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 
 // RenderSparklineWithMask renders a double-resolution sparkline where offline
 // ticks become rainbow dots. Two samples per character, left + right columns.
+// Edge fades dim the outermost characters for smooth data entry and exit.
 func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) string {
 	if width <= 0 {
 		return ""
@@ -278,9 +325,12 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		peak = 1
 	}
 
+	numChars := (len(visibleData) + 1) / 2
 	var sb strings.Builder
 
 	for i := 0; i < len(visibleData); i += 2 {
+		charIdx := i / 2
+
 		// Left sample
 		vL := visibleData[i]
 		onL := true
@@ -301,7 +351,7 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 
 		// Both offline → rainbow character
 		if !onL && (!hasRight || !onR) {
-			ch, color := rainbowChar(i / 2)
+			ch, color := rainbowChar(charIdx)
 			sb.WriteString(color)
 			sb.WriteRune(ch)
 			sb.WriteString(sparkReset)
@@ -339,7 +389,14 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		}
 
 		ch := 0x2800 | lBits | rBits
-		sb.WriteString(severityColor(colorVal, thresh))
+
+		// Edge fade
+		alpha := edgeFade(charIdx, numChars)
+		if lBits|rBits != 0 && alpha < 1.0 {
+			sb.WriteString(dimmedFg(severityColorful(colorVal, thresh), alpha))
+		} else {
+			sb.WriteString(severityColor(colorVal, thresh))
+		}
 		sb.WriteRune(ch)
 		sb.WriteString(sparkReset)
 	}
