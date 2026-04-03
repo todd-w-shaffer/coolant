@@ -98,9 +98,10 @@ var rightBits = [5]rune{
 const maxLevels = 4
 
 // valueToLevel maps a value to a braille height level (0–4).
-// Non-zero values always produce at least level 1.
+// Values below 5% of peak render as 0 (invisible) to suppress ghost dots
+// from interpolation midpoints near the zero-padding boundary.
 func valueToLevel(v, peak float64) int {
-	if v <= 0 {
+	if v <= 0 || v < peak*0.05 {
 		return 0
 	}
 	level := int((v / peak) * float64(maxLevels))
@@ -113,6 +114,76 @@ func valueToLevel(v, peak float64) int {
 	return level
 }
 
+// interpolateData inserts linear midpoints between consecutive samples,
+// doubling resolution. Turns step-function transitions into visible ramps.
+// Result length: 2*len(data) - 1 (or original for len < 2).
+func interpolateData(data []float64) []float64 {
+	if len(data) < 2 {
+		return data
+	}
+	out := make([]float64, 2*len(data)-1)
+	for i, v := range data {
+		out[i*2] = v
+		if i > 0 {
+			out[i*2-1] = (data[i-1] + v) / 2
+		}
+	}
+	return out
+}
+
+// interpolateMask expands each bool to 2 entries (real + midpoint copy).
+// Midpoints inherit the state of the left (older) neighbor.
+func interpolateMask(mask []bool) []bool {
+	if len(mask) < 2 {
+		return mask
+	}
+	out := make([]bool, 2*len(mask)-1)
+	for i, v := range mask {
+		out[i*2] = v
+		if i > 0 {
+			out[i*2-1] = mask[i-1]
+		}
+	}
+	return out
+}
+
+// prepareSparkData pads raw data to fill the sparkline width, interpolates
+// midpoints for smooth ramps, and returns the visible window of width*2 samples.
+func prepareSparkData(data []float64, width int) []float64 {
+	minRaw := width + 1
+	if len(data) < minRaw {
+		padded := make([]float64, minRaw)
+		copy(padded[minRaw-len(data):], data)
+		data = padded
+	}
+	interp := interpolateData(data)
+	need := width * 2
+	if len(interp) > need {
+		interp = interp[len(interp)-need:]
+	}
+	return interp
+}
+
+// prepareSparkMask pads and interpolates an online/offline mask in lockstep
+// with prepareSparkData. Padding entries are marked online (zero-value empty braille).
+func prepareSparkMask(mask []bool, width int) []bool {
+	minRaw := width + 1
+	if len(mask) < minRaw {
+		padded := make([]bool, minRaw)
+		for i := 0; i < minRaw-len(mask); i++ {
+			padded[i] = true
+		}
+		copy(padded[minRaw-len(mask):], mask)
+		mask = padded
+	}
+	interp := interpolateMask(mask)
+	need := width * 2
+	if len(interp) > need {
+		interp = interp[len(interp)-need:]
+	}
+	return interp
+}
+
 // RenderSparkline renders a double-resolution braille sparkline. Each character
 // packs two samples (left column + right column), doubling visible history.
 // HEIGHT is proportional (auto-scaled to visible peak), COLOR encodes severity.
@@ -121,12 +192,7 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		return ""
 	}
 
-	// Two samples per character — take last width*2 samples
-	maxSamples := width * 2
-	visible := data
-	if len(visible) > maxSamples {
-		visible = visible[len(visible)-maxSamples:]
-	}
+	visible := prepareSparkData(data, width)
 
 	// Find peak for auto-scaling
 	peak := maxOverride
@@ -141,16 +207,7 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		peak = 1
 	}
 
-	// Number of characters we'll render
-	nChars := (len(visible) + 1) / 2
-
 	var sb strings.Builder
-
-	// Right-align
-	pad := width - nChars
-	if pad > 0 {
-		sb.WriteString(strings.Repeat(" ", pad))
-	}
 
 	for i := 0; i < len(visible); i += 2 {
 		vL := visible[i]
@@ -186,13 +243,6 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 	return sb.String()
 }
 
-// RenderSparklineCompact renders the most recent `width` data points.
-// No downsampling — each dot is one real sample. The rightmost dot
-// always represents the most recent value, matching the percentage display.
-func RenderSparklineCompact(data []float64, width int, maxOverride float64, thresh *SparkThresholds) string {
-	return RenderSparkline(data, width, maxOverride, thresh)
-}
-
 // RenderSparklineWithMask renders a double-resolution sparkline where offline
 // ticks become rainbow dots. Two samples per character, left + right columns.
 func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) string {
@@ -209,21 +259,11 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		return RenderSparkline(data, width, maxOverride, thresh)
 	}
 
-	// Two samples per character — visible window is width*2 samples
-	maxSamples := width * 2
-	startData := 0
-	startMask := 0
-	if n > maxSamples {
-		startData = len(data) - maxSamples
-		startMask = len(online) - maxSamples
-		n = maxSamples
-	} else {
-		startData = len(data) - n
-		startMask = len(online) - n
-	}
-
-	visibleData := data[startData:]
-	visibleMask := online[startMask:]
+	// Trim to aligned length, then pad+interpolate+window via shared helpers
+	alignedData := data[len(data)-n:]
+	alignedMask := online[len(online)-n:]
+	visibleData := prepareSparkData(alignedData, width)
+	visibleMask := prepareSparkMask(alignedMask, width)
 
 	// Find peak for auto-scaling (only online values)
 	peak := maxOverride
@@ -238,15 +278,7 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		peak = 1
 	}
 
-	nChars := (len(visibleData) + 1) / 2
-
 	var sb strings.Builder
-
-	// Right-align padding
-	pad := width - nChars
-	if pad > 0 {
-		sb.WriteString(strings.Repeat(" ", pad))
-	}
 
 	for i := 0; i < len(visibleData); i += 2 {
 		// Left sample

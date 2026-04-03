@@ -8,6 +8,10 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
+// trailBlend weights for easing the last 4 sparkline samples toward
+// the spring value: softest at the boundary, full spring at the tip.
+var trailBlend = [4]float64{0.25, 0.50, 0.75, 1.0}
+
 // Gauge dot colors — left-edge indicator per row.
 var gaugeDots = []struct {
 	dot   string
@@ -41,7 +45,7 @@ type Gauges struct {
 
 func NewGauges() *Gauges {
 	return &Gauges{
-		spring: harmonica.NewSpring(harmonica.FPS(15), 5.0, 1.0),
+		spring: harmonica.NewSpring(harmonica.FPS(30), 5.0, 1.0),
 	}
 }
 
@@ -67,23 +71,31 @@ func (g *Gauges) Update(state *model.AppState) {
 	g.history[1] = state.MemHistory()
 	g.history[2] = state.CompressorHistory()
 
-	// Update decaying peaks — snap up instantly on spikes, decay slowly
-	// so historical bars don't jump when a spike scrolls out of view.
-	const decayRate = 0.995 // ~3s half-life at 150ms ticks
+	// Peak smoothing: snap up instantly on spikes, decay fast toward the
+	// visible window peak. Fast enough to recover within ~1s after a spike
+	// scrolls off, slow enough to prevent per-frame rescale jitter.
+	const decayRate = 0.92    // ~1.3s half-life at 150ms ticks
+	visibleSamples := g.width // ~width real samples visible after interpolation
+	if visibleSamples < 1 {
+		visibleSamples = 120 // typical terminal width before SetSize is called
+	}
 	for i, hist := range g.history {
-		// Find current window peak
+		start := 0
+		if len(hist) > visibleSamples {
+			start = len(hist) - visibleSamples
+		}
 		var windowPeak float64
-		for _, v := range hist {
+		for _, v := range hist[start:] {
 			if v > windowPeak {
 				windowPeak = v
 			}
 		}
 		if windowPeak > g.peaks[i] {
-			g.peaks[i] = windowPeak // snap up
+			g.peaks[i] = windowPeak
 		} else {
-			g.peaks[i] *= decayRate // slow decay
+			g.peaks[i] *= decayRate
 			if g.peaks[i] < windowPeak {
-				g.peaks[i] = windowPeak // floor at current data
+				g.peaks[i] = windowPeak
 			}
 		}
 	}
@@ -98,7 +110,7 @@ func (g *Gauges) Update(state *model.AppState) {
 	}
 }
 
-// AnimTick advances spring physics one frame (~15fps).
+// AnimTick advances spring physics one frame (~30fps).
 func (g *Gauges) AnimTick() {
 	for i := range g.springs {
 		g.springs[i].pos, g.springs[i].vel = g.spring.Update(
@@ -160,13 +172,20 @@ func (g *Gauges) View() string {
 	for i, ga := range gauges {
 		dot := ga.dotClr + ga.dot + sparkReset
 
-		// Replace the most recent data point with the spring-animated value
-		// so the rightmost sparkline dot eases at 15fps between snapshots.
+		// Blend trailing samples toward the spring value so the rightmost
+		// 2 braille characters ease smoothly at 30fps.
 		data := ga.data
 		if len(data) > 0 && g.seeded {
 			data = make([]float64, len(ga.data))
 			copy(data, ga.data)
-			data[len(data)-1] = ga.display
+			n := len(data)
+			for j := 0; j < len(trailBlend) && j < n; j++ {
+				idx := n - len(trailBlend) + j
+				if idx >= 0 {
+					w := trailBlend[j]
+					data[idx] = ga.data[idx]*(1-w) + ga.display*w
+				}
+			}
 		}
 
 		// Render with online/offline mask — rainbow dots inline with real data
