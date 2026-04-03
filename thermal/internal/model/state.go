@@ -192,6 +192,11 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.PrevThreat = s.ThreatLevel
 	s.ThreatLevel = Classify(snap, s.SpawnRate)
 
+	// Seed quip on first tick, then rotate on transitions
+	if s.stableQuip == "" {
+		s.stableQuip = ThreatQuip(s.ThreatLevel)
+	}
+
 	// Alert on threat transitions — pick a new random quip each time
 	if s.ThreatLevel != s.PrevThreat {
 		s.stableQuip = ThreatQuip(s.ThreatLevel)
