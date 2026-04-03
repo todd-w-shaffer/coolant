@@ -2,16 +2,17 @@ package widgets
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
 // ThreatColor maps threat levels to lipgloss colors (used by alerts too).
-var ThreatColor = map[model.ThreatLevel]lipgloss.Color{
+var ThreatColor = map[model.ThreatLevel]color.Color{
 	model.ThreatCool:     lipgloss.Color("2"),   // green
 	model.ThreatWarm:     lipgloss.Color("3"),   // yellow
 	model.ThreatHot:      lipgloss.Color("208"), // orange
@@ -136,14 +137,4 @@ func threatToThermal(t model.ThreatLevel) int {
 	default:
 		return 0
 	}
-}
-
-func thresholdColor(val, warn, crit float64) lipgloss.Color {
-	if val >= crit {
-		return lipgloss.Color("1")
-	}
-	if val >= warn {
-		return lipgloss.Color("3")
-	}
-	return lipgloss.Color("7")
 }

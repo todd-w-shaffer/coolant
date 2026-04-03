@@ -1,6 +1,10 @@
 package widgets
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 // Per-category thermal thresholds: how many procs before it gets warm/hot.
 // Encodes danger — 3 test procs is warm, 3 search procs is ice cold.
@@ -14,8 +18,8 @@ var catThresholds = map[string][2]int{
 
 // thermalLevel pairs foreground and background colors for a heat level.
 type thermalLevel struct {
-	fg lipgloss.Color
-	bg lipgloss.Color
+	fg color.Color
+	bg color.Color
 }
 
 // thermalGradient: 5 levels from invisible to glowing.

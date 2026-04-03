@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/demo"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
@@ -64,7 +64,7 @@ func waitForSnapshot(ch <-chan collector.Snapshot) tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			close(m.done)
@@ -94,11 +94,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
+	var v tea.View
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	if m.width == 0 || m.height == 0 {
-		return ""
+		return v
 	}
-	return m.layout.View()
+	v.Content = m.layout.View()
+	return v
 }
 
 // ── Main ────────────────────────────────────────────────────
@@ -111,10 +115,7 @@ func main() {
 
 	m := newModel(*demoMode)
 
-	p := tea.NewProgram(m,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	p := tea.NewProgram(m)
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

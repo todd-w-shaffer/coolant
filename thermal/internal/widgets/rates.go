@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
 // Rates renders spawn/death/net rates + system stats, all fixed-width:
@@ -72,8 +73,8 @@ func (r *Rates) View() string {
 	swapStr := fmt.Sprintf("%sSWAP:%05dMB", swapDot, swapMB)
 
 	// Color the stats
-	cpuColor := thresholdColor(snap.System.CPUPercent, 70, 90)
-	memColor := thresholdColor(memPct, 60, 80)
+	cpuColor := ui.ThresholdColor(snap.System.CPUPercent, 70, 90)
+	memColor := ui.ThresholdColor(memPct, 60, 80)
 	swapColor := lipgloss.Color("8")
 	if swapMB > 0 {
 		swapColor = lipgloss.Color("3")

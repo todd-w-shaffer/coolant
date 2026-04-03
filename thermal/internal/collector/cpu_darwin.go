@@ -34,6 +34,10 @@ type cpuSampler struct {
 
 var defaultCPUSampler cpuSampler
 
+// hostPort caches the mach host port to avoid leaking one send right per
+// call to mach_host_self(). Initialized once, reused for the process lifetime.
+var hostPort = C.mach_host_self()
+
 // readTicks calls host_statistics(HOST_CPU_LOAD_INFO) to get cumulative
 // CPU ticks — the same API Activity Monitor uses.
 func readTicks() cpuTicks {
@@ -41,7 +45,7 @@ func readTicks() cpuTicks {
 	count := C.mach_msg_type_number_t(C.HOST_CPU_LOAD_INFO_COUNT)
 
 	C.host_statistics(
-		C.mach_host_self(),
+		hostPort,
 		C.HOST_CPU_LOAD_INFO,
 		C.host_info_t(unsafe.Pointer(&info)),
 		&count,
