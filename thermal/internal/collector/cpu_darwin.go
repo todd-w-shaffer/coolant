@@ -28,8 +28,9 @@ func (t cpuTicks) busy() uint64 {
 
 // cpuSampler computes delta-based CPU% between successive calls.
 type cpuSampler struct {
-	mu   sync.Mutex
-	prev cpuTicks
+	mu      sync.Mutex
+	prev    cpuTicks
+	lastPct float64 // held when ticks haven't updated between reads
 }
 
 var defaultCPUSampler cpuSampler
@@ -60,23 +61,28 @@ func readTicks() cpuTicks {
 }
 
 // SampleCPUPercent returns CPU utilization since the last call, as 0-100.
-// First call returns 0 (no previous sample to diff against).
+// First call returns 0 (no previous sample to diff against). When mach ticks
+// haven't updated between reads (common at 150ms sampling), holds the last
+// computed value instead of returning a false 0%.
 func SampleCPUPercent() float64 {
 	cur := readTicks()
 
 	defaultCPUSampler.mu.Lock()
 	prev := defaultCPUSampler.prev
 	defaultCPUSampler.prev = cur
-	defaultCPUSampler.mu.Unlock()
 
 	// First sample — no delta yet
 	if prev.total() == 0 {
+		defaultCPUSampler.mu.Unlock()
 		return 0
 	}
 
 	totalDelta := cur.total() - prev.total()
 	if totalDelta == 0 {
-		return 0
+		// Ticks unchanged — kernel hasn't updated yet, hold last reading
+		pct := defaultCPUSampler.lastPct
+		defaultCPUSampler.mu.Unlock()
+		return pct
 	}
 
 	busyDelta := cur.busy() - prev.busy()
@@ -84,5 +90,7 @@ func SampleCPUPercent() float64 {
 	if pct > 100 {
 		pct = 100
 	}
+	defaultCPUSampler.lastPct = pct
+	defaultCPUSampler.mu.Unlock()
 	return pct
 }

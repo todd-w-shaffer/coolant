@@ -64,32 +64,68 @@ func truecolorFg(c colorful.Color) string {
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
 }
 
-// Braille codepoints for bars, bottom-up. 4 filled levels, left column only.
-// Left column dots bottom to top: 7(0x40), 3(0x04), 2(0x02), 1(0x01)
-// Color handles additional resolution — height stays single-width.
-var brailleBars = []rune{
-	0x2800,        // 0: empty
-	0x2800 + 0x40, // 1: ⡀  (dot 7)
-	0x2800 + 0x44, // 2: ⡄  (dots 7+3)
-	0x2800 + 0x46, // 3: ⡆  (dots 7+3+2)
-	0x2800 + 0x47, // 4: ⡇  (dots 7+3+2+1, full left column)
+// Braille dot layout (2 columns × 4 rows):
+//
+//	Left  Right
+//	 1     4    (top)
+//	 2     5
+//	 3     6
+//	 7     8    (bottom)
+//
+// Each column encodes one sample, bottom-up. Two samples per character
+// doubles horizontal resolution — ~240 samples across a full terminal
+// instead of ~120.
+
+// Left column bit patterns for levels 0–4 (bottom-up).
+var leftBits = [5]rune{
+	0x00,                      // 0: empty
+	0x40,                      // 1: dot 7
+	0x40 | 0x04,               // 2: dots 7+3
+	0x40 | 0x04 | 0x02,        // 3: dots 7+3+2
+	0x40 | 0x04 | 0x02 | 0x01, // 4: dots 7+3+2+1 (full)
 }
 
-// maxLevels is the number of filled braille levels (1–4).
+// Right column bit patterns for levels 0–4 (bottom-up).
+var rightBits = [5]rune{
+	0x00,                      // 0: empty
+	0x80,                      // 1: dot 8
+	0x80 | 0x20,               // 2: dots 8+6
+	0x80 | 0x20 | 0x10,        // 3: dots 8+6+5
+	0x80 | 0x20 | 0x10 | 0x08, // 4: dots 8+6+5+4 (full)
+}
+
+// maxLevels is the number of filled braille levels per column (1–4).
 const maxLevels = 4
 
-// RenderSparkline renders a braille sparkline where HEIGHT is proportional to
-// the value (auto-scaled to the visible window's peak) and COLOR encodes
-// severity. This gives EKG-style motion even at idle — small fluctuations
-// become visible instead of collapsing into a single severity bucket.
+// valueToLevel maps a value to a braille height level (0–4).
+// Non-zero values always produce at least level 1.
+func valueToLevel(v, peak float64) int {
+	if v <= 0 {
+		return 0
+	}
+	level := int((v / peak) * float64(maxLevels))
+	if level > maxLevels {
+		level = maxLevels
+	}
+	if level < 1 {
+		level = 1
+	}
+	return level
+}
+
+// RenderSparkline renders a double-resolution braille sparkline. Each character
+// packs two samples (left column + right column), doubling visible history.
+// HEIGHT is proportional (auto-scaled to visible peak), COLOR encodes severity.
 func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) string {
 	if width <= 0 {
 		return ""
 	}
 
+	// Two samples per character — take last width*2 samples
+	maxSamples := width * 2
 	visible := data
-	if len(visible) > width {
-		visible = visible[len(visible)-width:]
+	if len(visible) > maxSamples {
+		visible = visible[len(visible)-maxSamples:]
 	}
 
 	// Find peak for auto-scaling
@@ -105,32 +141,45 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		peak = 1
 	}
 
+	// Number of characters we'll render
+	nChars := (len(visible) + 1) / 2
+
 	var sb strings.Builder
 
 	// Right-align
-	pad := width - len(visible)
+	pad := width - nChars
 	if pad > 0 {
 		sb.WriteString(strings.Repeat(" ", pad))
 	}
 
-	for _, v := range visible {
-		if v < 0 {
-			v = 0
+	for i := 0; i < len(visible); i += 2 {
+		vL := visible[i]
+		if vL < 0 {
+			vL = 0
+		}
+		lev := valueToLevel(vL, peak)
+
+		// Right column: next sample, or empty if odd count
+		var vR float64
+		var revR int
+		if i+1 < len(visible) {
+			vR = visible[i+1]
+			if vR < 0 {
+				vR = 0
+			}
+			revR = valueToLevel(vR, peak)
 		}
 
-		// Height: proportional to peak, 1–5 (non-zero values always at least 1)
-		level := int((v / peak) * float64(maxLevels))
-		if level > maxLevels {
-			level = maxLevels
-		}
-		if level < 1 && v > 0 {
-			level = 1 // non-zero always visible
+		ch := 0x2800 | leftBits[lev] | rightBits[revR]
+
+		// Color: use higher severity of the pair
+		colorVal := vL
+		if vR > colorVal {
+			colorVal = vR
 		}
 
-		bar := brailleBars[level]
-
-		sb.WriteString(severityColor(v, thresh))
-		sb.WriteRune(bar)
+		sb.WriteString(severityColor(colorVal, thresh))
+		sb.WriteRune(ch)
 		sb.WriteString(sparkReset)
 	}
 
@@ -144,10 +193,8 @@ func RenderSparklineCompact(data []float64, width int, maxOverride float64, thre
 	return RenderSparkline(data, width, maxOverride, thresh)
 }
 
-// RenderSparklineWithMask renders a sparkline where offline ticks become
-// rainbow dots instead of severity bars. The mask indicates online (true)
-// or offline (false) for each data point. Seamless transitions — rainbow
-// dots sit inline with real data in the timeline.
+// RenderSparklineWithMask renders a double-resolution sparkline where offline
+// ticks become rainbow dots. Two samples per character, left + right columns.
 func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) string {
 	if width <= 0 {
 		return ""
@@ -162,13 +209,14 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		return RenderSparkline(data, width, maxOverride, thresh)
 	}
 
-	// Trim both to visible window from the end
+	// Two samples per character — visible window is width*2 samples
+	maxSamples := width * 2
 	startData := 0
 	startMask := 0
-	if n > width {
-		startData = len(data) - width
-		startMask = len(online) - width
-		n = width
+	if n > maxSamples {
+		startData = len(data) - maxSamples
+		startMask = len(online) - maxSamples
+		n = maxSamples
 	} else {
 		startData = len(data) - n
 		startMask = len(online) - n
@@ -190,46 +238,77 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		peak = 1
 	}
 
+	nChars := (len(visibleData) + 1) / 2
+
 	var sb strings.Builder
 
 	// Right-align padding
-	pad := width - len(visibleData)
+	pad := width - nChars
 	if pad > 0 {
 		sb.WriteString(strings.Repeat(" ", pad))
 	}
 
-	for i, v := range visibleData {
-		isOnline := true
+	for i := 0; i < len(visibleData); i += 2 {
+		// Left sample
+		vL := visibleData[i]
+		onL := true
 		if i < len(visibleMask) {
-			isOnline = visibleMask[i]
+			onL = visibleMask[i]
 		}
 
-		if !isOnline {
-			// Offline: static rainbow confetti — random but stable per position
-			ch, color := rainbowChar(i)
+		// Right sample (may not exist)
+		var vR float64
+		onR := true
+		hasRight := i+1 < len(visibleData)
+		if hasRight {
+			vR = visibleData[i+1]
+			if i+1 < len(visibleMask) {
+				onR = visibleMask[i+1]
+			}
+		}
+
+		// Both offline → rainbow character
+		if !onL && (!hasRight || !onR) {
+			ch, color := rainbowChar(i / 2)
 			sb.WriteString(color)
 			sb.WriteRune(ch)
 			sb.WriteString(sparkReset)
 			continue
 		}
 
-		// Online: proportional height, severity color
-		if v < 0 {
-			v = 0
+		// Mixed online/offline or both online — build combined braille
+		var lBits, rBits rune
+		colorVal := 0.0
+
+		if onL {
+			if vL < 0 {
+				vL = 0
+			}
+			lBits = leftBits[valueToLevel(vL, peak)]
+			colorVal = vL
 		}
 
-		level := int((v / peak) * float64(maxLevels))
-		if level > maxLevels {
-			level = maxLevels
-		}
-		if level < 1 && v > 0 {
-			level = 1
+		if hasRight && onR {
+			if vR < 0 {
+				vR = 0
+			}
+			rBits = rightBits[valueToLevel(vR, peak)]
+			if vR > colorVal {
+				colorVal = vR
+			}
+		} else if hasRight && !onR {
+			// Right sample offline — use rainbow pattern for right column only
+			rBits = rightBits[1+int(rune(i/2)*3)%3]
 		}
 
-		bar := brailleBars[level]
+		// One side offline, other online — still show the online side
+		if !onL && hasRight && onR {
+			lBits = leftBits[1+int(rune(i/2)*5)%3]
+		}
 
-		sb.WriteString(severityColor(v, thresh))
-		sb.WriteRune(bar)
+		ch := 0x2800 | lBits | rBits
+		sb.WriteString(severityColor(colorVal, thresh))
+		sb.WriteRune(ch)
 		sb.WriteString(sparkReset)
 	}
 

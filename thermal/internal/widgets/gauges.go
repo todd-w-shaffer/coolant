@@ -35,6 +35,7 @@ type Gauges struct {
 	springs [3]springState // one per gauge: cpu, mem, compressor
 	targets [3]float64     // snapshot target values
 	history [3][]float64   // cached history slices, rebuilt on snapshot only
+	peaks   [3]float64     // decaying peak per gauge — snaps up, fades slowly
 	seeded  bool           // true after first snapshot (skip spring on init)
 }
 
@@ -65,6 +66,27 @@ func (g *Gauges) Update(state *model.AppState) {
 	g.history[0] = state.CPUHistory()
 	g.history[1] = state.MemHistory()
 	g.history[2] = state.CompressorHistory()
+
+	// Update decaying peaks — snap up instantly on spikes, decay slowly
+	// so historical bars don't jump when a spike scrolls out of view.
+	const decayRate = 0.995 // ~3s half-life at 150ms ticks
+	for i, hist := range g.history {
+		// Find current window peak
+		var windowPeak float64
+		for _, v := range hist {
+			if v > windowPeak {
+				windowPeak = v
+			}
+		}
+		if windowPeak > g.peaks[i] {
+			g.peaks[i] = windowPeak // snap up
+		} else {
+			g.peaks[i] *= decayRate // slow decay
+			if g.peaks[i] < windowPeak {
+				g.peaks[i] = windowPeak // floor at current data
+			}
+		}
+	}
 
 	// First snapshot: jump to target immediately (no spring from zero)
 	if !g.seeded {
@@ -123,13 +145,13 @@ func (g *Gauges) View() string {
 	}
 
 	gauges := []gauge{
-		{g.history[0], g.targets[0], g.springs[0].pos, 0,
+		{g.history[0], g.targets[0], g.springs[0].pos, g.peaks[0],
 			SparkThresholds{Warn: 70, Crit: 90},
 			gaugeDots[0].dot, gaugeDots[0].color, fmtPct},
-		{g.history[1], g.targets[1], g.springs[1].pos, 0,
+		{g.history[1], g.targets[1], g.springs[1].pos, g.peaks[1],
 			SparkThresholds{Warn: 60, Crit: 80},
 			gaugeDots[1].dot, gaugeDots[1].color, fmtPct},
-		{g.history[2], g.targets[2], g.springs[2].pos, 0,
+		{g.history[2], g.targets[2], g.springs[2].pos, g.peaks[2],
 			SparkThresholds{Warn: 5000, Crit: 20000},
 			gaugeDots[2].dot, gaugeDots[2].color, fmtDecomp},
 	}

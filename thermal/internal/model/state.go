@@ -7,7 +7,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 )
 
-const maxHistory = 300 // ~5 min at 1Hz
+const maxHistory = 600 // ~90s at 150ms — fills double-resolution sparklines on wide terminals
 
 // AlertEntry is a single alert with timestamp and severity.
 type AlertEntry struct {
