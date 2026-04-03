@@ -1,9 +1,13 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"image/color"
+
+	"charm.land/lipgloss/v2"
+)
 
 // TypeColor maps process type codes to lipgloss colors, shared across all widgets.
-var TypeColor = map[string]lipgloss.Color{
+var TypeColor = map[string]color.Color{
 	"N": lipgloss.Color("2"),  // green — node
 	"G": lipgloss.Color("3"),  // yellow — grep
 	"V": lipgloss.Color("1"),  // red — vitest
@@ -17,7 +21,7 @@ var TypeColor = map[string]lipgloss.Color{
 }
 
 // CategoryColor maps activity categories to lipgloss colors.
-var CategoryColor = map[string]lipgloss.Color{
+var CategoryColor = map[string]color.Color{
 	"test":   lipgloss.Color("1"),   // red — the machine killer
 	"build":  lipgloss.Color("208"), // orange — heavy but finite
 	"run":    lipgloss.Color("3"),   // yellow — runtime processes
@@ -36,7 +40,7 @@ const (
 )
 
 // ThresholdColor returns green/yellow/red based on value vs thresholds.
-func ThresholdColor(val, warn, crit int) lipgloss.Color {
+func ThresholdColor(val, warn, crit float64) color.Color {
 	if val >= crit {
 		return lipgloss.Color("1") // red
 	}

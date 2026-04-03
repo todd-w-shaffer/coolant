@@ -34,6 +34,7 @@ type Gauges struct {
 	spring  harmonica.Spring
 	springs [3]springState // one per gauge: cpu, mem, compressor
 	targets [3]float64     // snapshot target values
+	history [3][]float64   // cached history slices, rebuilt on snapshot only
 	seeded  bool           // true after first snapshot (skip spring on init)
 }
 
@@ -59,6 +60,11 @@ func (g *Gauges) Update(state *model.AppState) {
 	g.targets[0] = state.Current.System.CPUPercent
 	g.targets[1] = state.Current.System.MemPercent()
 	g.targets[2] = decomps
+
+	// Cache history slices — only rebuilt on snapshot, not every frame.
+	g.history[0] = state.CPUHistory()
+	g.history[1] = state.MemHistory()
+	g.history[2] = state.CompressorHistory()
 
 	// First snapshot: jump to target immediately (no spring from zero)
 	if !g.seeded {
@@ -116,16 +122,14 @@ func (g *Gauges) View() string {
 		}
 	}
 
-	decomps := float64(g.state.Current.System.Decompressions)
-
 	gauges := []gauge{
-		{g.state.CPUHistory(), g.state.Current.System.CPUPercent, g.springs[0].pos, 0,
+		{g.history[0], g.targets[0], g.springs[0].pos, 0,
 			SparkThresholds{Warn: 70, Crit: 90},
 			gaugeDots[0].dot, gaugeDots[0].color, fmtPct},
-		{g.state.MemHistory(), g.state.Current.System.MemPercent(), g.springs[1].pos, 0,
+		{g.history[1], g.targets[1], g.springs[1].pos, 0,
 			SparkThresholds{Warn: 60, Crit: 80},
 			gaugeDots[1].dot, gaugeDots[1].color, fmtPct},
-		{g.state.CompressorHistory(), decomps, g.springs[2].pos, 0,
+		{g.history[2], g.targets[2], g.springs[2].pos, 0,
 			SparkThresholds{Warn: 5000, Crit: 20000},
 			gaugeDots[2].dot, gaugeDots[2].color, fmtDecomp},
 	}
