@@ -62,6 +62,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			close(m.done)
 			return m, tea.Quit
+		case "h":
+			m.layout.ToggleHelp()
+		case "c":
+			m.layout.ToggleCollapse()
 		}
 
 	case tea.WindowSizeMsg:
