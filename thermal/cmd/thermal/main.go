@@ -15,6 +15,7 @@ import (
 // ── Messages ────────────────────────────────────────────────
 
 type snapshotMsg collector.Snapshot
+type animTickMsg time.Time
 
 // ── Model ───────────────────────────────────────────────────
 
@@ -40,9 +41,15 @@ func (m model) Init() tea.Cmd {
 	if m.demoMode {
 		go demo.RunV2(m.snapChan, 250*time.Millisecond, m.done)
 	} else {
-		go collector.Run(m.snapChan, 500*time.Millisecond, m.done)
+		go collector.Run(m.snapChan, 150*time.Millisecond, m.done)
 	}
-	return waitForSnapshot(m.snapChan)
+	return tea.Batch(waitForSnapshot(m.snapChan), animTick())
+}
+
+func animTick() tea.Cmd {
+	return tea.Tick(time.Second/15, func(t time.Time) tea.Msg {
+		return animTickMsg(t)
+	})
 }
 
 func waitForSnapshot(ch <-chan collector.Snapshot) tea.Cmd {
@@ -78,6 +85,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout.State().Update(snap)
 		m.layout.Update(m.layout.State())
 		return m, waitForSnapshot(m.snapChan)
+
+	case animTickMsg:
+		m.layout.AnimTick()
+		return m, animTick()
 	}
 
 	return m, nil

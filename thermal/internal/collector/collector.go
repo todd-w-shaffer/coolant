@@ -2,23 +2,57 @@ package collector
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
-// Run starts the collector loop, sending Snapshots to ch at the given interval.
-// It collects system stats and process trees concurrently.
+// Run starts two decoupled collector loops:
+//   - Fast loop (interval): CPU, memory, swap, procs — drives sparklines.
+//   - Slow loop (1s): network reachability — online/offline state changes
+//     are measured in minutes, not milliseconds.
+//
+// Both loops send Snapshots to ch. The fast loop carries the last-known
+// online state so every snapshot is complete.
 func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 	defer close(ch)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	var (
+		mu     sync.Mutex
+		online bool // last-known network state
+	)
+
+	// Slow loop: network check at 1s
+	go func() {
+		netTicker := time.NewTicker(1 * time.Second)
+		defer netTicker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-netTicker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				result := CheckOnline(ctx)
+				cancel()
+				mu.Lock()
+				online = result
+				mu.Unlock()
+			}
+		}
+	}()
+
+	// Fast loop: system stats + procs
+	fastTicker := time.NewTicker(interval)
+	defer fastTicker.Stop()
 
 	for {
 		select {
 		case <-done:
 			return
-		case <-ticker.C:
-			snap := collect()
+		case <-fastTicker.C:
+			snap := collectFast()
+			mu.Lock()
+			snap.Online = online
+			mu.Unlock()
 			select {
 			case ch <- snap:
 			case <-done:
@@ -28,9 +62,8 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 	}
 }
 
-func collect() Snapshot {
-	// 5s deadline protects against hanging syscalls or DNS — any collector
-	// goroutine that outlives this context gets cancelled via exec.CommandContext.
+// collectFast gathers system stats and process trees (no network check).
+func collectFast() Snapshot {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	now := time.Now()
@@ -47,7 +80,6 @@ func collect() Snapshot {
 
 	sysCh := make(chan sysResult, 1)
 	procCh := make(chan procResult, 1)
-	netCh := make(chan bool, 1)
 
 	go func() {
 		stats, err := CollectSystem(ctx)
@@ -57,16 +89,11 @@ func collect() Snapshot {
 		sessions, allProcs, err := CollectProcs(ctx)
 		procCh <- procResult{sessions, allProcs, err}
 	}()
-	go func() {
-		netCh <- CheckOnline(ctx)
-	}()
 
 	snap := Snapshot{
 		Timestamp: now,
 	}
 
-	// Receive with timeout — if a collector hangs past the deadline,
-	// return a partial snapshot rather than deadlocking.
 	select {
 	case r := <-sysCh:
 		if r.err == nil {
@@ -86,13 +113,6 @@ func collect() Snapshot {
 		} else {
 			snap.CollectErrs = append(snap.CollectErrs, "procs: "+r.err.Error())
 		}
-	case <-ctx.Done():
-		return snap
-	}
-
-	select {
-	case online := <-netCh:
-		snap.Online = online
 	case <-ctx.Done():
 		return snap
 	}
