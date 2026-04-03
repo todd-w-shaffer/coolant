@@ -35,7 +35,8 @@ thermal/
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
-│   │   ├── system.go         # CPU/MEM/SWAP via sysctl/vm_stat
+│   │   ├── cpu_darwin.go     # cgo mach host_statistics for CPU tick deltas
+│   │   ├── system.go         # MEM/SWAP/decompressions via sysctl/vm_stat
 │   │   ├── procs.go          # Claude process discovery + descendant trees
 │   │   ├── network.go        # API connectivity check
 │   │   └── collector.go      # orchestrates collection, sends Snapshots
@@ -43,13 +44,15 @@ thermal/
 │   │   ├── state.go          # AppState: rolling history, smoothed counts
 │   │   ├── threat.go         # ThreatLevel: COOL/WARM/HOT/MELTDOWN
 │   │   ├── projection.go     # memory weight classes, headroom estimation
-│   │   └── personality.go    # idle messages, threat quips
+│   │   ├── personality.go    # idle messages, threat quips (loaded from CSV)
+│   │   └── data/
+│   │       └── messages.csv  # embedded status bar messages per threat level
 │   ├── widgets/
 │   │   ├── widget.go         # Widget interface
 │   │   ├── sparkline.go      # braille severity bars (⡀ green/⡄ yellow/⡆ red)
 │   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
-│   │   ├── gauges.go         # CPU/MEM/SWAP braille sparklines
-│   │   ├── rates.go          # spawn/death/net + system stats, fixed-width
+│   │   ├── gauges.go         # CPU/MEM/compressor braille sparklines
+│   │   ├── rates.go          # system stats + spawn/death/net + [h] help
 │   │   └── alerts.go         # scrolling alert log
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
@@ -61,7 +64,7 @@ thermal/
 └── go.sum
 ```
 
-**Dependencies:** Go 1.26+, `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`.
+**Dependencies:** Go 1.26+, cgo (for mach CPU ticks), `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`.
 
 **Build:** `cd thermal && go build -o ../bin/thermal ./cmd/thermal/`
 
@@ -78,6 +81,18 @@ thermal/
 - All hook scripts log events via `coolant_log "message"` from common.sh.
 - State lives in `/tmp/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao` for sensors. No third-party tools.
+
+### Keyboard shortcuts
+
+- `h` — toggle help overlay (replaces sparklines with plain-language explainers)
+- `c` — collapse/expand the notification bar (top row with [i] install, etc.)
+- `q` / `ctrl+c` — quit
+
+### UI layers
+
+- **Notification bar** (top, collapsible via `c`) — transient chrome: install CTA, future version alerts
+- **Rates bar** (bottom, always visible) — system stats with colored dots + spawn/death/net + permanent `[h] help`
+- **Status messages** — loaded from `thermal/internal/model/data/messages.csv` via `go:embed`, prefixed with `:: `
 
 ### Go (visualization)
 
