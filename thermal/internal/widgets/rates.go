@@ -96,5 +96,7 @@ func (r *Rates) View() string {
 		lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(netStr),
 	)
 
-	return stats + sep + rates
+	help := dim.Render("[h] help")
+
+	return stats + sep + rates + "  " + help
 }

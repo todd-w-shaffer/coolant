@@ -19,13 +19,15 @@ import (
 //	Lines 8-9: alerts
 //	Line 10: (overflow)
 type Horizontal struct {
-	width    int
-	height   int
-	state    *model.AppState
-	headline *widgets.Headline
-	gauges   *widgets.Gauges
-	rates    *widgets.Rates
-	alerts   *widgets.Alerts
+	width     int
+	height    int
+	state     *model.AppState
+	headline  *widgets.Headline
+	gauges    *widgets.Gauges
+	rates     *widgets.Rates
+	alerts    *widgets.Alerts
+	helpMode  bool
+	collapsed bool
 }
 
 func NewHorizontal() *Horizontal {
@@ -51,6 +53,18 @@ func (h *Horizontal) SetSize(w, height int) {
 	h.alerts.SetSize(w, 2)
 }
 
+func (h *Horizontal) ToggleHelp() {
+	h.helpMode = !h.helpMode
+}
+
+func (h *Horizontal) ToggleCollapse() {
+	h.collapsed = !h.collapsed
+}
+
+func (h *Horizontal) IsCollapsed() bool {
+	return h.collapsed
+}
+
 func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
 	h.headline.Update(state)
@@ -72,9 +86,14 @@ func (h *Horizontal) View() string {
 	var lines []string
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
-	// Line 1: Plugin CTA (persistent subtle, at the top)
-	if !h.state.PluginActive && h.height >= 2 {
-		lines = append(lines, dim.Render(" [i] install coolant plugin for agent-level insights"))
+	// Line 1: Notification bar (collapses away with [c])
+	if !h.collapsed && h.height >= 2 {
+		var hints []string
+		if !h.state.PluginActive {
+			hints = append(hints, "[i] install plugin")
+		}
+		hints = append(hints, "[c] collapse")
+		lines = append(lines, dim.Render(" "+strings.Join(hints, "  ")))
 	}
 
 	// Line 2: Thermal bar (overall + categories)
@@ -82,8 +101,10 @@ func (h *Horizontal) View() string {
 		lines = append(lines, h.headline.View())
 	}
 
-	// Lines 3-5: Sparklines (cpu%, mem%, swap — 3 rows)
-	if h.height >= 5 {
+	// Lines 3-5: Sparklines or help overlay
+	if h.helpMode && h.height >= 5 {
+		lines = append(lines, h.helpView()...)
+	} else if h.height >= 5 {
 		for _, line := range strings.Split(h.gauges.View(), "\n") {
 			lines = append(lines, line)
 		}
@@ -112,6 +133,18 @@ func (h *Horizontal) View() string {
 	return strings.Join(lines, "\n")
 }
 
+func (h *Horizontal) helpView() []string {
+	white := "\033[37m●\033[0m"
+	cyan := "\033[36m●\033[0m"
+	magenta := "\033[35m●\033[0m"
+	d := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	return []string{
+		fmt.Sprintf(" %s  %s  %s", white, d.Render("CPU"), d.Render("how hard your cores are working — when this maxes out, everything slows down")),
+		fmt.Sprintf(" %s  %s  %s", cyan, d.Render("MEM"), d.Render("memory actually in use by apps — when this fills up, swap starts and things get ugly")),
+		fmt.Sprintf(" %s  %s  %s", magenta, d.Render("COMP"), d.Render("memory compressor struggling — this spikes 10-20s before your machine locks up")),
+	}
+}
+
 func (h *Horizontal) idleView() string {
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	cool := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
@@ -120,9 +153,14 @@ func (h *Horizontal) idleView() string {
 
 	var lines []string
 
-	// CTA even when idle
-	if !h.state.PluginActive {
-		lines = append(lines, dim.Render(" [i] install coolant plugin for agent-level insights"))
+	// Notification bar even when idle
+	if !h.collapsed {
+		var hints []string
+		if !h.state.PluginActive {
+			hints = append(hints, "[i] install plugin")
+		}
+		hints = append(hints, "[c] collapse")
+		lines = append(lines, dim.Render(" "+strings.Join(hints, "  ")))
 	}
 
 	lines = append(lines, " "+cool.Render("◉")+" "+dim.Render("coolant")+"  "+quip)
