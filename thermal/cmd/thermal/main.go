@@ -47,7 +47,7 @@ func (m model) Init() tea.Cmd {
 }
 
 func animTick() tea.Cmd {
-	return tea.Tick(time.Second/15, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Second/30, func(t time.Time) tea.Msg {
 		return animTickMsg(t)
 	})
 }
