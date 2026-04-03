@@ -192,24 +192,25 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.PrevThreat = s.ThreatLevel
 	s.ThreatLevel = Classify(snap, s.SpawnRate)
 
-	// Alert on threat transitions
-	if s.ThreatLevel != s.PrevThreat && s.PrevThreat != 0 {
-		if s.ThreatLevel > s.PrevThreat {
-			s.addAlert(AlertEntry{
-				Time:    snap.Timestamp,
-				Message: ThreatQuipStable(s.ThreatLevel),
-				Level:   s.ThreatLevel,
-			})
-		} else {
-			s.addAlert(AlertEntry{
-				Time:    snap.Timestamp,
-				Message: "cooling down -- " + ThreatQuipStable(s.ThreatLevel),
-				Level:   s.ThreatLevel,
-			})
+	// Alert on threat transitions — pick a new random quip each time
+	if s.ThreatLevel != s.PrevThreat {
+		s.stableQuip = ThreatQuip(s.ThreatLevel)
+		if s.PrevThreat != 0 {
+			if s.ThreatLevel > s.PrevThreat {
+				s.addAlert(AlertEntry{
+					Time:    snap.Timestamp,
+					Message: s.stableQuip,
+					Level:   s.ThreatLevel,
+				})
+			} else {
+				s.addAlert(AlertEntry{
+					Time:    snap.Timestamp,
+					Message: "cooling down -- " + s.stableQuip,
+					Level:   s.ThreatLevel,
+				})
+			}
 		}
 	}
-	// Always keep quip in sync with current threat level
-	s.stableQuip = ThreatQuipStable(s.ThreatLevel)
 
 	// Headroom alerts
 	if s.Headroom.HeadroomBytes < 2*GB && s.Headroom.Warning != "" {
@@ -265,11 +266,11 @@ func (s *AppState) MemHistory() []float64 {
 	return out
 }
 
-// SwapHistory returns the swap% history.
-func (s *AppState) SwapHistory() []float64 {
+// CompressorHistory returns the decompressions/tick history for sparklines.
+func (s *AppState) CompressorHistory() []float64 {
 	out := make([]float64, len(s.History))
 	for i, h := range s.History {
-		out[i] = h.System.SwapPercent()
+		out[i] = float64(h.System.Decompressions)
 	}
 	return out
 }
