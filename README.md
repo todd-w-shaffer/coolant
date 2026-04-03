@@ -22,7 +22,7 @@ Coolant sits between Claude Code and your hardware. It senses system state, trac
 
 - **Process-tree awareness** — Not just "how many node processes exist" but "which specific processes descended from this Claude session and how much CPU/memory are they using." Uses `ps` process ancestry to trace the exact subtree.
 
-- **System sensors** — CPU load, memory usage, swap pressure — collected from macOS system calls (`sysctl`, `vm_stat`), no dependencies.
+- **System sensors** — CPU utilization via mach `host_statistics` (same API as Activity Monitor), memory via `vm_stat`, swap via `sysctl` — no third-party dependencies.
 
 - **Event logging** — Every mode change, agent start/stop, and hook suppression is logged with timestamps, visible in the monitor's event panel.
 
@@ -32,11 +32,15 @@ A terminal dashboard that monitors Claude Code's process tree in real time. Buil
 
 - **Thermal headline** — Overall threat level with personality quip + five category boxes (test/build/run/search/shell) that glow from invisible to red based on per-category danger thresholds.
 
-- **Braille sparklines** — CPU%, MEM%, and SWAP history as severity-colored braille bars (green/yellow/red), each dot colored by its own value.
+- **Braille sparklines** — CPU%, MEM%, and compressor decompressions/tick as severity-colored braille bars (green/yellow/red). The compressor row is the earliest leading indicator of memory pressure — it spikes 10-20s before your machine locks up.
 
-- **Rates + stats** — Spawn/death/net rates and current system metrics (CPU, MEM, SWAP) in fixed-width format.
+- **Rates + stats** — System stats with colored dots linking to their sparklines (CPU, MEM, SWAP), spawn/death/net rates, and a permanent `[h]` help toggle.
 
 - **Offline detection** — Detects API connectivity loss and switches to a distinct visual mode with rainbow sparklines.
+
+- **Help overlay** — Press `h` to replace sparklines with plain-language descriptions of what each metric measures and why. Press `h` again to dismiss.
+
+- **Collapsible notification bar** — Top row shows install CTA and future alerts. Press `c` to collapse, `c` again to restore.
 
 ## Prerequisites
 
@@ -82,7 +86,7 @@ Coolant works automatically once installed. Hooks count active agents and engage
 ./bin/thermal --demo
 ```
 
-Press `q` to quit.
+Keyboard shortcuts: `h` help, `c` collapse notification bar, `q` quit.
 
 ### Monitor (system-level)
 
@@ -158,10 +162,11 @@ coolant/
 ├── thermal/                 # Go — thermal dashboard binary
 │   ├── cmd/thermal/main.go  # bubbletea app entry point
 │   ├── internal/
-│   │   ├── collector/        # system stats + process tree scanning
+│   │   ├── collector/        # CPU (mach cgo), MEM/SWAP (vm_stat), process trees
 │   │   ├── model/            # AppState, threat classification, personality
+│   │   │   └── data/         # embedded CSV: status messages per threat level
 │   │   ├── widgets/          # headline, gauges, rates, alerts, sparklines
-│   │   ├── layout/           # horizontal strip compositor
+│   │   ├── layout/           # horizontal strip compositor, help overlay
 │   │   ├── demo/             # synthetic data generator (--demo)
 │   │   └── ui/               # colors, thresholds
 │   ├── go.mod
@@ -176,7 +181,7 @@ coolant/
     └── *.bats                # per-script test files
 ```
 
-The Go binary collects system data directly via `sysctl`, `vm_stat`, and `ps` — no external dependencies.
+The Go binary collects system data directly via mach `host_statistics` (CPU), `vm_stat` (memory/compressor), `sysctl` (swap), and `ps` (process trees) — no external dependencies beyond cgo.
 
 ## Testing
 
