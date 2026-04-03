@@ -3,6 +3,8 @@ package widgets
 import (
 	"fmt"
 	"strings"
+
+	colorful "github.com/lucasb-eyer/go-colorful"
 )
 
 // SparkThresholds defines the warn/crit boundaries for per-dot coloring.
@@ -11,27 +13,75 @@ type SparkThresholds struct {
 	Crit float64
 }
 
-// ANSI color codes.
+// ANSI reset and dim (still needed for offline/special states).
 const (
-	sparkGreen  = "\033[32m"
-	sparkYellow = "\033[33m"
-	sparkRed    = "\033[31m"
-	sparkDim    = "\033[2;37m"
-	sparkReset  = "\033[0m"
+	sparkDim   = "\033[2;37m"
+	sparkReset = "\033[0m"
 )
 
-// Braille codepoints for left-column-only bars, bottom-up.
-// Left column dots bottom to top: 7(64), 3(4), 2(2), 1(1)
-var brailleBars = []rune{
-	0x2800,      // 0 dots: empty
-	0x2800 + 64, // 1 dot:  ⡀  (dot 7)
-	0x2800 + 68, // 2 dots: ⡄  (dots 7+3)
-	0x2800 + 70, // 3 dots: ⡆  (dots 7+3+2)
+// Gradient anchor colors for severity interpolation (HCL perceptual space).
+var (
+	gradGreen  = mustHex("#22c55e")
+	gradYellow = mustHex("#eab308")
+	gradRed    = mustHex("#ef4444")
+)
+
+func mustHex(hex string) colorful.Color {
+	c, _ := colorful.Hex(hex)
+	return c
 }
 
-// RenderSparkline renders a braille sparkline where bar HEIGHT encodes severity.
-// 1 dot high = green (below warn), 2 dots = yellow (warn-crit), 3 dots = red (above crit).
-// Each braille cell is one time sample. Right-aligned with left padding.
+// severityColor returns a truecolor ANSI escape for a value relative to
+// thresholds. Interpolates green→yellow below warn, yellow→red between
+// warn and crit, solid red above crit. Produces smooth per-dot gradients.
+func severityColor(v float64, thresh *SparkThresholds) string {
+	if thresh == nil {
+		return truecolorFg(gradGreen)
+	}
+
+	var c colorful.Color
+	switch {
+	case v >= thresh.Crit:
+		c = gradRed
+	case v >= thresh.Warn:
+		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
+		c = gradYellow.BlendHcl(gradRed, ratio).Clamped()
+	default:
+		if thresh.Warn <= 0 {
+			c = gradGreen
+		} else {
+			ratio := v / thresh.Warn
+			c = gradGreen.BlendHcl(gradYellow, ratio).Clamped()
+		}
+	}
+
+	return truecolorFg(c)
+}
+
+// truecolorFg emits \033[38;2;R;G;Bm for 24-bit foreground color.
+func truecolorFg(c colorful.Color) string {
+	r, g, b := c.RGB255()
+	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
+}
+
+// Braille codepoints for bars, bottom-up. 4 filled levels, left column only.
+// Left column dots bottom to top: 7(0x40), 3(0x04), 2(0x02), 1(0x01)
+// Color handles additional resolution — height stays single-width.
+var brailleBars = []rune{
+	0x2800,        // 0: empty
+	0x2800 + 0x40, // 1: ⡀  (dot 7)
+	0x2800 + 0x44, // 2: ⡄  (dots 7+3)
+	0x2800 + 0x46, // 3: ⡆  (dots 7+3+2)
+	0x2800 + 0x47, // 4: ⡇  (dots 7+3+2+1, full left column)
+}
+
+// maxLevels is the number of filled braille levels (1–4).
+const maxLevels = 4
+
+// RenderSparkline renders a braille sparkline where HEIGHT is proportional to
+// the value (auto-scaled to the visible window's peak) and COLOR encodes
+// severity. This gives EKG-style motion even at idle — small fluctuations
+// become visible instead of collapsing into a single severity bucket.
 func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) string {
 	if width <= 0 {
 		return ""
@@ -40,6 +90,19 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 	visible := data
 	if len(visible) > width {
 		visible = visible[len(visible)-width:]
+	}
+
+	// Find peak for auto-scaling
+	peak := maxOverride
+	if peak <= 0 {
+		for _, v := range visible {
+			if v > peak {
+				peak = v
+			}
+		}
+	}
+	if peak <= 0 {
+		peak = 1
 	}
 
 	var sb strings.Builder
@@ -55,28 +118,18 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 			v = 0
 		}
 
-		// Classify severity → bar height + color
-		var bar rune
-		var color string
-
-		if thresh == nil || v < thresh.Warn {
-			bar = brailleBars[1] // 1 dot
-			color = sparkGreen
-		} else if v < thresh.Crit {
-			bar = brailleBars[2] // 2 dots
-			color = sparkYellow
-		} else {
-			bar = brailleBars[3] // 3 dots
-			color = sparkRed
+		// Height: proportional to peak, 1–5 (non-zero values always at least 1)
+		level := int((v / peak) * float64(maxLevels))
+		if level > maxLevels {
+			level = maxLevels
+		}
+		if level < 1 && v > 0 {
+			level = 1 // non-zero always visible
 		}
 
-		// Zero value = minimum green dot (always show something)
-		if v == 0 {
-			bar = brailleBars[1]
-			color = sparkGreen
-		}
+		bar := brailleBars[level]
 
-		sb.WriteString(color)
+		sb.WriteString(severityColor(v, thresh))
 		sb.WriteRune(bar)
 		sb.WriteString(sparkReset)
 	}
@@ -160,29 +213,22 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 			continue
 		}
 
-		// Online: severity dot
+		// Online: proportional height, severity color
 		if v < 0 {
 			v = 0
 		}
 
-		var bar rune
-		var color string
-
-		if v == 0 {
-			bar = brailleBars[1]
-			color = sparkGreen
-		} else if thresh == nil || v < thresh.Warn {
-			bar = brailleBars[1]
-			color = sparkGreen
-		} else if v < thresh.Crit {
-			bar = brailleBars[2]
-			color = sparkYellow
-		} else {
-			bar = brailleBars[3]
-			color = sparkRed
+		level := int((v / peak) * float64(maxLevels))
+		if level > maxLevels {
+			level = maxLevels
+		}
+		if level < 1 && v > 0 {
+			level = 1
 		}
 
-		sb.WriteString(color)
+		bar := brailleBars[level]
+
+		sb.WriteString(severityColor(v, thresh))
 		sb.WriteRune(bar)
 		sb.WriteString(sparkReset)
 	}
