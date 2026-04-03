@@ -35,11 +35,11 @@ thermal/
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
-│   │   ├── cpu_darwin.go     # cgo mach host_statistics for CPU tick deltas
+│   │   ├── cpu_darwin.go     # cgo mach host_statistics for CPU tick deltas (cached host port)
 │   │   ├── system.go         # MEM/SWAP/decompressions via sysctl/vm_stat
 │   │   ├── procs.go          # Claude process discovery + descendant trees
-│   │   ├── network.go        # API connectivity check
-│   │   └── collector.go      # orchestrates collection, sends Snapshots
+│   │   ├── network.go        # API connectivity check (TCP to api.anthropic.com)
+│   │   └── collector.go      # decoupled fast (150ms) + slow (1s network) loops
 │   ├── model/
 │   │   ├── state.go          # AppState: rolling history, smoothed counts
 │   │   ├── threat.go         # ThreatLevel: COOL/WARM/HOT/MELTDOWN
@@ -49,9 +49,9 @@ thermal/
 │   │       └── messages.csv  # embedded status bar messages per threat level
 │   ├── widgets/
 │   │   ├── widget.go         # Widget interface
-│   │   ├── sparkline.go      # braille severity bars (⡀ green/⡄ yellow/⡆ red)
+│   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char)
 │   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
-│   │   ├── gauges.go         # CPU/MEM/compressor braille sparklines
+│   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats + spawn/death/net + [h] help
 │   │   └── alerts.go         # scrolling alert log
 │   ├── layout/
@@ -64,7 +64,7 @@ thermal/
 └── go.sum
 ```
 
-**Dependencies:** Go 1.26+, cgo (for mach CPU ticks), `github.com/charmbracelet/bubbletea`, `github.com/charmbracelet/lipgloss`.
+**Dependencies:** Go 1.26+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
 
 **Build:** `cd thermal && go build -o ../bin/thermal ./cmd/thermal/`
 
@@ -96,10 +96,14 @@ thermal/
 
 ### Go (visualization)
 
-- bubbletea Elm architecture: `Init` → `Update(msg)` → `View()`. No manual cursor management.
-- Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View()` methods.
-- Collector runs in a goroutine, sends `snapshotMsg` into bubbletea's program.
-- Type colors defined once in `internal/ui/colors.go`, shared across all widgets.
+- **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
+- **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
+- Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
+- **Collector** runs two decoupled loops: fast (150ms) for CPU/MEM/procs driving sparklines, slow (1s) for network reachability. Shared online state protected by mutex.
+- **Sparklines** use double-resolution braille: both columns of each character pack two time samples (left=N, right=N+1), doubling visible history to ~240 samples. Height is proportional (auto-scaled to a decaying peak), color is severity gradient via go-colorful `BlendHcl()` (green→yellow→red, 24-bit truecolor).
+- **Gauges** use harmonica spring physics (critically damped, 15fps) for smooth numeric readout easing. The rightmost sparkline dot also tracks the spring value. Decaying peak per gauge (snaps up on spikes, fades at 0.995/tick) prevents whole-sparkline rescale jumps.
+- **CPU sampling** caches the mach host port (avoids port leak) and holds the last computed CPU% when tick deltas are zero (avoids false 0% gaps at 150ms).
+- Type colors defined once in `internal/ui/colors.go`, shared across all widgets. `ui.ThresholdColor(val, warn, crit float64)` is the single threshold color function.
 - Braille rendering done natively in Go (no awk, no subshells).
 
 ## TDD Workflow
