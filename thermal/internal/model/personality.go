@@ -1,10 +1,61 @@
 package model
 
 import (
+	"embed"
+	"encoding/csv"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 )
+
+//go:embed data/messages.csv
+var messagesFS embed.FS
+
+// threatQuips loaded from embedded CSV at init.
+var threatQuips map[ThreatLevel][]string
+
+func init() {
+	threatQuips = map[ThreatLevel][]string{
+		ThreatCool:     {},
+		ThreatWarm:     {},
+		ThreatHot:      {},
+		ThreatMeltdown: {},
+	}
+
+	f, err := messagesFS.Open("data/messages.csv")
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	r := csv.NewReader(f)
+	records, err := r.ReadAll()
+	if err != nil {
+		return
+	}
+
+	phaseMap := map[string]ThreatLevel{
+		"cool":     ThreatCool,
+		"warm":     ThreatWarm,
+		"hot":      ThreatHot,
+		"meltdown": ThreatMeltdown,
+	}
+
+	for i, rec := range records {
+		if i == 0 { // skip header
+			continue
+		}
+		if len(rec) < 2 {
+			continue
+		}
+		phase := strings.TrimSpace(strings.ToLower(rec[0]))
+		msg := strings.TrimSpace(rec[1])
+		if level, ok := phaseMap[phase]; ok {
+			threatQuips[level] = append(threatQuips[level], msg)
+		}
+	}
+}
 
 // Idle messages cycle when no Claude processes are detected.
 var idleMessages = []string{
@@ -13,30 +64,6 @@ var idleMessages = []string{
 	"not a process in sight...",
 	"thermostat reads zero...",
 	"ice cold, nothing brewing...",
-}
-
-// Threat quips shown alongside the threat level.
-var threatQuips = map[ThreatLevel][]string{
-	ThreatCool: {
-		"Claude's humming along nicely",
-		"smooth sailing, temps nominal",
-		"cool and collected",
-	},
-	ThreatWarm: {
-		"things are warming up...",
-		"starting to feel it...",
-		"the fans are noticing",
-	},
-	ThreatHot: {
-		"Claude's cooking with gas!",
-		"getting spicy in here",
-		"thermal paste earning its keep",
-	},
-	ThreatMeltdown: {
-		"Claude's gone nuclear",
-		"mayday mayday mayday",
-		"everything is fine (it is not fine)",
-	},
 }
 
 // Alert message templates for threshold crossings.
@@ -55,23 +82,24 @@ func IdleMessage(cycle int) string {
 	return idleMessages[cycle%len(idleMessages)]
 }
 
-// ThreatQuip returns a personality string for the given threat level.
+// ThreatQuip returns a random personality string for the given threat level,
+// prefixed with ":: " for status bar display.
 func ThreatQuip(level ThreatLevel) string {
 	quips := threatQuips[level]
 	if len(quips) == 0 {
-		return level.String()
+		return ":: " + level.String()
 	}
-	return quips[rand.Intn(len(quips))]
+	return ":: " + quips[rand.Intn(len(quips))]
 }
 
-// ThreatQuipStable returns the first (deterministic) quip for the level.
-// Use this for display that shouldn't flicker every tick.
+// ThreatQuipStable returns a deterministic quip for the level (first entry),
+// prefixed with ":: ". Use this for display that shouldn't flicker every tick.
 func ThreatQuipStable(level ThreatLevel) string {
 	quips := threatQuips[level]
 	if len(quips) == 0 {
-		return level.String()
+		return ":: " + level.String()
 	}
-	return quips[0]
+	return ":: " + quips[0]
 }
 
 // Offline messages — delightful, not alarming.
