@@ -14,10 +14,10 @@ var gaugeDots = []struct {
 }{
 	{"●", "\033[37m"}, // cpu — white dot
 	{"●", "\033[36m"}, // mem — cyan dot
-	{"●", "\033[35m"}, // swap — magenta dot
+	{"●", "\033[35m"}, // compressor — magenta dot
 }
 
-// Gauges renders 3 sparklines: CPU%, MEM%, SWAP.
+// Gauges renders 3 sparklines: CPU%, MEM%, compressor decompressions/tick.
 // Each dot is severity-colored when online, rainbow when offline.
 // Transitions are seamless — rainbow dots sit inline in the timeline.
 type Gauges struct {
@@ -59,18 +59,34 @@ func (g *Gauges) View() string {
 		thresh  SparkThresholds
 		dot     string
 		dotClr  string
+		fmtVal  func(float64) string // custom value formatter
 	}
+
+	fmtPct := func(v float64) string { return fmt.Sprintf("%3d%%", int(v)) }
+	fmtDecomp := func(v float64) string {
+		n := int64(v)
+		switch {
+		case n >= 1_000_000:
+			return fmt.Sprintf("%3dM", n/1_000_000)
+		case n >= 1_000:
+			return fmt.Sprintf("%3dK", n/1_000)
+		default:
+			return fmt.Sprintf("%4d", n)
+		}
+	}
+
+	decomps := float64(g.state.Current.System.Decompressions)
 
 	gauges := []gauge{
 		{g.state.CPUHistory(), g.state.Current.System.CPUPercent, 100,
 			SparkThresholds{Warn: 70, Crit: 90},
-			gaugeDots[0].dot, gaugeDots[0].color},
+			gaugeDots[0].dot, gaugeDots[0].color, fmtPct},
 		{g.state.MemHistory(), g.state.Current.System.MemPercent(), 100,
 			SparkThresholds{Warn: 60, Crit: 80},
-			gaugeDots[1].dot, gaugeDots[1].color},
-		{g.state.SwapHistory(), g.state.Current.System.SwapPercent(), 0,
-			SparkThresholds{Warn: 10, Crit: 100},
-			gaugeDots[2].dot, gaugeDots[2].color},
+			gaugeDots[1].dot, gaugeDots[1].color, fmtPct},
+		{g.state.CompressorHistory(), decomps, 0,
+			SparkThresholds{Warn: 5000, Crit: 20000},
+			gaugeDots[2].dot, gaugeDots[2].color, fmtDecomp},
 	}
 
 	var lines []string
@@ -91,8 +107,7 @@ func (g *Gauges) View() string {
 			} else if ga.current >= ga.thresh.Warn {
 				valColor = sparkYellow
 			}
-			valStr := fmt.Sprintf("%3d%%", int(ga.current))
-			coloredVal = valColor + valStr + sparkReset
+			coloredVal = valColor + ga.fmtVal(ga.current) + sparkReset
 		}
 
 		lines = append(lines, fmt.Sprintf(" %s %s %s", dot, spark, coloredVal))

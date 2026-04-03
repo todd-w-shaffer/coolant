@@ -4,11 +4,12 @@ import "time"
 
 // SystemStats holds system-wide resource utilization from sysctl/vm_stat.
 type SystemStats struct {
-	CPUPercent     float64 // load1 / ncpu * 100, capped at 100
+	CPUPercent     float64 // mach host_statistics tick delta, 0-100
 	MemUsedBytes   int64   // active + wired + compressed pages
 	MemTotalBytes  int64   // hw.memsize
 	SwapUsedBytes  int64
 	SwapTotalBytes int64
+	Decompressions int64 // vm_stat delta: decompressions since last tick
 	NCPUs          int
 	Timestamp      time.Time
 }

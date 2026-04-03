@@ -6,13 +6,43 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
+// decompSampler tracks cumulative decompressions for delta calculation.
+var decompSampler struct {
+	mu   sync.Mutex
+	prev int64
+}
+
+// sampleDecompressions returns the delta since last call.
+// First call returns 0 (no baseline yet).
+func sampleDecompressions(cumulative int64) int64 {
+	decompSampler.mu.Lock()
+	prev := decompSampler.prev
+	decompSampler.prev = cumulative
+	decompSampler.mu.Unlock()
+
+	if prev == 0 {
+		return 0
+	}
+	delta := cumulative - prev
+	if delta < 0 {
+		return 0
+	}
+	return delta
+}
+
 // CollectSystem gathers CPU, memory, and swap stats from macOS system tools.
+// CPU% uses mach host_statistics (same as Activity Monitor) via SampleCPUPercent.
+// Memory and swap use sysctl/vm_stat.
 func CollectSystem(ctx context.Context) (SystemStats, error) {
 	var stats SystemStats
 	stats.Timestamp = time.Now()
+
+	// CPU% from mach kernel ticks — no subprocess needed
+	stats.CPUPercent = SampleCPUPercent()
 
 	// All sysctl calls in parallel
 	type result struct {
@@ -20,13 +50,12 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 		val string
 		err error
 	}
-	ch := make(chan result, 5)
+	ch := make(chan result, 4)
 
 	sysctls := map[string]string{
 		"memsize":  "hw.memsize",
 		"ncpu":     "hw.ncpu",
 		"pagesize": "hw.pagesize",
-		"loadavg":  "vm.loadavg",
 		"swap":     "vm.swapusage",
 	}
 	for key, name := range sysctls {
@@ -43,7 +72,7 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 	}()
 
 	vals := make(map[string]string)
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 5; i++ {
 		r := <-ch
 		if r.err == nil {
 			vals[r.key] = r.val
@@ -66,21 +95,15 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 		pageSize = v
 	}
 
-	// Parse load average → CPU%
-	if stats.NCPUs > 0 {
-		load := parseLoadAvg(vals["loadavg"])
-		stats.CPUPercent = (load / float64(stats.NCPUs)) * 100
-		if stats.CPUPercent > 100 {
-			stats.CPUPercent = 100
-		}
-	}
-
-	// Parse vm_stat → memory used
+	// Parse vm_stat → memory used + compressor activity
 	if vmstat := vals["vmstat"]; vmstat != "" {
 		active := parseVMStatField(vmstat, "Pages active")
 		wired := parseVMStatField(vmstat, "Pages wired down")
 		compressed := parseVMStatField(vmstat, "Pages occupied by compressor")
 		stats.MemUsedBytes = (active + wired + compressed) * pageSize
+
+		cumDecomps := parseVMStatField(vmstat, "Decompressions")
+		stats.Decompressions = sampleDecompressions(cumDecomps)
 	}
 
 	// Parse swap
@@ -94,18 +117,6 @@ func execCmd(ctx context.Context, name string, args ...string) (string, error) {
 	defer cancel()
 	out, err := exec.CommandContext(ctx, name, args...).Output()
 	return string(out), err
-}
-
-// parseLoadAvg extracts the 1-minute load from "{ 1.23 4.56 7.89 }".
-func parseLoadAvg(s string) float64 {
-	s = strings.Trim(strings.TrimSpace(s), "{}")
-	fields := strings.Fields(s)
-	if len(fields) >= 1 {
-		if v, err := strconv.ParseFloat(fields[0], 64); err == nil {
-			return v
-		}
-	}
-	return 0
 }
 
 // parseVMStatField extracts a page count from vm_stat output.

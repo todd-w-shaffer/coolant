@@ -132,6 +132,21 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 			swapUsed = baseMem + totalRSS - totalMem
 		}
 
+		// Compressor decompressions correlate with memory pressure.
+		// Light load: 200-800/tick. Heavy: 5K-30K. Swap territory: 50K+.
+		memRatio := float64(baseMem+totalRSS) / float64(totalMem)
+		var decomps int64
+		switch {
+		case memRatio > 1.0:
+			decomps = 50000 + int64(rand.Intn(30000))
+		case memRatio > 0.8:
+			decomps = 5000 + int64(rand.Intn(25000))
+		case memRatio > 0.5:
+			decomps = 800 + int64(rand.Intn(4000))
+		default:
+			decomps = 200 + int64(rand.Intn(600))
+		}
+
 		cpuPct := 15.0 + totalCPU/8 // base 15% + Claude load distributed across 8 cores
 		if cpuPct > 100 {
 			cpuPct = 100
@@ -150,6 +165,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 				MemTotalBytes:  totalMem,
 				SwapUsedBytes:  swapUsed,
 				SwapTotalBytes: 8 * (1 << 30), // 8GB swap
+				Decompressions: decomps,
 				NCPUs:          8,
 				Timestamp:      time.Now(),
 			},
