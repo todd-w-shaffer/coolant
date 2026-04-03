@@ -58,16 +58,18 @@ func (r *Rates) View() string {
 
 	// System stats — fixed width
 	cpuPct := int(snap.System.CPUPercent)
-	memUsedGB := snap.System.MemUsedBytes / (1 << 30)
+	memUsedGB := float64(snap.System.MemUsedBytes) / float64(1<<30)
 	memTotalGB := snap.System.MemTotalBytes / (1 << 30)
 	memPct := snap.System.MemPercent()
 	swapMB := snap.System.SwapUsedBytes / (1 << 20)
-	headroomGB := float64(s.Headroom.MemAvailBytes) / float64(1<<30)
 
-	cpuStr := fmt.Sprintf("CPU:%03d%%", cpuPct)
-	memStr := fmt.Sprintf("MEM:%02d/%02dGB", memUsedGB, memTotalGB)
-	swapStr := fmt.Sprintf("SWAP:%05dMB", swapMB)
-	headStr := fmt.Sprintf("head:~%04.1fGB", headroomGB)
+	cpuDot := "\033[37m●\033[0m "  // white — matches sparkline row 1
+	memDot := "\033[36m●\033[0m "  // cyan — matches sparkline row 2
+	swapDot := "\033[35m●\033[0m " // magenta — matches sparkline row 3
+
+	cpuStr := fmt.Sprintf("%sCPU:%03d%%", cpuDot, cpuPct)
+	memStr := fmt.Sprintf("%sMEM:%04.1f/%02dGB", memDot, memUsedGB, memTotalGB)
+	swapStr := fmt.Sprintf("%sSWAP:%05dMB", swapDot, swapMB)
 
 	// Color the stats
 	cpuColor := thresholdColor(snap.System.CPUPercent, 70, 90)
@@ -82,18 +84,17 @@ func (r *Rates) View() string {
 
 	sep := dim.Render("  |  ")
 
-	rates := fmt.Sprintf(" %s  %s  %s",
+	stats := fmt.Sprintf(" %s  %s  %s",
+		lipgloss.NewStyle().Foreground(cpuColor).Render(cpuStr),
+		lipgloss.NewStyle().Foreground(memColor).Render(memStr),
+		lipgloss.NewStyle().Foreground(swapColor).Render(swapStr),
+	)
+
+	rates := fmt.Sprintf("%s  %s  %s",
 		lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render(spawnStr),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(deathStr),
 		lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(netStr),
 	)
 
-	stats := fmt.Sprintf("%s  %s  %s  %s",
-		lipgloss.NewStyle().Foreground(cpuColor).Render(cpuStr),
-		lipgloss.NewStyle().Foreground(memColor).Render(memStr),
-		lipgloss.NewStyle().Foreground(swapColor).Render(swapStr),
-		dim.Render(headStr),
-	)
-
-	return rates + sep + stats
+	return stats + sep + rates
 }
