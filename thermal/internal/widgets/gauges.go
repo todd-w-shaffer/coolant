@@ -8,9 +8,8 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
-// trailBlend weights for easing the last 4 sparkline samples toward
-// the spring value: softest at the boundary, full spring at the tip.
-var trailBlend = [4]float64{0.25, 0.50, 0.75, 1.0}
+// maxRenderHistory limits the render-rate sample buffer (~20s at 30fps).
+const maxRenderHistory = 600
 
 // Gauge dot colors — left-edge indicator per row.
 var gaugeDots = []struct {
@@ -31,16 +30,18 @@ type springState struct {
 // Gauges renders 3 sparklines: CPU%, MEM%, compressor decompressions/tick.
 // Each dot is severity-colored when online, rainbow when offline.
 // Numeric readouts are spring-animated for smooth easing between values.
+// Sparklines scroll at animation rate (30fps) via spring-interpolated render history.
 type Gauges struct {
-	width   int
-	state   *model.AppState
-	tick    int
-	spring  harmonica.Spring
-	springs [3]springState // one per gauge: cpu, mem, compressor
-	targets [3]float64     // snapshot target values
-	history [3][]float64   // cached history slices, rebuilt on snapshot only
-	peaks   [3]float64     // decaying peak per gauge — snaps up, fades slowly
-	seeded  bool           // true after first snapshot (skip spring on init)
+	width         int
+	state         *model.AppState
+	tick          int
+	spring        harmonica.Spring
+	springs       [3]springState // one per gauge: cpu, mem, compressor
+	targets       [3]float64     // snapshot target values
+	renderHistory [3][]float64   // spring-interpolated samples pushed every AnimTick
+	renderOnline  []bool         // online/offline state pushed every AnimTick
+	peaks         [3]float64     // decaying peak per gauge — snaps up, fades slowly
+	seeded        bool           // true after first snapshot (skip spring on init)
 }
 
 func NewGauges() *Gauges {
@@ -55,7 +56,6 @@ func (g *Gauges) SetSize(w, h int) {
 
 func (g *Gauges) Update(state *model.AppState) {
 	g.state = state
-	g.tick++
 
 	if state == nil || state.Current == nil {
 		return
@@ -66,20 +66,55 @@ func (g *Gauges) Update(state *model.AppState) {
 	g.targets[1] = state.Current.System.MemPercent()
 	g.targets[2] = decomps
 
-	// Cache history slices — only rebuilt on snapshot, not every frame.
-	g.history[0] = state.CPUHistory()
-	g.history[1] = state.MemHistory()
-	g.history[2] = state.CompressorHistory()
-
-	// Peak smoothing: snap up instantly on spikes, decay fast toward the
-	// visible window peak. Fast enough to recover within ~1s after a spike
-	// scrolls off, slow enough to prevent per-frame rescale jitter.
-	const decayRate = 0.92    // ~1.3s half-life at 150ms ticks
-	visibleSamples := g.width // ~width real samples visible after interpolation
-	if visibleSamples < 1 {
-		visibleSamples = 120 // typical terminal width before SetSize is called
+	// First snapshot: jump to target immediately (no spring from zero)
+	if !g.seeded {
+		for i := range g.springs {
+			g.springs[i].pos = g.targets[i]
+			g.springs[i].vel = 0
+		}
+		g.seeded = true
 	}
-	for i, hist := range g.history {
+}
+
+// AnimTick advances spring physics one frame (~30fps) and appends the
+// spring-interpolated value to the render history so sparklines scroll
+// at animation rate, not collector rate.
+func (g *Gauges) AnimTick() {
+	for i := range g.springs {
+		g.springs[i].pos, g.springs[i].vel = g.spring.Update(
+			g.springs[i].pos, g.springs[i].vel, g.targets[i],
+		)
+	}
+
+	if !g.seeded {
+		return
+	}
+
+	g.tick++
+
+	// Push spring position into render history — this is what drives sparkline scrolling.
+	for i := range g.springs {
+		g.renderHistory[i] = append(g.renderHistory[i], g.springs[i].pos)
+		if len(g.renderHistory[i]) > maxRenderHistory {
+			g.renderHistory[i] = g.renderHistory[i][len(g.renderHistory[i])-maxRenderHistory:]
+		}
+	}
+
+	// Track online state at render rate
+	online := g.state != nil && g.state.Online
+	g.renderOnline = append(g.renderOnline, online)
+	if len(g.renderOnline) > maxRenderHistory {
+		g.renderOnline = g.renderOnline[len(g.renderOnline)-maxRenderHistory:]
+	}
+
+	// Peak smoothing: snap up on spikes, decay fast.
+	// Adjusted decay for 30fps (~1.3s half-life: 0.982^30 ≈ 0.58/s).
+	const decayRate = 0.982
+	visibleSamples := g.width
+	if visibleSamples < 1 {
+		visibleSamples = 120
+	}
+	for i, hist := range g.renderHistory {
 		start := 0
 		if len(hist) > visibleSamples {
 			start = len(hist) - visibleSamples
@@ -99,24 +134,6 @@ func (g *Gauges) Update(state *model.AppState) {
 			}
 		}
 	}
-
-	// First snapshot: jump to target immediately (no spring from zero)
-	if !g.seeded {
-		for i := range g.springs {
-			g.springs[i].pos = g.targets[i]
-			g.springs[i].vel = 0
-		}
-		g.seeded = true
-	}
-}
-
-// AnimTick advances spring physics one frame (~30fps).
-func (g *Gauges) AnimTick() {
-	for i := range g.springs {
-		g.springs[i].pos, g.springs[i].vel = g.spring.Update(
-			g.springs[i].pos, g.springs[i].vel, g.targets[i],
-		)
-	}
 }
 
 func (g *Gauges) View() string {
@@ -134,7 +151,6 @@ func (g *Gauges) View() string {
 
 	type gauge struct {
 		data    []float64
-		current float64 // raw snapshot value (for sparkline color)
 		display float64 // spring-animated value (for numeric readout)
 		max     float64
 		thresh  SparkThresholds
@@ -157,13 +173,13 @@ func (g *Gauges) View() string {
 	}
 
 	gauges := []gauge{
-		{g.history[0], g.targets[0], g.springs[0].pos, g.peaks[0],
+		{g.renderHistory[0], g.springs[0].pos, g.peaks[0],
 			SparkThresholds{Warn: 70, Crit: 90},
 			gaugeDots[0].dot, gaugeDots[0].color, fmtPct},
-		{g.history[1], g.targets[1], g.springs[1].pos, g.peaks[1],
+		{g.renderHistory[1], g.springs[1].pos, g.peaks[1],
 			SparkThresholds{Warn: 60, Crit: 80},
 			gaugeDots[1].dot, gaugeDots[1].color, fmtPct},
-		{g.history[2], g.targets[2], g.springs[2].pos, g.peaks[2],
+		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
 			SparkThresholds{Warn: 5000, Crit: 20000},
 			gaugeDots[2].dot, gaugeDots[2].color, fmtDecomp},
 	}
@@ -172,24 +188,8 @@ func (g *Gauges) View() string {
 	for i, ga := range gauges {
 		dot := ga.dotClr + ga.dot + sparkReset
 
-		// Blend trailing samples toward the spring value so the rightmost
-		// 2 braille characters ease smoothly at 30fps.
-		data := ga.data
-		if len(data) > 0 && g.seeded {
-			data = make([]float64, len(ga.data))
-			copy(data, ga.data)
-			n := len(data)
-			for j := 0; j < len(trailBlend) && j < n; j++ {
-				idx := n - len(trailBlend) + j
-				if idx >= 0 {
-					w := trailBlend[j]
-					data[idx] = ga.data[idx]*(1-w) + ga.display*w
-				}
-			}
-		}
-
 		// Render with online/offline mask — rainbow dots inline with real data
-		spark := RenderSparklineWithMask(data, g.state.OnlineLog, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)
+		spark := RenderSparklineWithMask(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string
