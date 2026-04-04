@@ -2,7 +2,6 @@ package widgets
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
 
 	colorful "github.com/lucasb-eyer/go-colorful"
@@ -16,7 +15,6 @@ type SparkThresholds struct {
 
 // ANSI reset and dim (still needed for offline/special states).
 const (
-	sparkDim   = "\033[2;37m"
 	sparkReset = "\033[0m"
 )
 
@@ -32,71 +30,14 @@ func mustHex(hex string) colorful.Color {
 	return c
 }
 
-// Edge fade: rightmost N characters fade in, leftmost N fade out.
-const fadeChars = 3
-
-// Brightness ramp per character from edge inward.
-// Index 0 = outermost char (dimmest), last = transition to full brightness.
-var fadeRamp = [fadeChars]float64{0.35, 0.60, 0.82}
-
-// edgeFade returns the brightness multiplier for a character at charIdx
-// in a sparkline of numChars width. Returns 1.0 for characters in the
-// middle, <1.0 for characters near either edge.
-func edgeFade(charIdx, numChars int) float64 {
-	// Left edge fade-out
-	if charIdx < fadeChars {
-		return fadeRamp[charIdx]
-	}
-	// Right edge fade-in
-	fromRight := numChars - 1 - charIdx
-	if fromRight < fadeChars {
-		return fadeRamp[fromRight]
-	}
-	return 1.0
-}
-
-// ── Motion trail: comet-tail when a row ends ────────────────
-const trailChars = 8 // how many characters the trail extends
-
-// Brightness per trail character (index 0 = right after last real dot).
-// Floor at 0.25 — never darker than a typical dark terminal background.
-var trailRamp = [trailChars]float64{0.90, 0.75, 0.60, 0.48, 0.40, 0.34, 0.28, 0.25}
-
-// trailState tracks the comet trail for one braille row (top or bottom).
-type trailState struct {
-	lastBits  rune
-	lastColor colorful.Color
-	age       int
-}
-
-// renderTrailedChar writes one braille character with comet-trail logic.
-// Same or growing pattern → full brightness. Shrinking pattern → trail
-// the previous (taller) pattern until it fades, then show current.
-func renderTrailedChar(sb *strings.Builder, ts *trailState, bits rune, color colorful.Color, edgeAlpha float64) {
-	isSubset := ts.lastBits != 0 && bits != ts.lastBits && bits&^ts.lastBits == 0
-
-	if isSubset && ts.age < trailChars {
-		// Pattern shrank (or went empty) — trail the original pattern
-		alpha := trailRamp[ts.age] * edgeAlpha
-		sb.WriteString(dimmedFg(ts.lastColor, alpha))
-		sb.WriteRune(0x2800 | ts.lastBits)
-		sb.WriteString(sparkReset)
-		ts.age++
-	} else if bits != 0 {
-		// Has dots, not shrinking (or trail expired) — full brightness
-		ts.lastBits = bits
-		ts.lastColor = color
-		ts.age = 0
-		if edgeAlpha < 1.0 {
-			sb.WriteString(dimmedFg(color, edgeAlpha))
-		} else {
-			sb.WriteString(truecolorFg(color))
-		}
+// renderBrailleChar writes one braille character at full brightness,
+// or a space if the pattern is empty.
+func renderBrailleChar(sb *strings.Builder, bits rune, color colorful.Color) {
+	if bits != 0 {
+		sb.WriteString(truecolorFg(color))
 		sb.WriteRune(0x2800 | bits)
 		sb.WriteString(sparkReset)
 	} else {
-		// Empty, no trail
-		ts.lastBits = 0
 		sb.WriteRune(' ')
 	}
 }
@@ -133,14 +74,6 @@ func severityColorful(v float64, thresh *SparkThresholds) colorful.Color {
 // warn and crit, solid red above crit. Produces smooth per-dot gradients.
 func severityColor(v float64, thresh *SparkThresholds) string {
 	return truecolorFg(severityColorful(v, thresh))
-}
-
-// dimmedFg blends a color toward black by alpha (0=black, 1=full brightness)
-// and returns a truecolor ANSI foreground escape.
-func dimmedFg(c colorful.Color, alpha float64) string {
-	black, _ := colorful.MakeColor(color.Black)
-	dimmed := black.BlendLab(c, alpha).Clamped()
-	return truecolorFg(dimmed)
 }
 
 // truecolorFg emits \033[38;2;R;G;Bm for 24-bit foreground color.
@@ -310,14 +243,9 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		peak = 1
 	}
 
-	numChars := (len(visible) + 1) / 2
 	var top, bot strings.Builder
 
-	// Trail state per row
-	var topTrail, botTrail trailState
-
 	for i := 0; i < len(visible); i += 2 {
-		charIdx := i / 2
 
 		vL := visible[i]
 		if vL < 0 {
@@ -338,7 +266,6 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		realBotL, realTopL := levelSplit(levL)
 		realBotR, realTopR := levelSplit(levR)
 
-		edgeAlpha := edgeFade(charIdx, numChars)
 		colorVal := vL
 		if vR > colorVal {
 			colorVal = vR
@@ -348,8 +275,8 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		topBits := leftBits[realTopL] | rightBits[realTopR]
 		botBits := leftBits[realBotL] | rightBits[realBotR]
 
-		renderTrailedChar(&bot, &botTrail, botBits, color, edgeAlpha)
-		renderTrailedChar(&top, &topTrail, topBits, color, edgeAlpha)
+		renderBrailleChar(&bot, botBits, color)
+		renderBrailleChar(&top, topBits, color)
 	}
 
 	return SparkPair{Top: top.String(), Bottom: bot.String()}
@@ -391,11 +318,7 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		peak = 1
 	}
 
-	numChars := (len(visibleData) + 1) / 2
 	var top, bot strings.Builder
-
-	// Trail state per row
-	var topTrail, botTrail trailState
 
 	for i := 0; i < len(visibleData); i += 2 {
 		charIdx := i / 2
@@ -425,9 +348,6 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 			bot.WriteRune(ch)
 			bot.WriteString(sparkReset)
 			top.WriteRune(' ')
-			// Kill trails across offline gaps
-			topTrail = trailState{}
-			botTrail = trailState{}
 			continue
 		}
 
@@ -465,14 +385,13 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		realBotL, realTopL := levelSplit(levL)
 		realBotR, realTopR := levelSplit(levR)
 
-		edgeAlpha := edgeFade(charIdx, numChars)
 		color := severityColorful(colorVal, thresh)
 
 		topBits := leftBits[realTopL] | rightBits[realTopR]
 		botBits := leftBits[realBotL] | rightBits[realBotR] | offlineLBits | offlineRBits
 
-		renderTrailedChar(&bot, &botTrail, botBits, color, edgeAlpha)
-		renderTrailedChar(&top, &topTrail, topBits, color, edgeAlpha)
+		renderBrailleChar(&bot, botBits, color)
+		renderBrailleChar(&top, topBits, color)
 	}
 
 	return SparkPair{Top: top.String(), Bottom: bot.String()}
