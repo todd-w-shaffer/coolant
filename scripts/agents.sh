@@ -77,6 +77,22 @@ find_claude_pids() {
   }'
 }
 
+# ─── _awk_priority_init ─────────────────────────────────────
+# Emit the shared awk BEGIN fragment that populates the pri[] array.
+# Used by agent_job() and _bulk_agent_data() to avoid duplication.
+_awk_priority_init() {
+  cat <<'AWK'
+    split("tsc eslint webpack vite esbuild", build_cmds)
+    for (i in build_cmds) pri[build_cmds[i]] = 1
+    split("bats jest vitest pytest", test_cmds)
+    for (i in test_cmds) pri[test_cmds[i]] = 2
+    split("node python cargo go", rt_cmds)
+    for (i in rt_cmds) pri[rt_cmds[i]] = 3
+    split("git npm yarn", vcs_cmds)
+    for (i in vcs_cmds) pri[vcs_cmds[i]] = 4
+AWK
+}
+
 # ─── agent_job(pid, all_procs_data) ─────────────────────────
 # AWK pass over process data to find most interesting child command.
 # Priority: build(1) > test(2) > runtime(3) > vcs/pkg(4) > idle
@@ -86,15 +102,7 @@ agent_job() {
 
   echo "$procs" | awk -v root="$pid" '
   BEGIN {
-    split("tsc eslint webpack vite esbuild", build_cmds)
-    for (i in build_cmds) pri[build_cmds[i]] = 1
-    split("bats jest vitest pytest", test_cmds)
-    for (i in test_cmds) pri[test_cmds[i]] = 2
-    split("node python cargo go", rt_cmds)
-    for (i in rt_cmds) pri[rt_cmds[i]] = 3
-    split("git npm yarn", vcs_cmds)
-    for (i in vcs_cmds) pri[vcs_cmds[i]] = 4
-
+'"$(_awk_priority_init)"'
     best_pri = 999
     best_cmd = "idle"
     kids[root] = 1
@@ -139,15 +147,7 @@ _bulk_agent_data() {
 
   echo "$procs" | awk -v tracked="$pids" '
   BEGIN {
-    split("tsc eslint webpack vite esbuild", build_cmds)
-    for (i in build_cmds) pri[build_cmds[i]] = 1
-    split("bats jest vitest pytest", test_cmds)
-    for (i in test_cmds) pri[test_cmds[i]] = 2
-    split("node python cargo go", rt_cmds)
-    for (i in rt_cmds) pri[rt_cmds[i]] = 3
-    split("git npm yarn", vcs_cmds)
-    for (i in vcs_cmds) pri[vcs_cmds[i]] = 4
-
+'"$(_awk_priority_init)"'
     n = split(tracked, tp, " ")
     for (i = 1; i <= n; i++) {
       is_tracked[tp[i]] = 1
