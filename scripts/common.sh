@@ -7,6 +7,7 @@ COOLANT_COUNTER="${COOLANT_COUNTER:-${_COOLANT_DIR}coolant-agents-${USER}.count}
 COOLANT_LOG="${COOLANT_LOG:-${_COOLANT_DIR}coolant-${USER}.log}"
 COOLANT_EVENTS="${COOLANT_EVENTS:-${_COOLANT_DIR}coolant-${USER}.events.jsonl}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
+_COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 coolant_log() {
   echo "$(date '+%H:%M:%S')  $1" >> "$COOLANT_LOG"
@@ -24,6 +25,9 @@ _json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
   printf '%s' "$s"
 }
 

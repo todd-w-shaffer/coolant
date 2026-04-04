@@ -13,19 +13,6 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/parallel-gate.sh",
-            "timeout": 30,
-            "statusMessage": "Coolant: checking parallel mode..."
-          }
-        ]
-      }
-    ],
     "SubagentStart": [
       {
         "matcher": ".*",

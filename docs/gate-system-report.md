@@ -1,7 +1,7 @@
 # Extensible Tool Gating System — Implementation Report
 
 **Date:** 2026-04-04
-**Status:** Shipped (Steps 1-6 of 8)
+**Status:** Complete (Steps 1-7 shipped, Step 8 dropped)
 
 ## Problem
 
@@ -93,21 +93,37 @@ Accepted risks (low impact):
 - Lockfile TOCTOU (advisory mechanism, idempotent operations)
 - JSONL injection by same-user process (cosmetic dashboard impact)
 
-## What's Next (Stubbed, Not Built)
+## Concurrency Capping (Step 7 — Shipped)
 
-### Step 7: Concurrency capping
+Test runners are now always capped with agent-count-adaptive concurrency limits. The cap formula:
 
-Uses `updatedInput` to rewrite commands with concurrency limits:
-- `vitest run` → `vitest run --maxConcurrency 2`
-- `cargo test` → `cargo test -j 2`
-- `go test` → `go test -parallel 2`
-- `pytest` → `pytest -n 2`
+```
+cap = floor((cores - 2) / active_agents), min 1
+```
 
-Cap value from `/tmp/coolant-$USER.cap`, set by `toggle.sh` or auto-computed from thermal state.
+This reserves 2 cores for OS + Claude Code, then fairly divides the rest. With 1 agent on a 10-core machine, vitest gets `--maxConcurrency 8`. With 3 agents, it gets `--maxConcurrency 2`.
 
-### Step 8: Debounce
+**Key design decisions:**
+- **Model B (agent-count-adaptive)** chosen over static cap (too conservative for 1 agent) and global budget (no completion signal in hook architecture). Adversarial review confirmed the staggered-start race is theoretical — agents think before they test.
+- **Capping applies always**, not just during parallel mode. Even a single agent shouldn't saturate all cores with test workers while Claude is streaming tokens.
+- **Suppress vs cap split**: test runners get capped (allow + rewrite), everything else gets suppressed during parallel mode (deny). `cargo test` is capped while `cargo build` is suppressed.
+- **`echo -n` gotcha**: `cap_flag` for pytest returns `-n`, which `echo` interprets as a flag. Fixed by using `printf '%s'` instead of `echo`.
 
-Hash command → check last run time → skip if within window. Known limitation: under parallel agents, sources always changing, so debounce rarely fires. Useful for single-agent repeated builds.
+**Flag mapping:**
+
+| Tool | Flag |
+|------|------|
+| vitest | `--maxConcurrency N` |
+| jest | `--maxWorkers N` |
+| cargo test | `-j N` (inserted before `--` separator) |
+| go test | `-parallel N` |
+| pytest | `-n N` |
+
+**Retired:** `parallel-gate.sh` (PostToolUse hook) removed — fully superseded by `gate.sh` PreToolUse dispatch.
+
+## Debounce (Step 8 — Dropped)
+
+Adversarial review found debounce nearly useless under parallel agents — with multiple agents writing files, some source always changes, so the debounce never fires. Only useful in single-agent mode, which is when you don't need resource management. Not worth the complexity.
 
 ## Process Notes
 

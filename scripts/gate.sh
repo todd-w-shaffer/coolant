@@ -1,8 +1,11 @@
 #!/bin/bash
 set -euo pipefail
-# PreToolUse hook: gate expensive CLI tools during parallel mode.
+# PreToolUse hook: gate expensive CLI tools.
+# - Test runners: always capped with concurrency limit based on agent count
+# - Type checkers/linters/build tools: suppressed during parallel mode
+#
 # Reads PreToolUse JSON from stdin, pattern-matches the command,
-# and emits deny/allow decisions back to Claude Code.
+# and emits deny/allow/rewrite decisions back to Claude Code.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
@@ -50,57 +53,142 @@ if [[ "$command" == *" "* ]]; then
   subcommand="${subcommand%% *}"
 fi
 
-# Deny the command: emit JSONL event + PreToolUse deny response
+# ── Capping functions ──────────────────────────────────────
+
+# Compute concurrency cap: floor((cores - 2) / agents), min 1
+compute_cap() {
+  local agents
+  agents=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "0")
+  # Validate integer — corrupted counter defaults to 1 agent
+  if ! [[ "$agents" =~ ^[0-9]+$ ]] || [ "$agents" -lt 1 ]; then
+    agents=1
+  fi
+  local cap=$(( (_COOLANT_NCPU - 2) / agents ))
+  if [ "$cap" -lt 1 ]; then
+    cap=1
+  fi
+  echo "$cap"
+}
+
+# Map binary+subcommand to the ecosystem-specific concurrency flag
+cap_flag() {
+  local bin="$1" sub="$2"
+  case "$bin" in
+    vitest) printf '%s' "--maxConcurrency" ;;
+    jest)   printf '%s' "--maxWorkers" ;;
+    pytest) printf '%s' "-n" ;;
+    cargo)  if [ "$sub" = "test" ]; then printf '%s' "-j"; fi ;;
+    go)     if [ "$sub" = "test" ]; then printf '%s' "-parallel"; fi ;;
+  esac
+}
+
+# Build the rewritten command with cap flag inserted
+apply_cap() {
+  local cmd="$1" bin="$2" sub="$3" flag="$4" cap="$5"
+  # cargo test: insert -j N after "test" and before any "--"
+  if [ "$bin" = "cargo" ] && [ "$sub" = "test" ]; then
+    if [[ "$cmd" == *" -- "* ]]; then
+      local before="${cmd%% -- *}"
+      local after="${cmd#* -- }"
+      echo "${before} ${flag} ${cap} -- ${after}"
+    else
+      echo "${cmd} ${flag} ${cap}"
+    fi
+  else
+    echo "${cmd} ${flag} ${cap}"
+  fi
+}
+
+# ── Emit functions ─────────────────────────────────────────
+
+# Deny: block the command entirely
 emit_deny() {
   local cmd="$1"
-  # Escape backslashes then double quotes for safe JSON embedding
-  local safe_cmd="${cmd//\\/\\\\}"
-  safe_cmd="${safe_cmd//\"/\\\"}"
+  local safe_cmd
+  safe_cmd=$(_json_escape "$cmd")
   coolant_event '"event":"gate.suppress","tool":"Bash","command":"'"$safe_cmd"'","reason":"parallel_mode"'
   coolant_log "$cmd suppressed (parallel mode)"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[coolant] %s suppressed — parallel mode active"}}\n' "$safe_cmd"
 }
 
-# Check if the command should be gated. Currently: suppress during parallel mode.
-# Future: concurrency cap, debounce.
-check_gate() {
+# Cap: allow with rewritten command
+emit_cap() {
+  local orig="$1" rewritten="$2"
+  local safe_orig safe_rewritten
+  safe_orig=$(_json_escape "$orig")
+  safe_rewritten=$(_json_escape "$rewritten")
+  coolant_event '"event":"gate.cap","tool":"Bash","command":"'"$safe_orig"'","original":"'"$safe_orig"'","rewritten":"'"$safe_rewritten"'"'
+  coolant_log "capped: $orig -> $rewritten"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"%s"}}}\n' "$safe_rewritten"
+}
+
+# ── Gate entry points ──────────────────────────────────────
+
+# Suppress target: deny during parallel mode, allow otherwise
+gate_suppress() {
   local cmd="$1"
   if [ -f "$COOLANT_LOCKFILE" ]; then
     emit_deny "$cmd"
     exit 0
   fi
-  # No lockfile — allow
   exit 0
 }
 
-# Pattern match on the binary name
+# Cap target: compute cap, rewrite command, allow always
+gate_cap() {
+  local cmd="$1" bin="$2" sub="$3"
+  local flag
+  flag=$(cap_flag "$bin" "$sub")
+  if [ -z "$flag" ]; then
+    exit 0
+  fi
+  # Don't override if flag already present (word-boundary match avoids
+  # false positives on paths like tests/test-n-gram.py matching "-n")
+  case " $cmd " in
+    *" $flag "*|*" $flag="*) exit 0 ;;
+  esac
+  local cap
+  cap=$(compute_cap)
+  local rewritten
+  rewritten=$(apply_cap "$cmd" "$bin" "$sub" "$flag" "$cap")
+  emit_cap "$cmd" "$rewritten"
+  exit 0
+}
+
+# ── Dispatch ───────────────────────────────────────────────
+
 case "$binary" in
-  tsc|vitest|jest|eslint|prettier|webpack|esbuild)
-    check_gate "$command"
+  # Cap targets (test runners)
+  vitest|jest|pytest)
+    gate_cap "$command" "$binary" ""
     ;;
+  # Suppress targets (type checkers, linters, build tools)
+  tsc|eslint|prettier|webpack|esbuild)
+    gate_suppress "$command"
+    ;;
+  # Multi-word: route by subcommand
   cargo)
     case "$subcommand" in
-      build|test|clippy|check)
-        check_gate "$command"
-        ;;
+      test)              gate_cap "$command" "$binary" "$subcommand" ;;
+      build|clippy|check) gate_suppress "$command" ;;
     esac
     ;;
   go)
     case "$subcommand" in
-      build|test|vet)
-        check_gate "$command"
-        ;;
+      test)       gate_cap "$command" "$binary" "$subcommand" ;;
+      build|vet)  gate_suppress "$command" ;;
     esac
     ;;
-  pytest|mypy|pylint|ruff)
-    check_gate "$command"
+  # Suppress-only targets
+  mypy|pylint|ruff)
+    gate_suppress "$command"
     ;;
   gradle|mvn|javac)
-    check_gate "$command"
+    gate_suppress "$command"
     ;;
   vite)
     if [ "$subcommand" = "build" ]; then
-      check_gate "$command"
+      gate_suppress "$command"
     fi
     ;;
 esac
