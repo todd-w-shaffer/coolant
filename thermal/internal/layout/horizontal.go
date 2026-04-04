@@ -90,9 +90,11 @@ func (h *Horizontal) View() string {
 
 	var lines []string
 
-	// Line 1: Notification bar (collapses away with [c])
+	// Line 1: Notification bar (collapses away with [c], hidden when empty)
 	if !h.collapsed && h.height >= 2 {
-		lines = append(lines, h.notificationBar())
+		if bar := h.notificationBar(); bar != "" {
+			lines = append(lines, bar)
+		}
 	}
 
 	// Line 2: Thermal bar (overall + categories)
@@ -152,7 +154,9 @@ func (h *Horizontal) idleView() string {
 	var lines []string
 
 	if !h.collapsed {
-		lines = append(lines, h.notificationBar())
+		if bar := h.notificationBar(); bar != "" {
+			lines = append(lines, bar)
+		}
 	}
 
 	lines = append(lines, " "+ui.ColorText(ui.CyanColor, "◉")+" "+ui.DimText("coolant")+"  "+quip)
@@ -174,10 +178,14 @@ func (h *Horizontal) idleView() string {
 }
 
 // notificationBar renders the collapsible hint bar (shared between active and idle views).
+// Returns empty string when plugin is active and there's nothing to show.
 func (h *Horizontal) notificationBar() string {
 	var hints []string
 	if !h.state.PluginActive {
-		hints = append(hints, "[i] install plugin")
+		hints = append(hints, "[i] install coolant plugin for agent-level insights")
+	}
+	if len(hints) == 0 {
+		return ""
 	}
 	hints = append(hints, "[c] collapse")
 	return ui.DimText(" " + strings.Join(hints, "  "))
