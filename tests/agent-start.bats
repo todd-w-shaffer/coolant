@@ -41,3 +41,24 @@ load test_helper
   # Should not emit systemMessage if lockfile already existed
   [[ "${output}" != *"auto-engaged"* ]]
 }
+
+@test "agent-start emits JSONL agent.start event" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"event":"agent.start"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start JSONL includes agent metadata" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Plan"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"agent_type":"Plan"' "$COOLANT_EVENTS"
+  grep -q '"session_id":"s1"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start emits parallel.engaged JSONL on auto-engage" {
+  echo "2" > "$COOLANT_COUNTER"
+  export COOLANT_THRESHOLD=3
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"event":"parallel.engaged"' "$COOLANT_EVENTS"
+}

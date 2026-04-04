@@ -10,7 +10,14 @@ setup() {
   export COOLANT_LOCKFILE="${TEST_TMPDIR}/coolant.lock"
   export COOLANT_COUNTER="${TEST_TMPDIR}/coolant.count"
   export COOLANT_LOG="${TEST_TMPDIR}/coolant.log"
+  export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
   export COOLANT_THRESHOLD=3
+}
+
+# Build a PreToolUse stdin JSON payload for testing gate.sh.
+# $1=tool_name, $2=command string
+make_pre_tool_use() {
+  printf '{"session_id":"test-s","tool_name":"%s","tool_input":{"command":"%s","description":"test"},"hook_event_name":"PreToolUse"}' "$1" "$2"
 }
 
 teardown() {

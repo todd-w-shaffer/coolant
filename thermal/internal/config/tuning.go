@@ -13,6 +13,7 @@ const (
 	SysInitTimeout  = 5 * time.Second        // one-shot static sysctl init
 	ProcTimeout     = 3 * time.Second        // ps process tree collection
 	CollectTimeout  = 5 * time.Second        // overall fast-loop context deadline
+	EventInterval   = 500 * time.Millisecond // JSONL event log poll rate
 )
 
 // DefaultPageSize is the fallback macOS page size when hw.pagesize is unavailable.

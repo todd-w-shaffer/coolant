@@ -205,6 +205,63 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	}
 }
 
+// HandleEvent processes an external event from the JSONL event log
+// and generates appropriate alerts.
+func (s *AppState) HandleEvent(ev collector.GateEvent) {
+	switch ev.Event {
+	case collector.EventGateSuppress:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "gate: " + ev.Command + " suppressed (" + ev.Reason + ")",
+			Level:   ThreatWarm,
+		})
+	case collector.EventGateCap:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "gate: " + ev.Command + " capped → " + ev.Rewritten,
+			Level:   ThreatWarm,
+		})
+	case collector.EventGateDebounce:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "gate: " + ev.Command + " debounced",
+			Level:   ThreatCool,
+		})
+	case collector.EventAgentStart:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "agent " + ev.AgentType + " started (" + shortID(ev.AgentID) + ")",
+			Level:   ThreatCool,
+		})
+		s.PluginActive = true
+	case collector.EventAgentStop:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "agent " + ev.AgentType + " stopped (" + shortID(ev.AgentID) + ")",
+			Level:   ThreatCool,
+		})
+	case collector.EventParallelEngaged:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "parallel mode engaged",
+			Level:   ThreatHot,
+		})
+	case collector.EventParallelDisengaged:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "parallel mode disengaged",
+			Level:   ThreatCool,
+		})
+	}
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
 // StableQuip returns the current personality quip (doesn't change every tick).
 func (s *AppState) StableQuip() string {
 	if s.SessionCount == 0 {

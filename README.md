@@ -8,13 +8,25 @@ Coolant sits between Claude Code and your hardware. It senses system state, trac
 
 ## What it does
 
-### Thermal management (v1)
+### Tool gating (v1)
 
-- **Hook suppression** — Per-edit `tsc --noEmit` hooks are the biggest multiplier. One agent editing 20 files triggers 20 compilations. Multiply by 8 agents and that's 160 `tsc` invocations during the writing phase alone. Coolant suppresses these hooks when parallel mode is active; type-checking happens once at the end.
+- **Extensible command gating** — A PreToolUse hook intercepts Bash commands before they execute. Known expensive tools across five ecosystems are suppressed during parallel mode:
+
+  | Ecosystem | Gated commands |
+  |-----------|---------------|
+  | TypeScript/Node | `tsc`, `vitest`, `jest`, `eslint`, `prettier`, `webpack`, `esbuild`, `vite build` |
+  | Rust | `cargo build`, `cargo test`, `cargo clippy`, `cargo check` |
+  | Go | `go build`, `go test`, `go vet` |
+  | Python | `pytest`, `mypy`, `pylint`, `ruff` |
+  | Java | `gradle`, `mvn`, `javac` |
+
+  Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes (`/usr/local/bin/tsc`). No configuration required — the command itself is the signal.
 
 - **Agent counting** — `SubagentStart`/`SubagentStop` hooks track how many agents are alive. When the count crosses a configurable threshold (default: 3), parallel mode auto-engages. When agents finish, it disengages. No manual intervention.
 
 - **Staggered validation** — The `/coolant:parallel` skill reminds the orchestrating agent to run `check` and `build` sequentially after all agents complete, not concurrently across agents.
+
+- **JSONL event stream** — All hook activity (agent lifecycle, gating decisions, mode changes) is emitted as structured JSONL events, consumed by the thermal dashboard for real-time visibility.
 
 ### System monitoring (v2)
 
@@ -108,8 +120,9 @@ Press `q` to quit.
 
 ### What happens in parallel mode
 
-- Per-edit `tsc --noEmit` hooks are suppressed
-- A system message reminds agents to defer validation
+- Expensive CLI tools (tsc, vitest, cargo build, go test, pytest, etc.) are blocked before execution
+- A system message tells Claude the command was suppressed and why
+- Agent lifecycle and gating events stream to the thermal dashboard
 - When all agents complete, run your build gate:
 
 ```bash
@@ -123,9 +136,10 @@ npm run build    # bundle, once
 |---|---|---|
 | `COOLANT_THRESHOLD` | `3` | Agent count that triggers parallel mode |
 | `COOLANT_REFRESH` | `2` | Monitor refresh interval (seconds) |
-| `COOLANT_LOCKFILE` | `/tmp/coolant-$USER.lock` | Parallel mode lockfile path |
-| `COOLANT_COUNTER` | `/tmp/coolant-agents-$USER.count` | Agent counter path |
-| `COOLANT_LOG` | `/tmp/coolant-$USER.log` | Event log path |
+| `COOLANT_LOCKFILE` | `$TMPDIR/coolant-$USER.lock` | Parallel mode lockfile path |
+| `COOLANT_COUNTER` | `$TMPDIR/coolant-agents-$USER.count` | Agent counter path |
+| `COOLANT_LOG` | `$TMPDIR/coolant-$USER.log` | Event log path |
+| `COOLANT_EVENTS` | `$TMPDIR/coolant-$USER.events.jsonl` | JSONL event stream |
 
 ## How it works
 
@@ -149,21 +163,22 @@ coolant/
 ├── .claude-plugin/
 │   └── plugin.json          # plugin manifest
 ├── hooks/
-│   └── hooks.json           # hook definitions (PostToolUse, SubagentStart/Stop)
+│   └── hooks.json           # hook definitions (PreToolUse, PostToolUse, SubagentStart/Stop)
 ├── scripts/                 # bash — hooks, plumbing, system monitor
-│   ├── common.sh            # shared config, paths, log function
+│   ├── common.sh            # shared config, paths, log + JSONL event functions
+│   ├── gate.sh              # PreToolUse hook: gate expensive CLI tools in parallel mode
 │   ├── agents.sh            # agent tracker: slot management, job detection
 │   ├── sparkline.sh         # braille chart renderers (monitor only)
 │   ├── monitor.sh           # live TUI dashboard (system-level)
 │   ├── toggle.sh            # manual parallel mode on/off/status
-│   ├── parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode
-│   ├── agent-start.sh       # SubagentStart hook: increment counter
-│   └── agent-stop.sh        # SubagentStop hook: decrement counter
+│   ├── parallel-gate.sh     # PostToolUse hook: suppress tsc (legacy, transitional)
+│   ├── agent-start.sh       # SubagentStart hook: increment counter, emit JSONL
+│   └── agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL
 ├── thermal/                 # Go — thermal dashboard binary
 │   ├── cmd/thermal/main.go  # bubbletea app entry point
 │   ├── internal/
-│   │   ├── collector/        # CPU (mach cgo), MEM/SWAP (vm_stat), process trees
-│   │   ├── model/            # AppState, threat classification, personality
+│   │   ├── collector/        # CPU (mach cgo), MEM/SWAP (vm_stat), process trees, JSONL tailer
+│   │   ├── model/            # AppState, threat classification, personality, event handling
 │   │   │   └── data/         # embedded CSV: status messages per threat level
 │   │   ├── widgets/          # headline, gauges, rates, alerts, sparklines
 │   │   ├── layout/           # horizontal strip compositor, help overlay
@@ -196,6 +211,8 @@ cd thermal && go test ./...
 
 ## Roadmap
 
+- **Concurrency capping** — Rewrite test runner commands with concurrency limits (`vitest --maxConcurrency 2`, `cargo test -j 2`) via PreToolUse `updatedInput`. Stubbed in gate.sh.
+- **Command debounce** — Skip repeated builds when source files haven't changed since last run
 - **Graduated throttling** — Progressive response as load increases: warn, reduce agent cap, suppress hooks, reap processes
 - **Process-level actuators** — `renice` build processes, `SIGSTOP`/`SIGCONT` for pause/resume, targeted kill for runaway processes
 - **Worktree lifecycle** — Detect and clean orphaned git worktrees from crashed agents
