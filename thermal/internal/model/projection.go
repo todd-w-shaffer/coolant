@@ -1,6 +1,10 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
+)
 
 const (
 	GB = 1 << 30
@@ -69,9 +73,9 @@ func EstimateHeadroom(typeCounts map[string]int, memUsed, memTotal int64) Headro
 	switch {
 	case headroom < 0:
 		info.Warning = fmt.Sprintf("!! over-committed by ~%s", FormatBytes(-headroom))
-	case headroom < 2*GB:
+	case headroom < config.HeadroomCritBytes*GB:
 		info.Warning = fmt.Sprintf("!! headroom ~%s before swap", FormatBytes(headroom))
-	case headroom < 4*GB:
+	case headroom < config.HeadroomWarnBytes*GB:
 		info.Warning = fmt.Sprintf("headroom ~%s", FormatBytes(headroom))
 	}
 

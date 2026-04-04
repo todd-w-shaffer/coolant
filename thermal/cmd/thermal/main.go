@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/demo"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 )
@@ -41,13 +42,13 @@ func (m model) Init() tea.Cmd {
 	if m.demoMode {
 		go demo.RunV2(m.snapChan, 250*time.Millisecond, m.done)
 	} else {
-		go collector.Run(m.snapChan, 150*time.Millisecond, m.done)
+		go collector.Run(m.snapChan, config.FastInterval, m.done)
 	}
 	return tea.Batch(waitForSnapshot(m.snapChan), animTick())
 }
 
 func animTick() tea.Cmd {
-	return tea.Tick(time.Second/30, func(t time.Time) tea.Msg {
+	return tea.Tick(config.AnimInterval, func(t time.Time) tea.Msg {
 		return animTickMsg(t)
 	})
 }

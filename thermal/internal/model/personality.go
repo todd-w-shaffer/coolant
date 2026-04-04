@@ -4,6 +4,7 @@ import (
 	"embed"
 	"encoding/csv"
 	"fmt"
+	"log"
 	"math/rand"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ func init() {
 
 	f, err := messagesFS.Open("data/messages.csv")
 	if err != nil {
+		log.Printf("coolant: open messages.csv: %v", err)
 		return
 	}
 	defer f.Close()
@@ -32,6 +34,7 @@ func init() {
 	r := csv.NewReader(f)
 	records, err := r.ReadAll()
 	if err != nil {
+		log.Printf("coolant: parse messages.csv: %v", err)
 		return
 	}
 

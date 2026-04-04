@@ -2,12 +2,15 @@ package collector
 
 import (
 	"context"
+	"log"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // staticSysctl caches values that never change during the process lifetime.
@@ -19,7 +22,7 @@ var staticSysctl struct {
 }
 
 func initStaticSysctl() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.SysInitTimeout)
 	defer cancel()
 
 	type result struct {
@@ -41,15 +44,27 @@ func initStaticSysctl() {
 		r := <-ch
 		switch r.key {
 		case "memsize":
-			staticSysctl.memTotal, _ = strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
+			v, err := strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
+			if err != nil {
+				log.Printf("coolant: parse hw.memsize %q: %v", r.val, err)
+			}
+			staticSysctl.memTotal = v
 		case "ncpu":
-			staticSysctl.ncpu, _ = strconv.Atoi(strings.TrimSpace(r.val))
+			v, err := strconv.Atoi(strings.TrimSpace(r.val))
+			if err != nil {
+				log.Printf("coolant: parse hw.ncpu %q: %v", r.val, err)
+			}
+			staticSysctl.ncpu = v
 		case "pagesize":
-			staticSysctl.pageSize, _ = strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
+			v, err := strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
+			if err != nil {
+				log.Printf("coolant: parse hw.pagesize %q: %v", r.val, err)
+			}
+			staticSysctl.pageSize = v
 		}
 	}
 	if staticSysctl.pageSize == 0 {
-		staticSysctl.pageSize = 16384 // default for modern macOS
+		staticSysctl.pageSize = config.DefaultPageSize
 	}
 }
 
@@ -130,7 +145,7 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 }
 
 func execCmd(ctx context.Context, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, config.SysExecTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, name, args...).Output()
 	return string(out), err
@@ -148,9 +163,12 @@ func parseVMStatField(vmstat, label string) int64 {
 			}
 			numStr := strings.TrimSpace(parts[len(parts)-1])
 			numStr = strings.TrimSuffix(numStr, ".")
-			if v, err := strconv.ParseInt(numStr, 10, 64); err == nil {
-				return v
+			v, err := strconv.ParseInt(numStr, 10, 64)
+			if err != nil {
+				log.Printf("coolant: parse vm_stat %q field %q: %v", label, numStr, err)
+				continue
 			}
+			return v
 		}
 	}
 	return 0
@@ -164,10 +182,16 @@ func parseSwap(s string, stats *SystemStats) {
 	if len(matches) < 3 {
 		return
 	}
-	if total, err := strconv.ParseFloat(matches[1], 64); err == nil {
+	total, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		log.Printf("coolant: parse swap total %q: %v", matches[1], err)
+	} else {
 		stats.SwapTotalBytes = int64(total * 1024 * 1024)
 	}
-	if used, err := strconv.ParseFloat(matches[2], 64); err == nil {
+	used, err := strconv.ParseFloat(matches[2], 64)
+	if err != nil {
+		log.Printf("coolant: parse swap used %q: %v", matches[2], err)
+	} else {
 		stats.SwapUsedBytes = int64(used * 1024 * 1024)
 	}
 }

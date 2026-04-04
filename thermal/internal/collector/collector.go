@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // Run starts two decoupled collector loops:
@@ -23,14 +25,14 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 
 	// Slow loop: network check at 1s
 	go func() {
-		netTicker := time.NewTicker(1 * time.Second)
+		netTicker := time.NewTicker(config.SlowInterval)
 		defer netTicker.Stop()
 		for {
 			select {
 			case <-done:
 				return
 			case <-netTicker.C:
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				ctx, cancel := context.WithTimeout(context.Background(), config.NetCheckTimeout)
 				result := CheckOnline(ctx)
 				cancel()
 				mu.Lock()
@@ -64,7 +66,7 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 
 // collectFast gathers system stats and process trees (no network check).
 func collectFast() Snapshot {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.CollectTimeout)
 	defer cancel()
 	now := time.Now()
 

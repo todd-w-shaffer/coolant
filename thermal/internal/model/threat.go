@@ -1,6 +1,9 @@
 package model
 
-import "github.com/toddwshaffer/coolant/thermal/internal/collector"
+import (
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
+)
 
 // ThreatLevel represents the system thermal state.
 type ThreatLevel int
@@ -28,12 +31,11 @@ func (t ThreatLevel) String() string {
 	}
 }
 
-// Swap thresholds tuned for macOS, which proactively swaps even with free memory.
-// Some swap is normal — only escalate when it's growing fast or large.
+// Swap thresholds aliased from config for readability.
 const (
-	swapWarm = 2 << 30  // 2GB — macOS baseline noise
-	swapHot  = 8 << 30  // 8GB — real pressure
-	swapCrit = 20 << 30 // 20GB — meltdown territory
+	swapWarm = config.SwapWarmBytes
+	swapHot  = config.SwapHotBytes
+	swapCrit = config.SwapCritBytes
 )
 
 // Classify determines threat level from a snapshot and spawn rate.
@@ -47,19 +49,19 @@ func Classify(snap collector.Snapshot, spawnRate float64) ThreatLevel {
 
 	// Memory pressure
 	switch {
-	case mem > 90:
+	case mem > config.MemCritPct:
 		score += 3
-	case mem > 80:
+	case mem > config.MemHotPct:
 		score += 2
-	case mem > 65:
+	case mem > config.MemWarmPct:
 		score += 1
 	}
 
 	// CPU pressure
 	switch {
-	case cpu > 90:
+	case cpu > config.CPUCritPct:
 		score += 2
-	case cpu > 75:
+	case cpu > config.CPUWarmPct:
 		score += 1
 	}
 
@@ -74,16 +76,16 @@ func Classify(snap collector.Snapshot, spawnRate float64) ThreatLevel {
 	}
 
 	// Spawn rate
-	if spawnRate > 10 {
+	if spawnRate > config.SpawnRateEscalation {
 		score += 1
 	}
 
 	switch {
-	case score >= 5:
+	case score >= config.ScoreMeltdown:
 		return ThreatMeltdown
-	case score >= 3:
+	case score >= config.ScoreHot:
 		return ThreatHot
-	case score >= 1:
+	case score >= config.ScoreWarm:
 		return ThreatWarm
 	default:
 		return ThreatCool
