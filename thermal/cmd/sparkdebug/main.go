@@ -18,8 +18,8 @@ func main() {
 	for tick, val := range samples {
 		data = append(data, val)
 
-		spark := widgets.RenderSparkline(data, width, 0, thresh)
-		clean := stripAnsi(spark)
+		pair := widgets.RenderSparkline(data, width, 0, thresh)
+		clean := stripAnsi(pair.Bottom)
 
 		// Show only last 20 chars (rightmost braille)
 		runes := []rune(clean)

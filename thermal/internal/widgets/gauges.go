@@ -173,10 +173,10 @@ func (g *Gauges) View() string {
 	}
 
 	gauges := []gauge{
-		{g.renderHistory[0], g.springs[0].pos, g.peaks[0],
+		{g.renderHistory[0], g.springs[0].pos, 100,
 			SparkThresholds{Warn: 70, Crit: 90},
 			gaugeDots[0].dot, gaugeDots[0].color, fmtPct},
-		{g.renderHistory[1], g.springs[1].pos, g.peaks[1],
+		{g.renderHistory[1], g.springs[1].pos, 100,
 			SparkThresholds{Warn: 60, Crit: 80},
 			gaugeDots[1].dot, gaugeDots[1].color, fmtPct},
 		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
@@ -185,11 +185,14 @@ func (g *Gauges) View() string {
 	}
 
 	var lines []string
+	padding := strings.Repeat(" ", dotWidth)
+	valuePad := strings.Repeat(" ", valueWidth)
+
 	for i, ga := range gauges {
 		dot := ga.dotClr + ga.dot + sparkReset
 
-		// Render with online/offline mask — rainbow dots inline with real data
-		spark := RenderSparklineWithMask(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)
+		// Render 2-row sparkline with online/offline mask
+		pair := RenderSparklineWithMask(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string
@@ -200,7 +203,8 @@ func (g *Gauges) View() string {
 			coloredVal = valColor + ga.fmtVal(ga.display) + sparkReset
 		}
 
-		lines = append(lines, fmt.Sprintf(" %s %s %s", dot, spark, coloredVal))
+		lines = append(lines, fmt.Sprintf("%s%s %s", padding, pair.Top, valuePad))
+		lines = append(lines, fmt.Sprintf(" %s %s %s", dot, pair.Bottom, coloredVal))
 	}
 
 	return strings.Join(lines, "\n")

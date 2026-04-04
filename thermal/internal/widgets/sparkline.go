@@ -55,6 +55,52 @@ func edgeFade(charIdx, numChars int) float64 {
 	return 1.0
 }
 
+// ── Motion trail: comet-tail when a row ends ────────────────
+const trailChars = 8 // how many characters the trail extends
+
+// Brightness per trail character (index 0 = right after last real dot).
+// Floor at 0.25 — never darker than a typical dark terminal background.
+var trailRamp = [trailChars]float64{0.90, 0.75, 0.60, 0.48, 0.40, 0.34, 0.28, 0.25}
+
+// trailState tracks the comet trail for one braille row (top or bottom).
+type trailState struct {
+	lastBits  rune
+	lastColor colorful.Color
+	age       int
+}
+
+// renderTrailedChar writes one braille character with comet-trail logic.
+// Same or growing pattern → full brightness. Shrinking pattern → trail
+// the previous (taller) pattern until it fades, then show current.
+func renderTrailedChar(sb *strings.Builder, ts *trailState, bits rune, color colorful.Color, edgeAlpha float64) {
+	isSubset := ts.lastBits != 0 && bits != ts.lastBits && bits&^ts.lastBits == 0
+
+	if isSubset && ts.age < trailChars {
+		// Pattern shrank (or went empty) — trail the original pattern
+		alpha := trailRamp[ts.age] * edgeAlpha
+		sb.WriteString(dimmedFg(ts.lastColor, alpha))
+		sb.WriteRune(0x2800 | ts.lastBits)
+		sb.WriteString(sparkReset)
+		ts.age++
+	} else if bits != 0 {
+		// Has dots, not shrinking (or trail expired) — full brightness
+		ts.lastBits = bits
+		ts.lastColor = color
+		ts.age = 0
+		if edgeAlpha < 1.0 {
+			sb.WriteString(dimmedFg(color, edgeAlpha))
+		} else {
+			sb.WriteString(truecolorFg(color))
+		}
+		sb.WriteRune(0x2800 | bits)
+		sb.WriteString(sparkReset)
+	} else {
+		// Empty, no trail
+		ts.lastBits = 0
+		sb.WriteRune(' ')
+	}
+}
+
 // rainbowEntry holds a pre-rendered offline rainbow character.
 type rainbowEntry struct {
 	ch    rune
@@ -133,10 +179,20 @@ var rightBits = [5]rune{
 	0x80 | 0x20 | 0x10 | 0x08, // 4: dots 8+6+5+4 (full)
 }
 
-// maxLevels is the number of filled braille levels per column (1–4).
-const maxLevels = 4
+// maxLevels is the number of filled braille levels per column (0–8).
+// Two stacked braille characters give 8 vertical dots: bottom char (1–4),
+// top char (5–8). This yields ~12.5% granularity with a fixed max of 100.
+const maxLevels = 8
 
-// valueToLevel maps a value to a braille height level (0–4).
+// levelSplit splits a 0–8 level into bottom (0–4) and top (0–4) braille levels.
+func levelSplit(level int) (bottom, top int) {
+	if level <= 4 {
+		return level, 0
+	}
+	return 4, level - 4
+}
+
+// valueToLevel maps a value to a braille height level (0–8).
 // Values below 2% of peak render as 0 (invisible noise floor).
 // Values between 2–5% render as level 1 (faint dot, visible with dim color).
 func valueToLevel(v, peak float64) int {
@@ -223,13 +279,20 @@ func prepareSparkMask(mask []bool, width int) []bool {
 	return interp
 }
 
-// RenderSparkline renders a double-resolution braille sparkline. Each character
-// packs two samples (left column + right column), doubling visible history.
-// HEIGHT is proportional (auto-scaled to visible peak), COLOR encodes severity.
+// SparkPair holds the top and bottom rows of a 2-row stacked sparkline.
+type SparkPair struct {
+	Top    string
+	Bottom string
+}
+
+// RenderSparkline renders a 2-row double-resolution braille sparkline. Each
+// character packs two samples (left + right columns), and two vertically
+// stacked characters give 8 levels per column (~12.5% granularity at max 100).
+// HEIGHT is proportional, COLOR encodes severity.
 // Edge fades dim the outermost characters for smooth data entry and exit.
-func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) string {
+func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) SparkPair {
 	if width <= 0 {
-		return ""
+		return SparkPair{}
 	}
 
 	visible := prepareSparkData(data, width)
@@ -248,7 +311,10 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 	}
 
 	numChars := (len(visible) + 1) / 2
-	var sb strings.Builder
+	var top, bot strings.Builder
+
+	// Trail state per row
+	var topTrail, botTrail trailState
 
 	for i := 0; i < len(visible); i += 2 {
 		charIdx := i / 2
@@ -257,44 +323,44 @@ func RenderSparkline(data []float64, width int, maxOverride float64, thresh *Spa
 		if vL < 0 {
 			vL = 0
 		}
-		lev := valueToLevel(vL, peak)
+		levL := valueToLevel(vL, peak)
 
 		var vR float64
-		var revR int
+		var levR int
 		if i+1 < len(visible) {
 			vR = visible[i+1]
 			if vR < 0 {
 				vR = 0
 			}
-			revR = valueToLevel(vR, peak)
+			levR = valueToLevel(vR, peak)
 		}
 
-		bits := leftBits[lev] | rightBits[revR]
+		realBotL, realTopL := levelSplit(levL)
+		realBotR, realTopR := levelSplit(levR)
+
+		edgeAlpha := edgeFade(charIdx, numChars)
 		colorVal := vL
 		if vR > colorVal {
 			colorVal = vR
 		}
+		color := severityColorful(colorVal, thresh)
 
-		// Edge fade
-		alpha := edgeFade(charIdx, numChars)
-		if bits != 0 && alpha < 1.0 {
-			sb.WriteString(dimmedFg(severityColorful(colorVal, thresh), alpha))
-		} else {
-			sb.WriteString(severityColor(colorVal, thresh))
-		}
-		sb.WriteRune(0x2800 | bits)
-		sb.WriteString(sparkReset)
+		topBits := leftBits[realTopL] | rightBits[realTopR]
+		botBits := leftBits[realBotL] | rightBits[realBotR]
+
+		renderTrailedChar(&bot, &botTrail, botBits, color, edgeAlpha)
+		renderTrailedChar(&top, &topTrail, topBits, color, edgeAlpha)
 	}
 
-	return sb.String()
+	return SparkPair{Top: top.String(), Bottom: bot.String()}
 }
 
-// RenderSparklineWithMask renders a double-resolution sparkline where offline
-// ticks become rainbow dots. Two samples per character, left + right columns.
+// RenderSparklineWithMask renders a 2-row sparkline where offline ticks become
+// rainbow dots. Two samples per character, two stacked characters per column.
 // Edge fades dim the outermost characters for smooth data entry and exit.
-func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) string {
+func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) SparkPair {
 	if width <= 0 {
-		return ""
+		return SparkPair{}
 	}
 
 	// Align data and mask to same length (use shorter)
@@ -326,7 +392,10 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 	}
 
 	numChars := (len(visibleData) + 1) / 2
-	var sb strings.Builder
+	var top, bot strings.Builder
+
+	// Trail state per row
+	var topTrail, botTrail trailState
 
 	for i := 0; i < len(visibleData); i += 2 {
 		charIdx := i / 2
@@ -349,24 +418,28 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 			}
 		}
 
-		// Both offline → rainbow character
+		// Both offline → rainbow character (bottom only, top blank)
 		if !onL && (!hasRight || !onR) {
 			ch, color := rainbowChar(charIdx)
-			sb.WriteString(color)
-			sb.WriteRune(ch)
-			sb.WriteString(sparkReset)
+			bot.WriteString(color)
+			bot.WriteRune(ch)
+			bot.WriteString(sparkReset)
+			top.WriteRune(' ')
+			// Kill trails across offline gaps
+			topTrail = trailState{}
+			botTrail = trailState{}
 			continue
 		}
 
-		// Mixed online/offline or both online — build combined braille
-		var lBits, rBits rune
+		// Mixed online/offline or both online
 		colorVal := 0.0
+		var levL, levR int
 
 		if onL {
 			if vL < 0 {
 				vL = 0
 			}
-			lBits = leftBits[valueToLevel(vL, peak)]
+			levL = valueToLevel(vL, peak)
 			colorVal = vL
 		}
 
@@ -374,34 +447,35 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 			if vR < 0 {
 				vR = 0
 			}
-			rBits = rightBits[valueToLevel(vR, peak)]
+			levR = valueToLevel(vR, peak)
 			if vR > colorVal {
 				colorVal = vR
 			}
-		} else if hasRight && !onR {
-			// Right sample offline — use rainbow pattern for right column only
-			rBits = rightBits[1+int(rune(i/2)*3)%3]
 		}
 
-		// One side offline, other online — still show the online side
+		// Offline side gets a filler pattern (bottom row only)
+		var offlineLBits, offlineRBits rune
 		if !onL && hasRight && onR {
-			lBits = leftBits[1+int(rune(i/2)*5)%3]
+			offlineLBits = leftBits[1+int(rune(i/2)*5)%3]
+		}
+		if hasRight && !onR {
+			offlineRBits = rightBits[1+int(rune(i/2)*3)%3]
 		}
 
-		ch := 0x2800 | lBits | rBits
+		realBotL, realTopL := levelSplit(levL)
+		realBotR, realTopR := levelSplit(levR)
 
-		// Edge fade
-		alpha := edgeFade(charIdx, numChars)
-		if lBits|rBits != 0 && alpha < 1.0 {
-			sb.WriteString(dimmedFg(severityColorful(colorVal, thresh), alpha))
-		} else {
-			sb.WriteString(severityColor(colorVal, thresh))
-		}
-		sb.WriteRune(ch)
-		sb.WriteString(sparkReset)
+		edgeAlpha := edgeFade(charIdx, numChars)
+		color := severityColorful(colorVal, thresh)
+
+		topBits := leftBits[realTopL] | rightBits[realTopR]
+		botBits := leftBits[realBotL] | rightBits[realBotR] | offlineLBits | offlineRBits
+
+		renderTrailedChar(&bot, &botTrail, botBits, color, edgeAlpha)
+		renderTrailedChar(&top, &topTrail, topBits, color, edgeAlpha)
 	}
 
-	return sb.String()
+	return SparkPair{Top: top.String(), Bottom: bot.String()}
 }
 
 // Rainbow colors for offline mode sparklines.
