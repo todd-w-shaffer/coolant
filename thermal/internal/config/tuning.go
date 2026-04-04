@@ -110,6 +110,8 @@ const (
 	MemSparkCrit    = 80.0
 	DecompSparkWarn = 5000.0 // decompressions/tick
 	DecompSparkCrit = 20000.0
+	SwapSparkWarn   = 2.0  // GB — aligns with SwapWarmBytes
+	SwapSparkCrit   = 8.0  // GB — aligns with SwapHotBytes (half physical RAM)
 	GPUSparkWarn    = 60.0 // GPU Device Utilization %
 	GPUSparkCrit    = 85.0
 )

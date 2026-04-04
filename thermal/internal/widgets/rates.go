@@ -10,8 +10,16 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
+// Package-level thresholds — allocated once, reused every View() frame.
+var (
+	ratesCPUThresh  = &SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}
+	ratesMemThresh  = &SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}
+	ratesSwapThresh = &SparkThresholds{Warn: config.SwapSparkWarn, Crit: config.SwapSparkCrit}
+	ratesGPUThresh  = &SparkThresholds{Warn: config.GPUSparkWarn, Crit: config.GPUSparkCrit}
+)
+
 // Rates renders spawn/death/net rates + system stats, all fixed-width:
-// spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11.2/16.0GB  SWAP:0000MB  headroom:~04.8GB
+// spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11.2/16.0GB  SWAP:00.0GB  GPU:005%
 type Rates struct {
 	width int
 	state *model.AppState
@@ -59,7 +67,7 @@ func (r *Rates) View() string {
 	memUsedGB := float64(snap.System.MemUsedBytes) / float64(model.GB)
 	memTotalGB := snap.System.MemTotalBytes / int64(model.GB)
 	memPct := snap.System.MemPercent()
-	swapMB := snap.System.SwapUsedBytes / int64(model.MB)
+	swapGB := float64(snap.System.SwapUsedBytes) / float64(model.GB)
 
 	gpuPct := int(snap.System.GPUPercent)
 
@@ -68,24 +76,15 @@ func (r *Rates) View() string {
 	swapDot := ui.GaugeDots[2].ANSI + ui.GaugeDots[2].Char + "\033[0m "
 	gpuDot := ui.GaugeDots[3].ANSI + ui.GaugeDots[3].Char + "\033[0m "
 
-	cpuStr := fmt.Sprintf("%sCPU:%03d%%", cpuDot, cpuPct)
-	memStr := fmt.Sprintf("%sMEM:%04.1f/%02dGB", memDot, memUsedGB, memTotalGB)
-	swapStr := fmt.Sprintf("%sSWAP:%05dMB", swapDot, swapMB)
-	gpuStr := fmt.Sprintf("%sGPU:%03d%%", gpuDot, gpuPct)
-
-	// Color the stats — thresholds from config/tuning.go
-	cpuColor := ui.ThresholdColor(snap.System.CPUPercent, config.CPUSparkWarn, config.CPUSparkCrit)
-	memColor := ui.ThresholdColor(memPct, config.MemSparkWarn, config.MemSparkCrit)
-	swapColor := ui.ThresholdColor(float64(swapMB), 1, 2048) // MB scale, no matching config constant
-	gpuColor := ui.ThresholdColor(snap.System.GPUPercent, config.GPUSparkWarn, config.GPUSparkCrit)
+	cpuStr := fmt.Sprintf("%sCPU:%s%03d%%%s", cpuDot, severityColor(snap.System.CPUPercent, ratesCPUThresh), cpuPct, sparkReset)
+	memStr := fmt.Sprintf("%sMEM:%s%04.1f/%02dGB%s", memDot, severityColor(memPct, ratesMemThresh), memUsedGB, memTotalGB, sparkReset)
+	swapStr := fmt.Sprintf("%sSWAP:%s%04.1fGB%s", swapDot, severityColor(swapGB, ratesSwapThresh), swapGB, sparkReset)
+	gpuStr := fmt.Sprintf("%sGPU:%s%03d%%%s", gpuDot, severityColor(snap.System.GPUPercent, ratesGPUThresh), gpuPct, sparkReset)
 
 	sep := ui.DimText("  |  ")
 
 	stats := fmt.Sprintf(" %s  %s  %s  %s",
-		ui.ColorText(cpuColor, cpuStr),
-		ui.ColorText(memColor, memStr),
-		ui.ColorText(swapColor, swapStr),
-		ui.ColorText(gpuColor, gpuStr),
+		cpuStr, memStr, swapStr, gpuStr,
 	)
 
 	rates := fmt.Sprintf("%s  %s  %s",

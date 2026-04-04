@@ -79,14 +79,3 @@ var ThreatColor = map[model.ThreatLevel]color.Color{
 	model.ThreatHot:      lipgloss.Color("208"), // orange
 	model.ThreatMeltdown: lipgloss.Color("1"),   // red
 }
-
-// ThresholdColor returns green/yellow/red based on value vs thresholds.
-func ThresholdColor(val, warn, crit float64) color.Color {
-	if val >= crit {
-		return lipgloss.Color("1") // red
-	}
-	if val >= warn {
-		return lipgloss.Color("3") // yellow
-	}
-	return lipgloss.Color("7") // white
-}
