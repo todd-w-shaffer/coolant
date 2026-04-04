@@ -94,6 +94,16 @@ load test_helper
   [ "$result" = 'hello \"world\" foo\\bar' ]
 }
 
+@test "_json_escape escapes newlines and tabs" {
+  source "$PROJECT_ROOT/scripts/common.sh"
+  local input=$'line1\nline2\ttab'
+  local result
+  result=$(_json_escape "$input")
+
+  [[ "$result" == *'\n'* ]]
+  [[ "$result" == *'\t'* ]]
+}
+
 @test "_nested_command extracts tool_input.command" {
   source "$PROJECT_ROOT/scripts/common.sh"
   local result

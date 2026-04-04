@@ -26,12 +26,11 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 
 ```
 .claude-plugin/plugin.json   # plugin manifest
-hooks/hooks.json             # hook definitions (PreToolUse, PostToolUse, SubagentStart/Stop)
+hooks/hooks.json             # hook definitions (PreToolUse, SubagentStart/Stop)
 scripts/common.sh            # shared config, paths, log + JSONL event functions
 scripts/monitor.sh           # live TUI dashboard (run in separate terminal)
 scripts/toggle.sh            # manual parallel mode on/off/status
-scripts/gate.sh              # PreToolUse hook: gate expensive CLI tools in parallel mode
-scripts/parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode (legacy, transitional)
+scripts/gate.sh              # PreToolUse hook: cap test runners, suppress build tools
 scripts/agent-start.sh       # SubagentStart hook: increment counter, emit JSONL events
 scripts/agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL events
 thermal/                     # Go thermal dashboard binary (see below)
@@ -100,7 +99,7 @@ thermal/
 - JSON field extraction from hook stdin uses `_json_field` (top-level) and `_nested_command` (tool_input.command) — no jq dependency.
 - Values interpolated into JSONL must pass through `_json_escape` to handle backslashes and quotes.
 - State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks.
-- **Gate system**: `gate.sh` is a PreToolUse hook on Bash. It pattern-matches the first word of commands against known expensive tools (tsc, vitest, cargo build, go test, pytest, etc.), strips transparent wrappers (`npx`, `env`, `command`, path prefixes), and suppresses during parallel mode. See `docs/gate-system-report.md`.
+- **Gate system**: `gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always capped with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are suppressed during parallel mode. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao`, `ioreg` for sensors. No third-party tools.
 
 ### Go (API gotchas)

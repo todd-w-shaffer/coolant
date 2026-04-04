@@ -10,17 +10,27 @@ Coolant sits between Claude Code and your hardware. It senses system state, trac
 
 ### Tool gating (v1)
 
-- **Extensible command gating** — A PreToolUse hook intercepts Bash commands before they execute. Known expensive tools across five ecosystems are suppressed during parallel mode:
+- **Adaptive concurrency capping** — Test runners are automatically capped based on active agent count: `cap = floor((cores - 2) / agents)`. One agent gets generous concurrency; five agents each get a fair share. No configuration needed.
 
-  | Ecosystem | Gated commands |
-  |-----------|---------------|
-  | TypeScript/Node | `tsc`, `vitest`, `jest`, `eslint`, `prettier`, `webpack`, `esbuild`, `vite build` |
-  | Rust | `cargo build`, `cargo test`, `cargo clippy`, `cargo check` |
-  | Go | `go build`, `go test`, `go vet` |
-  | Python | `pytest`, `mypy`, `pylint`, `ruff` |
+  | Tool | Concurrency flag |
+  |------|-----------------|
+  | vitest | `--maxConcurrency N` |
+  | jest | `--maxWorkers N` |
+  | cargo test | `-j N` |
+  | go test | `-parallel N` |
+  | pytest | `-n N` |
+
+- **Build tool suppression** — Type checkers, linters, and build tools are suppressed during parallel mode (3+ agents):
+
+  | Ecosystem | Suppressed commands |
+  |-----------|-------------------|
+  | TypeScript/Node | `tsc`, `eslint`, `prettier`, `webpack`, `esbuild`, `vite build` |
+  | Rust | `cargo build`, `cargo clippy`, `cargo check` |
+  | Go | `go build`, `go vet` |
+  | Python | `mypy`, `pylint`, `ruff` |
   | Java | `gradle`, `mvn`, `javac` |
 
-  Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes (`/usr/local/bin/tsc`). No configuration required — the command itself is the signal.
+  Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes (`/usr/local/bin/tsc`).
 
 - **Agent counting** — `SubagentStart`/`SubagentStop` hooks track how many agents are alive. When the count crosses a configurable threshold (default: 3), parallel mode auto-engages. When agents finish, it disengages. No manual intervention.
 
@@ -163,15 +173,14 @@ coolant/
 ├── .claude-plugin/
 │   └── plugin.json          # plugin manifest
 ├── hooks/
-│   └── hooks.json           # hook definitions (PreToolUse, PostToolUse, SubagentStart/Stop)
+│   └── hooks.json           # hook definitions (PreToolUse, SubagentStart/Stop)
 ├── scripts/                 # bash — hooks, plumbing, system monitor
 │   ├── common.sh            # shared config, paths, log + JSONL event functions
-│   ├── gate.sh              # PreToolUse hook: gate expensive CLI tools in parallel mode
+│   ├── gate.sh              # PreToolUse hook: cap test runners, suppress build tools
 │   ├── agents.sh            # agent tracker: slot management, job detection
 │   ├── sparkline.sh         # braille chart renderers (monitor only)
 │   ├── monitor.sh           # live TUI dashboard (system-level)
 │   ├── toggle.sh            # manual parallel mode on/off/status
-│   ├── parallel-gate.sh     # PostToolUse hook: suppress tsc (legacy, transitional)
 │   ├── agent-start.sh       # SubagentStart hook: increment counter, emit JSONL
 │   └── agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL
 ├── thermal/                 # Go — thermal dashboard binary
@@ -211,8 +220,6 @@ cd thermal && go test ./...
 
 ## Roadmap
 
-- **Concurrency capping** — Rewrite test runner commands with concurrency limits (`vitest --maxConcurrency 2`, `cargo test -j 2`) via PreToolUse `updatedInput`. Stubbed in gate.sh.
-- **Command debounce** — Skip repeated builds when source files haven't changed since last run
 - **Graduated throttling** — Progressive response as load increases: warn, reduce agent cap, suppress hooks, reap processes
 - **Process-level actuators** — `renice` build processes, `SIGSTOP`/`SIGCONT` for pause/resume, targeted kill for runaway processes
 - **Worktree lifecycle** — Detect and clean orphaned git worktrees from crashed agents

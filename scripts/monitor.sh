@@ -125,7 +125,7 @@ pressure_badge() {
 read_cpu() {
   local load ncpu load1 pct
   load=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | xargs)
-  ncpu=$(sysctl -n hw.ncpu 2>/dev/null || echo 1)
+  ncpu=$_COOLANT_NCPU
   load1=$(echo "$load" | awk -F' ' '{print $1}')
   pct=$(awk -v l="$load1" -v n="$ncpu" 'BEGIN {p=int((l/n)*100); if(p>100)p=100; print p}')
   CPU_PCT=$pct

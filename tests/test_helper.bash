@@ -12,6 +12,7 @@ setup() {
   export COOLANT_LOG="${TEST_TMPDIR}/coolant.log"
   export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
   export COOLANT_THRESHOLD=3
+  export _COOLANT_NCPU=10
 }
 
 # Build a PreToolUse stdin JSON payload for testing gate.sh.
