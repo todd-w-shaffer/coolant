@@ -153,6 +153,12 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 			cpuPct = 100
 		}
 
+		// GPU correlates with terminal output volume — more procs = more rendering.
+		gpuPct := 3.0 + float64(len(procs))*0.8 + float64(rand.Intn(5))
+		if gpuPct > 100 {
+			gpuPct = 100
+		}
+
 		// Simulate offline every ~40 ticks for 10 ticks
 		online := true
 		if (tick/40)%3 == 2 && (tick%40) < 10 {
@@ -167,6 +173,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 				SwapUsedBytes:  swapUsed,
 				SwapTotalBytes: 8 * model.GB, // 8GB swap
 				Decompressions: decomps,
+				GPUPercent:     gpuPct,
 				NCPUs:          8,
 				Timestamp:      time.Now(),
 			},

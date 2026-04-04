@@ -31,11 +31,12 @@ type GaugeDot struct {
 	Color color.Color
 }
 
-// GaugeDots are the three sparkline row indicators: CPU (white), MEM (cyan), COMP (magenta).
+// GaugeDots are the sparkline row indicators: CPU (white), MEM (cyan), COMP (magenta), GPU (green).
 var GaugeDots = []GaugeDot{
 	{"●", "\033[37m", lipgloss.Color("7")}, // cpu — white
 	{"●", "\033[36m", lipgloss.Color("6")}, // mem — cyan
 	{"●", "\033[35m", lipgloss.Color("5")}, // compressor — magenta
+	{"●", "\033[32m", lipgloss.Color("2")}, // gpu — green (future sparkline color)
 }
 
 // TypeColor maps process type codes to lipgloss colors, shared across all widgets.

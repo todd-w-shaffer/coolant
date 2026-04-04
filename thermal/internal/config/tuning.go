@@ -108,8 +108,10 @@ const (
 	CPUSparkCrit    = 90.0
 	MemSparkWarn    = 60.0
 	MemSparkCrit    = 80.0
-	DecompSparkWarn = 5000.0
+	DecompSparkWarn = 5000.0 // decompressions/tick
 	DecompSparkCrit = 20000.0
+	GPUSparkWarn    = 60.0 // GPU Device Utilization %
+	GPUSparkCrit    = 85.0
 )
 
 // ── Headroom warnings ──────────────────────────────────────
