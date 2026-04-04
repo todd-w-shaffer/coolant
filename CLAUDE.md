@@ -26,10 +26,11 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 
 ```
 .claude-plugin/plugin.json   # plugin manifest
-hooks/hooks.json             # hook definitions (PreToolUse, SubagentStart/Stop)
+hooks/hooks.json             # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
 scripts/common.sh            # shared config, paths, log + JSONL event functions
 scripts/monitor.sh           # live TUI dashboard (run in separate terminal)
 scripts/toggle.sh            # manual parallel mode on/off/status
+scripts/preflight.sh         # SessionStart hook: warn about missing worktree exclusions
 scripts/gate.sh              # PreToolUse hook: cap test runners, suppress build tools
 scripts/agent-start.sh       # SubagentStart hook: increment counter, emit JSONL events
 scripts/agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL events

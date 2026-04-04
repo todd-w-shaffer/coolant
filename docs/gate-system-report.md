@@ -78,6 +78,10 @@ One `gate.sh` script handles all languages via a case statement. No registry fil
 
 All matched regardless of wrapper (`npx tsc`, `env vitest`, `command cargo build`) or path prefix (`/usr/local/bin/tsc`).
 
+### Known limitation: script indirection
+
+The gate matches on the command Claude Code invokes, not on what that command spawns internally. If a project wraps an expensive tool behind a script — `npm run typecheck` calling tsc, `./run-tests.sh` calling vitest, a Makefile target running `cargo test` — the gate sees `npm`, `bash`, or `make` as the binary and allows it through. This is by design: parsing package.json scripts, Makefiles, or arbitrary shell wrappers to discover what they invoke would reintroduce ecosystem detection, which we intentionally rejected. The gate operates on direct invocations only.
+
 ## Security Hardening
 
 The implementation went through a security review that identified and fixed three issues:
