@@ -41,3 +41,25 @@ load test_helper
   run bash "$PROJECT_ROOT/scripts/agent-stop.sh"
   [ -f "$COOLANT_LOCKFILE" ]
 }
+
+@test "agent-stop emits JSONL agent.stop event" {
+  echo "2" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"event":"agent.stop"' "$COOLANT_EVENTS"
+}
+
+@test "agent-stop JSONL includes agent count" {
+  echo "2" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Plan"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"agent_count":1' "$COOLANT_EVENTS"
+}
+
+@test "agent-stop emits parallel.disengaged JSONL on auto-disengage" {
+  echo "1" > "$COOLANT_COUNTER"
+  touch "$COOLANT_LOCKFILE"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"event":"parallel.disengaged"' "$COOLANT_EVENTS"
+}

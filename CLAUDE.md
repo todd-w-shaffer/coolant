@@ -26,13 +26,14 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 
 ```
 .claude-plugin/plugin.json   # plugin manifest
-hooks/hooks.json             # hook definitions (PostToolUse, SubagentStart/Stop)
-scripts/common.sh            # shared config, paths, log function
+hooks/hooks.json             # hook definitions (PreToolUse, PostToolUse, SubagentStart/Stop)
+scripts/common.sh            # shared config, paths, log + JSONL event functions
 scripts/monitor.sh           # live TUI dashboard (run in separate terminal)
 scripts/toggle.sh            # manual parallel mode on/off/status
-scripts/parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode
-scripts/agent-start.sh       # SubagentStart hook: increment counter
-scripts/agent-stop.sh        # SubagentStop hook: decrement counter
+scripts/gate.sh              # PreToolUse hook: gate expensive CLI tools in parallel mode
+scripts/parallel-gate.sh     # PostToolUse hook: suppress tsc in parallel mode (legacy, transitional)
+scripts/agent-start.sh       # SubagentStart hook: increment counter, emit JSONL events
+scripts/agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL events
 thermal/                     # Go thermal dashboard binary (see below)
 skills/parallel/SKILL.md     # /coolant:parallel skill definition
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
@@ -54,7 +55,8 @@ thermal/
 │   │   ├── system.go         # MEM/SWAP/decompressions via sysctl/vm_stat
 │   │   ├── procs.go          # Claude process discovery + descendant trees
 │   │   ├── network.go        # API connectivity check (TCP to api.anthropic.com)
-│   │   └── collector.go      # decoupled fast (150ms) + slow (1s network) loops
+│   │   ├── collector.go      # decoupled fast (150ms) + slow (1s network) loops
+│   │   └── events.go         # JSONL event tailer (polls $TMPDIR/coolant-$USER.events.jsonl)
 │   ├── model/
 │   │   ├── state.go          # AppState: rolling history, smoothed counts
 │   │   ├── threat.go         # ThreatLevel: COOL/WARM/HOT/MELTDOWN
@@ -93,9 +95,12 @@ thermal/
 ### Bash (hooks, plumbing)
 
 - All scripts must be bash 3.2 compatible (macOS system bash). No `mapfile`, no associative arrays, no `|&`.
-- All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_THRESHOLD`).
-- All hook scripts log events via `coolant_log "message"` from common.sh.
-- State lives in `/tmp/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime.
+- All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_EVENTS`, `COOLANT_THRESHOLD`).
+- Hook scripts log human-readable events via `coolant_log "message"` and structured JSONL via `coolant_event '"key":"value"'`.
+- JSON field extraction from hook stdin uses `_json_field` (top-level) and `_nested_command` (tool_input.command) — no jq dependency.
+- Values interpolated into JSONL must pass through `_json_escape` to handle backslashes and quotes.
+- State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks.
+- **Gate system**: `gate.sh` is a PreToolUse hook on Bash. It pattern-matches the first word of commands against known expensive tools (tsc, vitest, cargo build, go test, pytest, etc.), strips transparent wrappers (`npx`, `env`, `command`, path prefixes), and suppresses during parallel mode. See `docs/gate-system-report.md`.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao`, `ioreg` for sensors. No third-party tools.
 
 ### Go (API gotchas)
@@ -103,7 +108,7 @@ thermal/
 - **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
 - **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
-- **Collector** runs two decoupled loops: fast (150ms) for CPU/MEM/GPU/procs, slow (1s) for network. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
+- **Collector** runs three loops: fast (150ms) for CPU/MEM/GPU/procs, slow (1s) for network, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
 - Type colors, `ThreatColor`, and `GaugeDots` defined once in `internal/ui/colors.go`, shared across all widgets. Severity gradient coloring uses `severityColor()` in `sparkline.go` (green→yellow→red via go-colorful HCL blending). All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
 - Braille rendering done natively in Go (no awk, no subshells).
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
