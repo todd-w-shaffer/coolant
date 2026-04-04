@@ -5,12 +5,10 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/harmonica"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
-
-// maxRenderHistory limits the render-rate sample buffer (~20s at 30fps).
-const maxRenderHistory = 600
 
 // springState tracks harmonica spring position and velocity for one gauge.
 type springState struct {
@@ -37,7 +35,7 @@ type Gauges struct {
 
 func NewGauges() *Gauges {
 	return &Gauges{
-		spring: harmonica.NewSpring(harmonica.FPS(30), 5.0, 1.0),
+		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), config.SpringFreq, config.SpringDamping),
 	}
 }
 
@@ -86,21 +84,21 @@ func (g *Gauges) AnimTick() {
 	// Push spring position into render history — this is what drives sparkline scrolling.
 	for i := range g.springs {
 		g.renderHistory[i] = append(g.renderHistory[i], g.springs[i].pos)
-		if len(g.renderHistory[i]) > maxRenderHistory {
-			g.renderHistory[i] = g.renderHistory[i][len(g.renderHistory[i])-maxRenderHistory:]
+		if len(g.renderHistory[i]) > config.MaxRenderHistory {
+			g.renderHistory[i] = g.renderHistory[i][len(g.renderHistory[i])-config.MaxRenderHistory:]
 		}
 	}
 
 	// Track online state at render rate
 	online := g.state != nil && g.state.Online
 	g.renderOnline = append(g.renderOnline, online)
-	if len(g.renderOnline) > maxRenderHistory {
-		g.renderOnline = g.renderOnline[len(g.renderOnline)-maxRenderHistory:]
+	if len(g.renderOnline) > config.MaxRenderHistory {
+		g.renderOnline = g.renderOnline[len(g.renderOnline)-config.MaxRenderHistory:]
 	}
 
 	// Peak smoothing: snap up on spikes, decay fast.
 	// Adjusted decay for 30fps (~1.3s half-life: 0.982^30 ≈ 0.58/s).
-	const decayRate = 0.982
+	decayRate := config.PeakDecayRate
 	visibleSamples := g.width
 	if visibleSamples < 1 {
 		visibleSamples = 120
@@ -164,11 +162,11 @@ func (g *Gauges) View() string {
 
 	gauges := []gauge{
 		{g.renderHistory[0], g.springs[0].pos, 100,
-			SparkThresholds{Warn: 70, Crit: 90}, 0, fmtPct},
+			SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}, 0, fmtPct},
 		{g.renderHistory[1], g.springs[1].pos, 100,
-			SparkThresholds{Warn: 60, Crit: 80}, 1, fmtPct},
+			SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}, 1, fmtPct},
 		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
-			SparkThresholds{Warn: 5000, Crit: 20000}, 2, fmtDecomp},
+			SparkThresholds{Warn: config.DecompSparkWarn, Crit: config.DecompSparkCrit}, 2, fmtDecomp},
 	}
 
 	var lines []string

@@ -5,7 +5,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
+
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // commToType maps a process name to a single-char type code.
@@ -87,7 +88,7 @@ type rawProc struct {
 
 // CollectProcs finds all Claude root sessions and builds their descendant trees.
 func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, config.ProcTimeout)
 	defer cancel()
 
 	// Get all processes in one call

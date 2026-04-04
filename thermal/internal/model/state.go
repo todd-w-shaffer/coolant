@@ -5,9 +5,8 @@ import (
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
-
-const maxHistory = 600 // ~90s at 150ms — fills double-resolution sparklines on wide terminals
 
 // AlertEntry is a single alert with timestamp and severity.
 type AlertEntry struct {
@@ -57,7 +56,7 @@ type AppState struct {
 // NewAppState creates an initialized AppState.
 func NewAppState() *AppState {
 	return &AppState{
-		maxAlerts: 100,
+		maxAlerts: config.MaxAlerts,
 	}
 }
 
@@ -67,9 +66,9 @@ func (s *AppState) Update(snap collector.Snapshot) {
 
 	// Append to history — copy to new slice to release the old backing array
 	s.History = append(s.History, snap)
-	if len(s.History) > maxHistory {
-		trimmed := make([]collector.Snapshot, maxHistory)
-		copy(trimmed, s.History[len(s.History)-maxHistory:])
+	if len(s.History) > config.MaxHistory {
+		trimmed := make([]collector.Snapshot, config.MaxHistory)
+		copy(trimmed, s.History[len(s.History)-config.MaxHistory:])
 		s.History = trimmed
 	}
 
@@ -90,16 +89,16 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		}
 		s.recentSpawns = append(s.recentSpawns, spawns)
 		s.recentDeaths = append(s.recentDeaths, deaths)
-		if len(s.recentSpawns) > 10 {
-			s.recentSpawns = s.recentSpawns[len(s.recentSpawns)-10:]
-			s.recentDeaths = s.recentDeaths[len(s.recentDeaths)-10:]
+		if len(s.recentSpawns) > config.RateWindowSize {
+			s.recentSpawns = s.recentSpawns[len(s.recentSpawns)-config.RateWindowSize:]
+			s.recentDeaths = s.recentDeaths[len(s.recentDeaths)-config.RateWindowSize:]
 		}
 		s.SpawnRate = smoothedRate(s.recentSpawns)
 		s.DeathRate = smoothedRate(s.recentDeaths)
 		s.NetRate = s.SpawnRate - s.DeathRate
 
 		// Alert on spawn bursts
-		if spawns >= 8 {
+		if spawns >= config.SpawnBurstThreshold {
 			s.addAlert(AlertEntry{
 				Time:    snap.Timestamp,
 				Message: "spawn burst -- " + strconv.Itoa(spawns) + " new procs",
@@ -114,14 +113,14 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	if s.SmoothedCounts == nil {
 		s.SmoothedCounts = make(map[string]float64)
 	}
-	smoothMap(s.TypeCounts, s.SmoothedCounts, 0.15)
+	smoothMap(s.TypeCounts, s.SmoothedCounts, config.CountSmoothAlpha)
 
 	// Category counts — raw and smoothed
 	s.CategoryCounts = collector.CategoryCounts(s.TypeCounts)
 	if s.SmoothedCats == nil {
 		s.SmoothedCats = make(map[string]float64)
 	}
-	smoothMap(s.CategoryCounts, s.SmoothedCats, 0.15)
+	smoothMap(s.CategoryCounts, s.SmoothedCats, config.CountSmoothAlpha)
 
 	s.SessionCount = len(snap.Sessions)
 
@@ -141,9 +140,9 @@ func (s *AppState) Update(snap collector.Snapshot) {
 
 	// Track online/offline per tick — copy to release old backing array
 	s.OnlineLog = append(s.OnlineLog, snap.Online)
-	if len(s.OnlineLog) > maxHistory {
-		trimmed := make([]bool, maxHistory)
-		copy(trimmed, s.OnlineLog[len(s.OnlineLog)-maxHistory:])
+	if len(s.OnlineLog) > config.MaxHistory {
+		trimmed := make([]bool, config.MaxHistory)
+		copy(trimmed, s.OnlineLog[len(s.OnlineLog)-config.MaxHistory:])
 		s.OnlineLog = trimmed
 	}
 
@@ -184,7 +183,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	}
 
 	// Headroom alerts
-	if s.Headroom.HeadroomBytes < 2*GB && s.Headroom.Warning != "" {
+	if s.Headroom.HeadroomBytes < config.HeadroomCritBytes*GB && s.Headroom.Warning != "" {
 		// Only alert once per threshold crossing (check last alert)
 		if len(s.Alerts) == 0 || s.Alerts[len(s.Alerts)-1].Message != s.Headroom.Warning {
 			s.addAlert(AlertEntry{
@@ -198,7 +197,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	// Idle cycling (advances when no Claude sessions)
 	if s.SessionCount == 0 {
 		s.idleTicker++
-		if s.idleTicker%8 == 0 { // change message every ~8 ticks
+		if s.idleTicker%config.IdleTickerModulo == 0 {
 			s.IdleCycle++
 		}
 	} else {
@@ -271,7 +270,7 @@ func smoothedRate(vals []int) float64 {
 	if len(vals) == 0 {
 		return 0
 	}
-	alpha := 0.3
+	alpha := config.RateSmoothAlpha
 	ema := float64(vals[0])
 	for _, v := range vals[1:] {
 		ema = alpha*float64(v) + (1-alpha)*ema
