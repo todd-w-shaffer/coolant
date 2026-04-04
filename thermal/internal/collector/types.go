@@ -9,7 +9,8 @@ type SystemStats struct {
 	MemTotalBytes  int64   // hw.memsize
 	SwapUsedBytes  int64
 	SwapTotalBytes int64
-	Decompressions int64 // vm_stat delta: decompressions since last tick
+	Decompressions int64   // vm_stat delta: decompressions since last tick
+	GPUPercent     float64 // ioreg AGXAccelerator Device Utilization, 0-100
 	NCPUs          int
 	Timestamp      time.Time
 }

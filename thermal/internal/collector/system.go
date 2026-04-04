@@ -91,12 +91,12 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 	// CPU% from mach kernel ticks — no subprocess needed
 	stats.CPUPercent = SampleCPUPercent()
 
-	// Only dynamic values need per-tick subprocess calls: vm.swapusage + vm_stat
+	// Only dynamic values need per-tick subprocess calls: vm.swapusage + vm_stat + ioreg GPU
 	type result struct {
 		key string
 		val string
 	}
-	ch := make(chan result, 2)
+	ch := make(chan result, 3)
 
 	go func() {
 		out, _ := execCmd(ctx, "sysctl", "-n", "vm.swapusage")
@@ -106,8 +106,12 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 		out, _ := execCmd(ctx, "vm_stat")
 		ch <- result{"vmstat", out}
 	}()
+	go func() {
+		out, _ := execCmd(ctx, "bash", "-c", `ioreg -r -d 1 -c AGXAccelerator | grep 'Device Utilization'`)
+		ch <- result{"gpu", out}
+	}()
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		r := <-ch
 		switch r.key {
 		case "swap":
@@ -122,6 +126,8 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 				cumDecomps := parseVMStatField(r.val, "Decompressions")
 				stats.Decompressions = sampleDecompressions(cumDecomps)
 			}
+		case "gpu":
+			parseGPU(r.val, &stats)
 		}
 	}
 
@@ -159,6 +165,21 @@ func parseVMStatField(vmstat, label string) int64 {
 }
 
 var swapRe = regexp.MustCompile(`total\s*=\s*([\d.]+)M.*used\s*=\s*([\d.]+)M`)
+var gpuRe = regexp.MustCompile(`"Device Utilization %"=(\d+)`)
+
+// parseGPU extracts Device Utilization % from ioreg AGXAccelerator output.
+func parseGPU(s string, stats *SystemStats) {
+	matches := gpuRe.FindStringSubmatch(s)
+	if len(matches) < 2 {
+		return
+	}
+	v, err := strconv.Atoi(matches[1])
+	if err != nil {
+		log.Printf("coolant: parse GPU utilization %q: %v", matches[1], err)
+		return
+	}
+	stats.GPUPercent = float64(v)
+}
 
 // parseSwap extracts swap total/used from sysctl vm.swapusage output.
 func parseSwap(s string, stats *SystemStats) {

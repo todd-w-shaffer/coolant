@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
@@ -60,25 +61,31 @@ func (r *Rates) View() string {
 	memPct := snap.System.MemPercent()
 	swapMB := snap.System.SwapUsedBytes / int64(model.MB)
 
+	gpuPct := int(snap.System.GPUPercent)
+
 	cpuDot := ui.GaugeDots[0].ANSI + ui.GaugeDots[0].Char + "\033[0m "
 	memDot := ui.GaugeDots[1].ANSI + ui.GaugeDots[1].Char + "\033[0m "
 	swapDot := ui.GaugeDots[2].ANSI + ui.GaugeDots[2].Char + "\033[0m "
+	gpuDot := ui.GaugeDots[3].ANSI + ui.GaugeDots[3].Char + "\033[0m "
 
 	cpuStr := fmt.Sprintf("%sCPU:%03d%%", cpuDot, cpuPct)
 	memStr := fmt.Sprintf("%sMEM:%04.1f/%02dGB", memDot, memUsedGB, memTotalGB)
 	swapStr := fmt.Sprintf("%sSWAP:%05dMB", swapDot, swapMB)
+	gpuStr := fmt.Sprintf("%sGPU:%03d%%", gpuDot, gpuPct)
 
-	// Color the stats
-	cpuColor := ui.ThresholdColor(snap.System.CPUPercent, 70, 90)
-	memColor := ui.ThresholdColor(memPct, 60, 80)
-	swapColor := ui.ThresholdColor(float64(swapMB), 1, 2048)
+	// Color the stats — thresholds from config/tuning.go
+	cpuColor := ui.ThresholdColor(snap.System.CPUPercent, config.CPUSparkWarn, config.CPUSparkCrit)
+	memColor := ui.ThresholdColor(memPct, config.MemSparkWarn, config.MemSparkCrit)
+	swapColor := ui.ThresholdColor(float64(swapMB), 1, 2048) // MB scale, no matching config constant
+	gpuColor := ui.ThresholdColor(snap.System.GPUPercent, config.GPUSparkWarn, config.GPUSparkCrit)
 
 	sep := ui.DimText("  |  ")
 
-	stats := fmt.Sprintf(" %s  %s  %s",
+	stats := fmt.Sprintf(" %s  %s  %s  %s",
 		ui.ColorText(cpuColor, cpuStr),
 		ui.ColorText(memColor, memStr),
 		ui.ColorText(swapColor, swapStr),
+		ui.ColorText(gpuColor, gpuStr),
 	)
 
 	rates := fmt.Sprintf("%s  %s  %s",
