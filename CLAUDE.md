@@ -49,7 +49,6 @@ thermal/
 │   │   └── data/
 │   │       └── messages.csv  # embedded status bar messages per threat level
 │   ├── widgets/
-│   │   ├── widget.go         # Widget interface
 │   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char)
 │   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
