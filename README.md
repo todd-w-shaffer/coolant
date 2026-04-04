@@ -62,7 +62,7 @@ A terminal dashboard that monitors Claude Code's process tree in real time. Buil
 
 - **Help overlay** — Press `h` to replace sparklines with plain-language descriptions of what each metric measures and why. Press `h` again to dismiss.
 
-- **Collapsible notification bar** — Top row shows install CTA and future alerts. Press `c` to collapse, `c` again to restore.
+- **Notification bar** — Shows install CTA when plugin is not detected. Hides automatically once the plugin is active.
 
 ## Prerequisites
 
@@ -75,9 +75,11 @@ A terminal dashboard that monitors Claude Code's process tree in real time. Buil
 
 ```bash
 # 1. Install the Claude Code plugin
-claude plugin install ./coolant --scope user
+#    Option A: Add to a local marketplace and install
+ln -s /path/to/coolant /path/to/your/marketplace/plugins/coolant
+claude plugin install coolant@your-marketplace --scope user
 
-# Or symlink for development
+#    Option B: Load directly for development (per-session)
 claude --plugin-dir /path/to/coolant
 
 # 2. Build the thermal dashboard
@@ -108,7 +110,7 @@ Coolant works automatically once installed. Hooks count active agents and engage
 ./bin/thermal --demo
 ```
 
-Keyboard shortcuts: `h` help, `c` collapse notification bar, `q` quit.
+Keyboard shortcuts: `h` help, `q` quit.
 
 ### Monitor (system-level)
 
@@ -128,10 +130,11 @@ COOLANT_REFRESH=5 bash scripts/monitor.sh  # same via env var
 
 Press `q` to quit.
 
-### What happens in parallel mode
+### What happens automatically
 
-- Expensive CLI tools (tsc, vitest, cargo build, go test, pytest, etc.) are blocked before execution
-- A system message tells Claude the command was suppressed and why
+- **Always**: Test runners (vitest, jest, cargo test, go test, pytest) are capped with `--maxConcurrency N` based on active agent count
+- **Parallel mode (3+ agents)**: Build tools, type checkers, and linters are blocked before execution
+- **Session start**: Warns if vitest/jest configs are missing `.claude/` worktree exclusions
 - Agent lifecycle and gating events stream to the thermal dashboard
 - When all agents complete, run your build gate:
 
@@ -154,12 +157,13 @@ npm run build    # bundle, once
 ## How it works
 
 ```
-Normal mode (1-2 agents):
-  Edit file -> tsc --noEmit -> immediate feedback -> next edit
+Always (any agent count):
+  vitest run -> [rewritten: vitest run --maxConcurrency 8] -> capped execution
 
 Parallel mode (3+ agents):
-  Edit file -> [tsc suppressed] -> next edit -> ... -> all agents done
-  -> npm run check (once) -> npm run build (once)
+  vitest run -> [rewritten: vitest run --maxConcurrency 2] -> fair share
+  tsc --noEmit -> [suppressed] -> skipped entirely
+  All agents done -> npm run check (once) -> npm run build (once)
 ```
 
 The trade-off is intentional: you lose per-edit type feedback during parallel work, but you keep your machine alive. Type errors surface in the single validation pass at the end — the same as CI would catch them.
@@ -173,9 +177,10 @@ coolant/
 ├── .claude-plugin/
 │   └── plugin.json          # plugin manifest
 ├── hooks/
-│   └── hooks.json           # hook definitions (PreToolUse, SubagentStart/Stop)
+│   └── hooks.json           # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
 ├── scripts/                 # bash — hooks, plumbing, system monitor
 │   ├── common.sh            # shared config, paths, log + JSONL event functions
+│   ├── preflight.sh         # SessionStart hook: worktree exclusion warnings
 │   ├── gate.sh              # PreToolUse hook: cap test runners, suppress build tools
 │   ├── agents.sh            # agent tracker: slot management, job detection
 │   ├── sparkline.sh         # braille chart renderers (monitor only)
@@ -229,7 +234,7 @@ cd thermal && go test ./...
 ## Compatibility
 
 - Claude Code (CLI, desktop, or IDE extension)
-- Any project with PostToolUse hooks that trigger heavy processes
+- Any project with test runners or build tools that trigger heavy processes
 - macOS, Linux, WSL
 
 ## License
