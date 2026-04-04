@@ -12,12 +12,11 @@ import (
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).
 // Layout order:
 //
-//	Line 1:  [i] plugin CTA (if no plugin)
-//	Line 2:  [ overall temp + msg | test:004 | build:008 | run:018 | search:005 | shell:004 ]
-//	Lines 3-6: sparklines (procs, cpu%, mem%, swap)
-//	Line 7:  spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11/16GB  SWAP:00000MB
-//	Lines 8-9: alerts
-//	Line 10: (overflow)
+//	Line 1:   [i] plugin CTA (if no plugin)
+//	Line 2:   [ overall temp + msg | test:004 | build:008 | run:018 | search:005 | shell:004 ]
+//	Lines 3-8: 2-row sparklines (cpu%, mem%, compressor — 2 rows each)
+//	Line 9:   spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11/16GB  SWAP:00000MB
+//	Lines 10-11: alerts
 type Horizontal struct {
 	width     int
 	height    int
@@ -48,7 +47,7 @@ func (h *Horizontal) SetSize(w, height int) {
 	h.width = w
 	h.height = height
 	h.headline.SetSize(w, 1)
-	h.gauges.SetSize(w, 4)
+	h.gauges.SetSize(w, 6)
 	h.rates.SetSize(w, 1)
 	h.alerts.SetSize(w, 2)
 }
@@ -106,24 +105,28 @@ func (h *Horizontal) View() string {
 		lines = append(lines, h.headline.View())
 	}
 
-	// Lines 3-5: Sparklines or help overlay
+	// Lines 3-8: 2-row sparklines (6 lines) or help overlay
 	if h.helpMode && h.height >= 5 {
 		lines = append(lines, h.helpView()...)
-	} else if h.height >= 5 {
+	} else if h.height >= 8 {
 		for _, line := range strings.Split(h.gauges.View(), "\n") {
 			lines = append(lines, line)
 		}
+	} else if h.height >= 6 {
+		gaugeLines := strings.Split(h.gauges.View(), "\n")
+		if len(gaugeLines) >= 4 {
+			lines = append(lines, gaugeLines[0], gaugeLines[1])
+			lines = append(lines, gaugeLines[2], gaugeLines[3])
+		}
 	} else if h.height >= 4 {
-		// Compact: just cpu% and mem%
 		gaugeLines := strings.Split(h.gauges.View(), "\n")
 		if len(gaugeLines) >= 2 {
-			lines = append(lines, gaugeLines[0]) // cpu%
-			lines = append(lines, gaugeLines[1]) // mem%
+			lines = append(lines, gaugeLines[0], gaugeLines[1])
 		}
 	}
 
 	// Stats line: spawn/death/net + CPU/MEM/SWAP
-	if h.height >= 6 {
+	if h.height >= 9 {
 		lines = append(lines, h.rates.View())
 	}
 
