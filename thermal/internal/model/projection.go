@@ -68,18 +68,18 @@ func EstimateHeadroom(typeCounts map[string]int, memUsed, memTotal int64) Headro
 	// Generate warning if headroom is tight
 	switch {
 	case headroom < 0:
-		info.Warning = fmt.Sprintf("!! over-committed by ~%s", formatBytes(-headroom))
+		info.Warning = fmt.Sprintf("!! over-committed by ~%s", FormatBytes(-headroom))
 	case headroom < 2*GB:
-		info.Warning = fmt.Sprintf("!! headroom ~%s before swap", formatBytes(headroom))
+		info.Warning = fmt.Sprintf("!! headroom ~%s before swap", FormatBytes(headroom))
 	case headroom < 4*GB:
-		info.Warning = fmt.Sprintf("headroom ~%s", formatBytes(headroom))
+		info.Warning = fmt.Sprintf("headroom ~%s", FormatBytes(headroom))
 	}
 
 	return info
 }
 
-// formatBytes returns a human-readable byte size.
-func formatBytes(b int64) string {
+// FormatBytes returns a human-readable byte size.
+func FormatBytes(b int64) string {
 	switch {
 	case b >= GB:
 		return fmt.Sprintf("%.1fGB", float64(b)/float64(GB))
@@ -88,9 +88,4 @@ func formatBytes(b int64) string {
 	default:
 		return fmt.Sprintf("%dKB", b/1024)
 	}
-}
-
-// FormatBytes is the exported version for use in widgets.
-func FormatBytes(b int64) string {
-	return formatBytes(b)
 }

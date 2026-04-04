@@ -6,20 +6,11 @@ import (
 
 	"github.com/charmbracelet/harmonica"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
 // maxRenderHistory limits the render-rate sample buffer (~20s at 30fps).
 const maxRenderHistory = 600
-
-// Gauge dot colors — left-edge indicator per row.
-var gaugeDots = []struct {
-	dot   string
-	color string
-}{
-	{"●", "\033[37m"}, // cpu — white dot
-	{"●", "\033[36m"}, // mem — cyan dot
-	{"●", "\033[35m"}, // compressor — magenta dot
-}
 
 // springState tracks harmonica spring position and velocity for one gauge.
 type springState struct {
@@ -154,8 +145,7 @@ func (g *Gauges) View() string {
 		display float64 // spring-animated value (for numeric readout)
 		max     float64
 		thresh  SparkThresholds
-		dot     string
-		dotClr  string
+		dotIdx  int // index into ui.GaugeDots
 		fmtVal  func(float64) string
 	}
 
@@ -174,14 +164,11 @@ func (g *Gauges) View() string {
 
 	gauges := []gauge{
 		{g.renderHistory[0], g.springs[0].pos, 100,
-			SparkThresholds{Warn: 70, Crit: 90},
-			gaugeDots[0].dot, gaugeDots[0].color, fmtPct},
+			SparkThresholds{Warn: 70, Crit: 90}, 0, fmtPct},
 		{g.renderHistory[1], g.springs[1].pos, 100,
-			SparkThresholds{Warn: 60, Crit: 80},
-			gaugeDots[1].dot, gaugeDots[1].color, fmtPct},
+			SparkThresholds{Warn: 60, Crit: 80}, 1, fmtPct},
 		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
-			SparkThresholds{Warn: 5000, Crit: 20000},
-			gaugeDots[2].dot, gaugeDots[2].color, fmtDecomp},
+			SparkThresholds{Warn: 5000, Crit: 20000}, 2, fmtDecomp},
 	}
 
 	var lines []string
@@ -189,7 +176,8 @@ func (g *Gauges) View() string {
 	valuePad := strings.Repeat(" ", valueWidth)
 
 	for i, ga := range gauges {
-		dot := ga.dotClr + ga.dot + sparkReset
+		gd := ui.GaugeDots[ga.dotIdx]
+		dot := gd.ANSI + gd.Char + sparkReset
 
 		// Render 2-row sparkline with online/offline mask
 		pair := RenderSparklineWithMask(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)

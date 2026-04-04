@@ -114,48 +114,14 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	if s.SmoothedCounts == nil {
 		s.SmoothedCounts = make(map[string]float64)
 	}
-	alpha := 0.15 // low alpha = more smoothing, less jitter
-	// Smooth existing types toward current value
-	for code, count := range s.TypeCounts {
-		if prev, ok := s.SmoothedCounts[code]; ok {
-			s.SmoothedCounts[code] = alpha*float64(count) + (1-alpha)*prev
-		} else {
-			s.SmoothedCounts[code] = float64(count)
-		}
-	}
-	// Decay types that disappeared
-	for code, prev := range s.SmoothedCounts {
-		if _, ok := s.TypeCounts[code]; !ok {
-			decayed := (1 - alpha) * prev
-			if decayed < 0.5 {
-				delete(s.SmoothedCounts, code)
-			} else {
-				s.SmoothedCounts[code] = decayed
-			}
-		}
-	}
+	smoothMap(s.TypeCounts, s.SmoothedCounts, 0.15)
+
 	// Category counts — raw and smoothed
 	s.CategoryCounts = collector.CategoryCounts(s.TypeCounts)
 	if s.SmoothedCats == nil {
 		s.SmoothedCats = make(map[string]float64)
 	}
-	for cat, count := range s.CategoryCounts {
-		if prev, ok := s.SmoothedCats[cat]; ok {
-			s.SmoothedCats[cat] = alpha*float64(count) + (1-alpha)*prev
-		} else {
-			s.SmoothedCats[cat] = float64(count)
-		}
-	}
-	for cat, prev := range s.SmoothedCats {
-		if _, ok := s.CategoryCounts[cat]; !ok {
-			decayed := (1 - alpha) * prev
-			if decayed < 0.5 {
-				delete(s.SmoothedCats, cat)
-			} else {
-				s.SmoothedCats[cat] = decayed
-			}
-		}
-	}
+	smoothMap(s.CategoryCounts, s.SmoothedCats, 0.15)
 
 	s.SessionCount = len(snap.Sessions)
 
@@ -253,42 +219,6 @@ func (s *AppState) IsIdle() bool {
 	return s.SessionCount == 0
 }
 
-// CPUHistory returns the CPU% history as float64 slice for sparklines.
-func (s *AppState) CPUHistory() []float64 {
-	out := make([]float64, len(s.History))
-	for i, h := range s.History {
-		out[i] = h.System.CPUPercent
-	}
-	return out
-}
-
-// MemHistory returns the memory% history.
-func (s *AppState) MemHistory() []float64 {
-	out := make([]float64, len(s.History))
-	for i, h := range s.History {
-		out[i] = h.System.MemPercent()
-	}
-	return out
-}
-
-// CompressorHistory returns the decompressions/tick history for sparklines.
-func (s *AppState) CompressorHistory() []float64 {
-	out := make([]float64, len(s.History))
-	for i, h := range s.History {
-		out[i] = float64(h.System.Decompressions)
-	}
-	return out
-}
-
-// ProcCountHistory returns the total Claude process count history.
-func (s *AppState) ProcCountHistory() []float64 {
-	out := make([]float64, len(s.History))
-	for i, h := range s.History {
-		out[i] = float64(h.TotalProcs())
-	}
-	return out
-}
-
 // LastSpawns returns the most recent raw spawn count.
 func (s *AppState) LastSpawns() int {
 	if len(s.recentSpawns) == 0 {
@@ -311,6 +241,28 @@ func (s *AppState) addAlert(a AlertEntry) {
 		trimmed := make([]AlertEntry, s.maxAlerts)
 		copy(trimmed, s.Alerts[len(s.Alerts)-s.maxAlerts:])
 		s.Alerts = trimmed
+	}
+}
+
+// smoothMap applies EMA smoothing: moves existing keys toward current raw counts,
+// seeds new keys at their raw value, and decays disappeared keys toward zero.
+func smoothMap(raw map[string]int, smoothed map[string]float64, alpha float64) {
+	for key, count := range raw {
+		if prev, ok := smoothed[key]; ok {
+			smoothed[key] = alpha*float64(count) + (1-alpha)*prev
+		} else {
+			smoothed[key] = float64(count)
+		}
+	}
+	for key, prev := range smoothed {
+		if _, ok := raw[key]; !ok {
+			decayed := (1 - alpha) * prev
+			if decayed < 0.5 {
+				delete(smoothed, key)
+			} else {
+				smoothed[key] = decayed
+			}
+		}
 	}
 }
 

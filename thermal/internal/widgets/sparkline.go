@@ -433,12 +433,3 @@ func rainbowChar(i int) (rune, string) {
 	colorIdx := (i*3 + i*i) % len(rainbowColors)
 	return funBraille[patIdx], rainbowColors[colorIdx]
 }
-
-// FormatFixedWidth formats a value with a fixed total width, right-aligned.
-func FormatFixedWidth(format string, width int, args ...interface{}) string {
-	s := fmt.Sprintf(format, args...)
-	if len(s) >= width {
-		return s[:width]
-	}
-	return strings.Repeat(" ", width-len(s)) + s
-}

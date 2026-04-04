@@ -66,40 +66,24 @@ var idleMessages = []string{
 	"ice cold, nothing brewing...",
 }
 
-// Alert message templates for threshold crossings.
-var alertTemplates = map[string]string{
-	"spawn_burst":  "spawn burst detected -- %d new procs",
-	"mem_headroom": "memory headroom below %s",
-	"swap_active":  "swap is active -- %s used",
-	"phase_up":     "%s -- %s",
-	"phase_down":   "cooling down -- %s",
-	"session_new":  "new Claude session detected (pid %d)",
-	"session_gone": "Claude session ended (pid %d)",
-}
-
 // IdleMessage returns a cycling idle message.
 func IdleMessage(cycle int) string {
 	return idleMessages[cycle%len(idleMessages)]
 }
 
-// ThreatQuip returns a random personality string for the given threat level,
-// prefixed with ":: " for status bar display.
-func ThreatQuip(level ThreatLevel) string {
+// ThreatQuip returns a personality string for the given threat level,
+// prefixed with ":: " for status bar display. Returns a random quip
+// by default; pass stable=true for a deterministic first-entry pick
+// (use for display that shouldn't flicker every tick).
+func ThreatQuip(level ThreatLevel, stable ...bool) string {
 	quips := threatQuips[level]
 	if len(quips) == 0 {
 		return ":: " + level.String()
+	}
+	if len(stable) > 0 && stable[0] {
+		return ":: " + quips[0]
 	}
 	return ":: " + quips[rand.Intn(len(quips))]
-}
-
-// ThreatQuipStable returns a deterministic quip for the level (first entry),
-// prefixed with ":: ". Use this for display that shouldn't flicker every tick.
-func ThreatQuipStable(level ThreatLevel) string {
-	quips := threatQuips[level]
-	if len(quips) == 0 {
-		return ":: " + level.String()
-	}
-	return ":: " + quips[0]
 }
 
 // Offline messages — delightful, not alarming.

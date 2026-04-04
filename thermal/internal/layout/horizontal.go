@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
 )
 
@@ -88,16 +89,10 @@ func (h *Horizontal) View() string {
 	}
 
 	var lines []string
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 	// Line 1: Notification bar (collapses away with [c])
 	if !h.collapsed && h.height >= 2 {
-		var hints []string
-		if !h.state.PluginActive {
-			hints = append(hints, "[i] install plugin")
-		}
-		hints = append(hints, "[c] collapse")
-		lines = append(lines, dim.Render(" "+strings.Join(hints, "  ")))
+		lines = append(lines, h.notificationBar())
 	}
 
 	// Line 2: Thermal bar (overall + categories)
@@ -142,43 +137,32 @@ func (h *Horizontal) View() string {
 }
 
 func (h *Horizontal) helpView() []string {
-	white := "\033[37m●\033[0m"
-	cyan := "\033[36m●\033[0m"
-	magenta := "\033[35m●\033[0m"
-	d := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	dot := func(i int) string { return ui.GaugeDots[i].ANSI + ui.GaugeDots[i].Char + "\033[0m" }
+	desc := lipgloss.Color("250")
 	return []string{
-		fmt.Sprintf(" %s  %s  %s", white, d.Render("CPU"), d.Render("how hard your cores are working — when this maxes out, everything slows down")),
-		fmt.Sprintf(" %s  %s  %s", cyan, d.Render("MEM"), d.Render("memory actually in use by apps — when this fills up, swap starts and things get ugly")),
-		fmt.Sprintf(" %s  %s  %s", magenta, d.Render("COMP"), d.Render("memory compressor struggling — this spikes 10-20s before your machine locks up")),
+		fmt.Sprintf(" %s  %s  %s", dot(0), ui.ColorText(desc, "CPU"), ui.ColorText(desc, "how hard your cores are working — when this maxes out, everything slows down")),
+		fmt.Sprintf(" %s  %s  %s", dot(1), ui.ColorText(desc, "MEM"), ui.ColorText(desc, "memory actually in use by apps — when this fills up, swap starts and things get ugly")),
+		fmt.Sprintf(" %s  %s  %s", dot(2), ui.ColorText(desc, "COMP"), ui.ColorText(desc, "memory compressor struggling — this spikes 10-20s before your machine locks up")),
 	}
 }
 
 func (h *Horizontal) idleView() string {
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	cool := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-
-	quip := cool.Render(h.state.StableQuip())
+	quip := ui.ColorText(ui.CyanColor, h.state.StableQuip())
 
 	var lines []string
 
-	// Notification bar even when idle
 	if !h.collapsed {
-		var hints []string
-		if !h.state.PluginActive {
-			hints = append(hints, "[i] install plugin")
-		}
-		hints = append(hints, "[c] collapse")
-		lines = append(lines, dim.Render(" "+strings.Join(hints, "  ")))
+		lines = append(lines, h.notificationBar())
 	}
 
-	lines = append(lines, " "+cool.Render("◉")+" "+dim.Render("coolant")+"  "+quip)
+	lines = append(lines, " "+ui.ColorText(ui.CyanColor, "◉")+" "+ui.DimText("coolant")+"  "+quip)
 
 	// System stats while idle
 	if h.state.Current != nil && h.height >= 4 {
 		snap := h.state.Current
-		memGB := snap.System.MemUsedBytes / (1 << 30)
-		totalGB := snap.System.MemTotalBytes / (1 << 30)
-		stats := dim.Render(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(snap.System.CPUPercent), memGB, totalGB))
+		memGB := snap.System.MemUsedBytes / int64(model.GB)
+		totalGB := snap.System.MemTotalBytes / int64(model.GB)
+		stats := ui.DimText(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(snap.System.CPUPercent), memGB, totalGB))
 		lines = append(lines, stats)
 	}
 
@@ -187,4 +171,14 @@ func (h *Horizontal) idleView() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// notificationBar renders the collapsible hint bar (shared between active and idle views).
+func (h *Horizontal) notificationBar() string {
+	var hints []string
+	if !h.state.PluginActive {
+		hints = append(hints, "[i] install plugin")
+	}
+	hints = append(hints, "[c] collapse")
+	return ui.DimText(" " + strings.Join(hints, "  "))
 }
