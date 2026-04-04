@@ -25,43 +25,27 @@ func initStaticSysctl() {
 	ctx, cancel := context.WithTimeout(context.Background(), config.SysInitTimeout)
 	defer cancel()
 
-	type result struct {
-		key string
-		val string
-	}
-	ch := make(chan result, 3)
-	for key, name := range map[string]string{
-		"memsize":  "hw.memsize",
-		"ncpu":     "hw.ncpu",
-		"pagesize": "hw.pagesize",
-	} {
-		go func(k, n string) {
-			out, _ := execCmd(ctx, "sysctl", "-n", n)
-			ch <- result{k, out}
-		}(key, name)
-	}
-	for i := 0; i < 3; i++ {
-		r := <-ch
-		switch r.key {
-		case "memsize":
-			v, err := strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
-			if err != nil {
-				log.Printf("coolant: parse hw.memsize %q: %v", r.val, err)
-			}
-			staticSysctl.memTotal = v
-		case "ncpu":
-			v, err := strconv.Atoi(strings.TrimSpace(r.val))
-			if err != nil {
-				log.Printf("coolant: parse hw.ncpu %q: %v", r.val, err)
-			}
-			staticSysctl.ncpu = v
-		case "pagesize":
-			v, err := strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
-			if err != nil {
-				log.Printf("coolant: parse hw.pagesize %q: %v", r.val, err)
-			}
-			staticSysctl.pageSize = v
+	// Sequential reads — these are one-shot static values, no need for goroutines.
+	if out, err := execCmd(ctx, "sysctl", "-n", "hw.memsize"); err == nil {
+		v, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+		if err != nil {
+			log.Printf("coolant: parse hw.memsize %q: %v", out, err)
 		}
+		staticSysctl.memTotal = v
+	}
+	if out, err := execCmd(ctx, "sysctl", "-n", "hw.ncpu"); err == nil {
+		v, err := strconv.Atoi(strings.TrimSpace(out))
+		if err != nil {
+			log.Printf("coolant: parse hw.ncpu %q: %v", out, err)
+		}
+		staticSysctl.ncpu = v
+	}
+	if out, err := execCmd(ctx, "sysctl", "-n", "hw.pagesize"); err == nil {
+		v, err := strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+		if err != nil {
+			log.Printf("coolant: parse hw.pagesize %q: %v", out, err)
+		}
+		staticSysctl.pageSize = v
 	}
 	if staticSysctl.pageSize == 0 {
 		staticSysctl.pageSize = config.DefaultPageSize
