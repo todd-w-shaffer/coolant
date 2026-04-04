@@ -4,6 +4,7 @@ import (
 	"image/color"
 
 	"charm.land/lipgloss/v2"
+	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
 // Shared color constants — use these instead of hardcoding lipgloss.Color("8") etc.
@@ -69,6 +70,14 @@ const (
 	TotalWarn = 50
 	TotalCrit = 100
 )
+
+// ThreatColor maps threat levels to lipgloss colors — canonical source.
+var ThreatColor = map[model.ThreatLevel]color.Color{
+	model.ThreatCool:     lipgloss.Color("2"),   // green
+	model.ThreatWarm:     lipgloss.Color("3"),   // yellow
+	model.ThreatHot:      lipgloss.Color("208"), // orange
+	model.ThreatMeltdown: lipgloss.Color("1"),   // red
+}
 
 // ThresholdColor returns green/yellow/red based on value vs thresholds.
 func ThresholdColor(val, warn, crit float64) color.Color {

@@ -45,7 +45,7 @@ func (a *Alerts) View() string {
 	var lines []string
 	for _, alert := range a.state.Alerts[start:] {
 		ts := ui.DimText(alert.Time.Format("15:04:05"))
-		color := ThreatColor[alert.Level]
+		color := ui.ThreatColor[alert.Level]
 		msg := ui.ColorText(color, alert.Message)
 		lines = append(lines, fmt.Sprintf(" %s  %s", ts, msg))
 	}
