@@ -6,6 +6,20 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 **NEVER delete files or directories without explicit permission.** No exceptions. No "cleanup." No "safe to delete." ASK FIRST. Always. Even if the file looks stale, orphaned, or unnecessary. Even if you created it. Even if it's untracked. The user runs with permissive settings — that trust must not be abused for destructive operations.
 
+## Workflow rules
+
+### Commit style
+
+Subject line in imperative mood. Body includes a `Recipe:` block (a distilled prompt that would reproduce the change in one shot) and a `Changes:` block (per-file narrative). No Co-Authored-By lines.
+
+### TDD (bash scripts only)
+
+Strict red-green-refactor. One feature per cycle.
+
+1. **Red** — Write a failing `.bats` test in `tests/`. Do NOT write any implementation yet. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`).
+2. **Green** — Implement the minimum code to pass. Nothing more.
+3. **Refactor** — Improve code quality while keeping tests green. Do not skip this step.
+
 ## Project structure
 
 Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization.
@@ -56,8 +70,10 @@ thermal/
 │   │   └── alerts.go         # scrolling alert log
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
+│   ├── config/
+│   │   └── tuning.go         # named constants: timing, thresholds, EMA, animation
 │   ├── ui/
-│   │   └── colors.go         # type colors, category colors, thresholds
+│   │   └── colors.go         # type colors, category colors, ThreatColor, thresholds
 │   └── demo/
 │       └── demov2.go         # synthetic Snapshots with system stats
 ├── go.mod
@@ -72,9 +88,9 @@ thermal/
 - `./bin/thermal --demo` (thermal dashboard, synthetic data)
 - `./bin/thermal` (thermal dashboard, live system data)
 
-## Key conventions
+## Conventions
 
-### Bash (hooks, plumbing, collector)
+### Bash (hooks, plumbing)
 
 - All scripts must be bash 3.2 compatible (macOS system bash). No `mapfile`, no associative arrays, no `|&`.
 - All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_THRESHOLD`).
@@ -82,69 +98,28 @@ thermal/
 - State lives in `/tmp/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao` for sensors. No third-party tools.
 
-### Keyboard shortcuts
-
-- `h` — toggle help overlay (replaces sparklines with plain-language explainers)
-- `c` — collapse/expand the notification bar (top row with [i] install, etc.)
-- `q` / `ctrl+c` — quit
-
-### UI layers
-
-- **Notification bar** (top, collapsible via `c`) — transient chrome: install CTA, future version alerts
-- **Rates bar** (bottom, always visible) — system stats with colored dots + spawn/death/net + permanent `[h] help`
-- **Status messages** — loaded from `thermal/internal/model/data/messages.csv` via `go:embed`, prefixed with `:: `
-
-### Go (visualization)
+### Go (API gotchas)
 
 - **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
 - **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
-- **Collector** runs two decoupled loops: fast (150ms) for CPU/MEM/procs driving sparklines, slow (1s) for network reachability. Shared online state protected by mutex.
-- **Sparklines** use double-resolution braille: both columns of each character pack two time samples (left=N, right=N+1), doubling visible history. Raw data is linearly interpolated (midpoint insertion) before rendering to turn step-function transitions into visible ramps. Shared helpers `prepareSparkData()`/`prepareSparkMask()` handle zero-padding, interpolation, and visible window slicing. Height is proportional (auto-scaled to visible window peak), color is severity gradient via go-colorful `BlendHcl()` (green→yellow→red, 24-bit truecolor). Values below 2% of peak render as invisible (noise floor). **Edge fades** dim the outermost 3 characters on both left and right edges (35%→60%→82% brightness ramp) so data fades in on entry and fades out on exit. Uses `dimmedFg()` which blends severity color toward black via Lab space.
-- **Gauges** use harmonica spring physics (critically damped, 30fps) for smooth numeric readout easing. **Sparklines scroll at animation rate (30fps)**, not collector rate: each `AnimTick` pushes the spring-interpolated value into a per-gauge `renderHistory` buffer, and sparklines render from this buffer. This decouples scroll speed from data collection. Peak per gauge tracks the visible render-history window only with fast decay (0.982/tick at 30fps, ~1.3s half-life) — spikes that scroll off screen release the scale within ~1s.
-- **Render architecture**: collector samples at 150ms, animation tick runs at 30fps (~33ms). Springs interpolate between data arrivals (~4.5 frames per sample). `snapshotMsg` updates spring targets; `animTickMsg` advances springs AND pushes interpolated values into render history, driving sparkline scroll. The two rates are fully decoupled via separate bubbletea messages.
-- **CPU sampling** caches the mach host port (avoids port leak) and holds the last computed CPU% when tick deltas are zero (avoids false 0% gaps at 150ms).
-- Type colors defined once in `internal/ui/colors.go`, shared across all widgets. `ui.ThresholdColor(val, warn, crit float64)` is the single threshold color function.
+- **Collector** runs two decoupled loops: fast (150ms) for CPU/MEM/procs, slow (1s) for network. Shared online state protected by mutex.
+- Type colors and `ThreatColor` defined once in `internal/ui/colors.go`, shared across all widgets. `ui.ThresholdColor(val, warn, crit float64)` is the single threshold color function. All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
 - Braille rendering done natively in Go (no awk, no subshells).
-
-## TDD Workflow
-
-Strict red-green-refactor. One feature per cycle.
-
-1. **Red** — Write a failing `.bats` test in `tests/`. Do NOT write any implementation yet. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`).
-2. **Green** — Implement the minimum code to pass. Nothing more.
-3. **Refactor** — Improve code quality while keeping tests green. Do not skip this step.
+- For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
 
 ## Testing
 
 Uses [bats-core](https://github.com/bats-core/bats-core) (`brew install bats-core`). Tests are a dev dependency — they don't ship with coolant.
 
 ```bash
-# Run full suite
-bats tests/
-
-# Run a single test file
-bats tests/toggle.bats
-
-# Run tests matching a name pattern
-bats tests/ -f "auto-engage"
+bats tests/                        # full suite
+bats tests/toggle.bats             # single file
+bats tests/ -f "auto-engage"       # name pattern
 ```
-
-### Test conventions
 
 - Each script gets a corresponding `tests/<name>.bats` file.
 - `tests/test_helper.bash` provides `setup`/`teardown` — isolates all state to a temp directory so tests never touch real `/tmp/coolant-*` files.
 - Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir. Scripts respect these via the defaults in `common.sh`.
 - New scripts must have tests before merge. New behavior on existing scripts must have a failing test first (red-green-refactor).
-
-### Smoke tests (monitor only)
-
-The TUI monitor can't be unit-tested with bats. Verify manually:
-
-```bash
-echo "q" | bash scripts/monitor.sh --refresh 1
-```
-
-## Commit style
-
-Subject line in imperative mood. Body includes a `Recipe:` block (a distilled prompt that would reproduce the change in one shot) and a `Changes:` block (per-file narrative). No Co-Authored-By lines.
+- Smoke test for TUI monitor: `echo "q" | bash scripts/monitor.sh --refresh 1`
