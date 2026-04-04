@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
 // Alerts renders a scrolling alert log.
@@ -42,13 +42,11 @@ func (a *Alerts) View() string {
 	}
 	start := len(a.state.Alerts) - visible
 
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-
 	var lines []string
 	for _, alert := range a.state.Alerts[start:] {
-		ts := dim.Render(alert.Time.Format("15:04:05"))
+		ts := ui.DimText(alert.Time.Format("15:04:05"))
 		color := ThreatColor[alert.Level]
-		msg := lipgloss.NewStyle().Foreground(color).Render(alert.Message)
+		msg := ui.ColorText(color, alert.Message)
 		lines = append(lines, fmt.Sprintf(" %s  %s", ts, msg))
 	}
 

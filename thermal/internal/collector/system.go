@@ -10,6 +10,49 @@ import (
 	"time"
 )
 
+// staticSysctl caches values that never change during the process lifetime.
+var staticSysctl struct {
+	once     sync.Once
+	memTotal int64
+	ncpu     int
+	pageSize int64
+}
+
+func initStaticSysctl() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	type result struct {
+		key string
+		val string
+	}
+	ch := make(chan result, 3)
+	for key, name := range map[string]string{
+		"memsize":  "hw.memsize",
+		"ncpu":     "hw.ncpu",
+		"pagesize": "hw.pagesize",
+	} {
+		go func(k, n string) {
+			out, _ := execCmd(ctx, "sysctl", "-n", n)
+			ch <- result{k, out}
+		}(key, name)
+	}
+	for i := 0; i < 3; i++ {
+		r := <-ch
+		switch r.key {
+		case "memsize":
+			staticSysctl.memTotal, _ = strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
+		case "ncpu":
+			staticSysctl.ncpu, _ = strconv.Atoi(strings.TrimSpace(r.val))
+		case "pagesize":
+			staticSysctl.pageSize, _ = strconv.ParseInt(strings.TrimSpace(r.val), 10, 64)
+		}
+	}
+	if staticSysctl.pageSize == 0 {
+		staticSysctl.pageSize = 16384 // default for modern macOS
+	}
+}
+
 // decompSampler tracks cumulative decompressions for delta calculation.
 var decompSampler struct {
 	mu   sync.Mutex
@@ -38,76 +81,50 @@ func sampleDecompressions(cumulative int64) int64 {
 // CPU% uses mach host_statistics (same as Activity Monitor) via SampleCPUPercent.
 // Memory and swap use sysctl/vm_stat.
 func CollectSystem(ctx context.Context) (SystemStats, error) {
+	// Cache static values (hw.memsize, hw.ncpu, hw.pagesize) — they never change.
+	staticSysctl.once.Do(initStaticSysctl)
+
 	var stats SystemStats
 	stats.Timestamp = time.Now()
+	stats.MemTotalBytes = staticSysctl.memTotal
+	stats.NCPUs = staticSysctl.ncpu
 
 	// CPU% from mach kernel ticks — no subprocess needed
 	stats.CPUPercent = SampleCPUPercent()
 
-	// All sysctl calls in parallel
+	// Only dynamic values need per-tick subprocess calls: vm.swapusage + vm_stat
 	type result struct {
 		key string
 		val string
-		err error
 	}
-	ch := make(chan result, 4)
+	ch := make(chan result, 2)
 
-	sysctls := map[string]string{
-		"memsize":  "hw.memsize",
-		"ncpu":     "hw.ncpu",
-		"pagesize": "hw.pagesize",
-		"swap":     "vm.swapusage",
-	}
-	for key, name := range sysctls {
-		go func(k, n string) {
-			out, err := execCmd(ctx, "sysctl", "-n", n)
-			ch <- result{k, out, err}
-		}(key, name)
-	}
-
-	// vm_stat separately (different output format)
 	go func() {
-		out, err := execCmd(ctx, "vm_stat")
-		ch <- result{"vmstat", out, err}
+		out, _ := execCmd(ctx, "sysctl", "-n", "vm.swapusage")
+		ch <- result{"swap", out}
+	}()
+	go func() {
+		out, _ := execCmd(ctx, "vm_stat")
+		ch <- result{"vmstat", out}
 	}()
 
-	vals := make(map[string]string)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 2; i++ {
 		r := <-ch
-		if r.err == nil {
-			vals[r.key] = r.val
+		switch r.key {
+		case "swap":
+			parseSwap(r.val, &stats)
+		case "vmstat":
+			if r.val != "" {
+				active := parseVMStatField(r.val, "Pages active")
+				wired := parseVMStatField(r.val, "Pages wired down")
+				compressed := parseVMStatField(r.val, "Pages occupied by compressor")
+				stats.MemUsedBytes = (active + wired + compressed) * staticSysctl.pageSize
+
+				cumDecomps := parseVMStatField(r.val, "Decompressions")
+				stats.Decompressions = sampleDecompressions(cumDecomps)
+			}
 		}
 	}
-
-	// Parse total RAM
-	if v, err := strconv.ParseInt(strings.TrimSpace(vals["memsize"]), 10, 64); err == nil {
-		stats.MemTotalBytes = v
-	}
-
-	// Parse CPU count
-	if v, err := strconv.Atoi(strings.TrimSpace(vals["ncpu"])); err == nil {
-		stats.NCPUs = v
-	}
-
-	// Parse page size
-	pageSize := int64(16384) // default for modern macOS
-	if v, err := strconv.ParseInt(strings.TrimSpace(vals["pagesize"]), 10, 64); err == nil {
-		pageSize = v
-	}
-
-	// Parse vm_stat → memory used + compressor activity
-	if vmstat := vals["vmstat"]; vmstat != "" {
-		active := parseVMStatField(vmstat, "Pages active")
-		wired := parseVMStatField(vmstat, "Pages wired down")
-		compressed := parseVMStatField(vmstat, "Pages occupied by compressor")
-		stats.MemUsedBytes = (active + wired + compressed) * pageSize
-
-		cumDecomps := parseVMStatField(vmstat, "Decompressions")
-		stats.Decompressions = sampleDecompressions(cumDecomps)
-	}
-
-	// Parse swap
-	parseSwap(vals["swap"], &stats)
 
 	return stats, nil
 }

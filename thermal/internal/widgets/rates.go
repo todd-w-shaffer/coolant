@@ -37,19 +37,15 @@ func (r *Rates) View() string {
 
 	// Offline: show duration instead of rates
 	if !s.Online {
-		dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-		cyan := lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
 		durStr := "just now"
 		if s.OfflineDuration >= time.Minute {
 			durStr = fmt.Sprintf("%dm %ds", int(s.OfflineDuration.Minutes()), int(s.OfflineDuration.Seconds())%60)
 		} else if s.OfflineDuration > 0 {
 			durStr = fmt.Sprintf("%ds", int(s.OfflineDuration.Seconds()))
 		}
-		return " " + cyan.Render(fmt.Sprintf("OFFLINE %s", durStr)) +
-			dim.Render("  —  no API connection, processes will wind down")
+		return " " + ui.ColorText(ui.CyanColor, fmt.Sprintf("OFFLINE %s", durStr)) +
+			ui.DimText("  —  no API connection, processes will wind down")
 	}
-
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 
 	// Warm/cool/net — fixed width with sign
 	spawnStr := fmt.Sprintf("warm:%+04d/s", s.LastSpawns())
@@ -59,14 +55,14 @@ func (r *Rates) View() string {
 
 	// System stats — fixed width
 	cpuPct := int(snap.System.CPUPercent)
-	memUsedGB := float64(snap.System.MemUsedBytes) / float64(1<<30)
-	memTotalGB := snap.System.MemTotalBytes / (1 << 30)
+	memUsedGB := float64(snap.System.MemUsedBytes) / float64(model.GB)
+	memTotalGB := snap.System.MemTotalBytes / int64(model.GB)
 	memPct := snap.System.MemPercent()
-	swapMB := snap.System.SwapUsedBytes / (1 << 20)
+	swapMB := snap.System.SwapUsedBytes / int64(model.MB)
 
-	cpuDot := "\033[37m●\033[0m "  // white — matches sparkline row 1
-	memDot := "\033[36m●\033[0m "  // cyan — matches sparkline row 2
-	swapDot := "\033[35m●\033[0m " // magenta — matches sparkline row 3
+	cpuDot := ui.GaugeDots[0].ANSI + ui.GaugeDots[0].Char + "\033[0m "
+	memDot := ui.GaugeDots[1].ANSI + ui.GaugeDots[1].Char + "\033[0m "
+	swapDot := ui.GaugeDots[2].ANSI + ui.GaugeDots[2].Char + "\033[0m "
 
 	cpuStr := fmt.Sprintf("%sCPU:%03d%%", cpuDot, cpuPct)
 	memStr := fmt.Sprintf("%sMEM:%04.1f/%02dGB", memDot, memUsedGB, memTotalGB)
@@ -75,29 +71,23 @@ func (r *Rates) View() string {
 	// Color the stats
 	cpuColor := ui.ThresholdColor(snap.System.CPUPercent, 70, 90)
 	memColor := ui.ThresholdColor(memPct, 60, 80)
-	swapColor := lipgloss.Color("8")
-	if swapMB > 0 {
-		swapColor = lipgloss.Color("3")
-	}
-	if swapMB > 2048 {
-		swapColor = lipgloss.Color("1")
-	}
+	swapColor := ui.ThresholdColor(float64(swapMB), 1, 2048)
 
-	sep := dim.Render("  |  ")
+	sep := ui.DimText("  |  ")
 
 	stats := fmt.Sprintf(" %s  %s  %s",
-		lipgloss.NewStyle().Foreground(cpuColor).Render(cpuStr),
-		lipgloss.NewStyle().Foreground(memColor).Render(memStr),
-		lipgloss.NewStyle().Foreground(swapColor).Render(swapStr),
+		ui.ColorText(cpuColor, cpuStr),
+		ui.ColorText(memColor, memStr),
+		ui.ColorText(swapColor, swapStr),
 	)
 
 	rates := fmt.Sprintf("%s  %s  %s",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("208")).Render(spawnStr),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Render(deathStr),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Render(netStr),
+		ui.ColorText(lipgloss.Color("208"), spawnStr),
+		ui.ColorText(ui.CyanColor, deathStr),
+		ui.ColorText(lipgloss.Color("7"), netStr),
 	)
 
-	help := dim.Render("[h] help")
+	help := ui.DimText("[h] help")
 
 	return stats + sep + rates + "  " + help
 }

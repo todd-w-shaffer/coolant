@@ -66,15 +66,6 @@ func (s SessionTree) TotalCPU() float64 {
 	return total
 }
 
-// TypeCounts returns a map of type code → count for this session's descendants.
-func (s SessionTree) TypeCounts() map[string]int {
-	counts := make(map[string]int)
-	for _, p := range s.Descendants {
-		counts[p.TypeCode]++
-	}
-	return counts
-}
-
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {
 	System      SystemStats

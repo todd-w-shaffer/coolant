@@ -6,6 +6,37 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+// Shared color constants — use these instead of hardcoding lipgloss.Color("8") etc.
+var (
+	DimColor  = lipgloss.Color("8") // gray — dim/muted text
+	CyanColor = lipgloss.Color("6") // cyan — cool/offline accents
+)
+
+// ColorText renders text in the given foreground color. Replaces the
+// repeated lipgloss.NewStyle().Foreground(c).Render(text) pattern.
+func ColorText(c color.Color, text string) string {
+	return lipgloss.NewStyle().Foreground(c).Render(text)
+}
+
+// DimText renders text in the shared dim gray color.
+func DimText(text string) string {
+	return ColorText(DimColor, text)
+}
+
+// GaugeDot defines a colored dot indicator for sparkline rows.
+type GaugeDot struct {
+	Char  string
+	ANSI  string // raw ANSI color (for sparkline context where lipgloss isn't used)
+	Color color.Color
+}
+
+// GaugeDots are the three sparkline row indicators: CPU (white), MEM (cyan), COMP (magenta).
+var GaugeDots = []GaugeDot{
+	{"●", "\033[37m", lipgloss.Color("7")}, // cpu — white
+	{"●", "\033[36m", lipgloss.Color("6")}, // mem — cyan
+	{"●", "\033[35m", lipgloss.Color("5")}, // compressor — magenta
+}
+
 // TypeColor maps process type codes to lipgloss colors, shared across all widgets.
 var TypeColor = map[string]color.Color{
 	"N": lipgloss.Color("2"),  // green — node

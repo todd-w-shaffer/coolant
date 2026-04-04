@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
 var demoTypes = []string{"N", "G", "V", "S", "R", "F", "C", "P", "T", "X"}
@@ -23,8 +24,8 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 	tick := 0
 
 	// Base system stats (realistic M-series Mac)
-	baseMem := int64(6 * (1 << 30))   // 6GB base usage
-	totalMem := int64(16 * (1 << 30)) // 16GB total
+	baseMem := int64(6 * model.GB)   // 6GB base usage
+	totalMem := int64(16 * model.GB) // 16GB total
 
 	for {
 		select {
@@ -38,7 +39,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 
 		// Age existing procs
 		for i := range procs {
-			procs[i].RSSBytes += int64(rand.Intn(10 * (1 << 20))) // slow RSS growth
+			procs[i].RSSBytes += int64(rand.Intn(10 * model.MB)) // slow RSS growth
 		}
 
 		// Spawn new procs based on phase
@@ -63,11 +64,11 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 			var rss int64
 			switch typeCode {
 			case "V", "N":
-				rss = int64(500+rand.Intn(1000)) * (1 << 20) // 500MB-1.5GB
+				rss = int64(500+rand.Intn(1000)) * model.MB // 500MB-1.5GB
 			case "T", "P":
-				rss = int64(100+rand.Intn(300)) * (1 << 20) // 100-400MB
+				rss = int64(100+rand.Intn(300)) * model.MB // 100-400MB
 			default:
-				rss = int64(5+rand.Intn(30)) * (1 << 20) // 5-35MB
+				rss = int64(5+rand.Intn(30)) * model.MB // 5-35MB
 			}
 
 			procs = append(procs, collector.ProcessInfo{
@@ -164,7 +165,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 				MemUsedBytes:   memUsed,
 				MemTotalBytes:  totalMem,
 				SwapUsedBytes:  swapUsed,
-				SwapTotalBytes: 8 * (1 << 30), // 8GB swap
+				SwapTotalBytes: 8 * model.GB, // 8GB swap
 				Decompressions: decomps,
 				NCPUs:          8,
 				Timestamp:      time.Now(),

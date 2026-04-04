@@ -70,11 +70,7 @@ var commToType = map[string]string{
 
 // classifyComm returns the type code for a process name.
 func classifyComm(comm string) string {
-	// Strip path to get basename
-	if idx := strings.LastIndex(comm, "/"); idx >= 0 {
-		comm = comm[idx+1:]
-	}
-	comm = strings.ToLower(comm)
+	comm = strings.ToLower(basename(comm))
 	if code, ok := commToType[comm]; ok {
 		return code
 	}
@@ -126,10 +122,7 @@ func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
 	// Find Claude root processes
 	var roots []int
 	for _, p := range allProcs {
-		name := strings.ToLower(p.comm)
-		if idx := strings.LastIndex(name, "/"); idx >= 0 {
-			name = name[idx+1:]
-		}
+		name := strings.ToLower(basename(p.comm))
 		if strings.Contains(name, "claude") {
 			roots = append(roots, p.pid)
 		}
