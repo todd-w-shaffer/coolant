@@ -66,14 +66,14 @@ thermal/
 │   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char)
 │   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
-│   │   ├── rates.go          # system stats + spawn/death/net + [h] help
+│   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   └── alerts.go         # scrolling alert log
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
 │   ├── config/
 │   │   └── tuning.go         # named constants: timing, thresholds, EMA, animation
 │   ├── ui/
-│   │   └── colors.go         # type colors, category colors, ThreatColor, thresholds
+│   │   └── colors.go         # type colors, category colors, ThreatColor, GaugeDots
 │   └── demo/
 │       └── demov2.go         # synthetic Snapshots with system stats
 ├── go.mod
@@ -96,15 +96,15 @@ thermal/
 - All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_THRESHOLD`).
 - All hook scripts log events via `coolant_log "message"` from common.sh.
 - State lives in `/tmp/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime.
-- macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao` for sensors. No third-party tools.
+- macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao`, `ioreg` for sensors. No third-party tools.
 
 ### Go (API gotchas)
 
 - **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
 - **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
-- **Collector** runs two decoupled loops: fast (150ms) for CPU/MEM/procs, slow (1s) for network. Shared online state protected by mutex.
-- Type colors and `ThreatColor` defined once in `internal/ui/colors.go`, shared across all widgets. `ui.ThresholdColor(val, warn, crit float64)` is the single threshold color function. All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
+- **Collector** runs two decoupled loops: fast (150ms) for CPU/MEM/GPU/procs, slow (1s) for network. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
+- Type colors, `ThreatColor`, and `GaugeDots` defined once in `internal/ui/colors.go`, shared across all widgets. Severity gradient coloring uses `severityColor()` in `sparkline.go` (green→yellow→red via go-colorful HCL blending). All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
 - Braille rendering done natively in Go (no awk, no subshells).
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
 
