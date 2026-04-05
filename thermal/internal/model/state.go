@@ -18,7 +18,7 @@ type AlertEntry struct {
 // AppState holds the rolling history, computed metrics, and UI state.
 type AppState struct {
 	Current  *collector.Snapshot
-	History  []collector.Snapshot
+	History  *RingBuffer[collector.Snapshot]
 	PrevPIDs map[int]bool
 
 	// Computed
@@ -35,17 +35,19 @@ type AppState struct {
 	SessionCount    int
 	PluginActive    bool
 	Online          bool
-	OnlineLog       []bool    // tracks online/offline per tick, same length as History
-	OfflineSince    time.Time // when we went offline
+	OnlineLog       *RingBuffer[bool] // tracks online/offline per tick, same length as History
+	OfflineSince    time.Time         // when we went offline
 	OfflineDuration time.Duration
 
 	// Rate tracking
-	recentSpawns []int
-	recentDeaths []int
+	recentSpawns *RingBuffer[int]
+	recentDeaths *RingBuffer[int]
+
+	// Pre-allocated scratch maps (cleared and reused each tick)
+	scratchPIDs map[int]bool
 
 	// Alerts
-	Alerts    []AlertEntry
-	maxAlerts int
+	Alerts *RingBuffer[AlertEntry]
 
 	// Personality
 	IdleCycle  int
@@ -56,7 +58,14 @@ type AppState struct {
 // NewAppState creates an initialized AppState.
 func NewAppState() *AppState {
 	return &AppState{
-		maxAlerts: config.MaxAlerts,
+		History:        NewRingBuffer[collector.Snapshot](config.MaxHistory),
+		OnlineLog:      NewRingBuffer[bool](config.MaxHistory),
+		Alerts:         NewRingBuffer[AlertEntry](config.MaxAlerts),
+		recentSpawns:   NewRingBuffer[int](config.RateWindowSize),
+		recentDeaths:   NewRingBuffer[int](config.RateWindowSize),
+		TypeCounts:     make(map[string]int),
+		CategoryCounts: make(map[string]int),
+		scratchPIDs:    make(map[int]bool),
 	}
 }
 
@@ -64,59 +73,31 @@ func NewAppState() *AppState {
 func (s *AppState) Update(snap collector.Snapshot) {
 	s.Current = &snap
 
-	// Append to history — copy to new slice to release the old backing array
-	s.History = append(s.History, snap)
-	if len(s.History) > config.MaxHistory {
-		trimmed := make([]collector.Snapshot, config.MaxHistory)
-		copy(trimmed, s.History[len(s.History)-config.MaxHistory:])
-		s.History = trimmed
+	// Append to history — O(1) ring buffer push, no allocation
+	s.History.Push(snap)
+
+	// Compute spawn/death deltas using pre-allocated PID map
+	s.computePIDDeltas(&snap)
+
+	// Type counts — clear and repopulate in place
+	clearMap(s.TypeCounts)
+	for _, p := range snap.AllProcs {
+		s.TypeCounts[p.TypeCode]++
 	}
-
-	// Compute spawn/death deltas
-	currPIDs := snap.PIDs()
-	if s.PrevPIDs != nil {
-		spawns := 0
-		deaths := 0
-		for pid := range currPIDs {
-			if !s.PrevPIDs[pid] {
-				spawns++
-			}
-		}
-		for pid := range s.PrevPIDs {
-			if !currPIDs[pid] {
-				deaths++
-			}
-		}
-		s.recentSpawns = append(s.recentSpawns, spawns)
-		s.recentDeaths = append(s.recentDeaths, deaths)
-		if len(s.recentSpawns) > config.RateWindowSize {
-			s.recentSpawns = s.recentSpawns[len(s.recentSpawns)-config.RateWindowSize:]
-			s.recentDeaths = s.recentDeaths[len(s.recentDeaths)-config.RateWindowSize:]
-		}
-		s.SpawnRate = smoothedRate(s.recentSpawns)
-		s.DeathRate = smoothedRate(s.recentDeaths)
-		s.NetRate = s.SpawnRate - s.DeathRate
-
-		// Alert on spawn bursts
-		if spawns >= config.SpawnBurstThreshold {
-			s.addAlert(AlertEntry{
-				Time:    snap.Timestamp,
-				Message: "spawn burst -- " + strconv.Itoa(spawns) + " new procs",
-				Level:   ThreatHot,
-			})
-		}
-	}
-	s.PrevPIDs = currPIDs
-
-	// Type counts — raw and smoothed
-	s.TypeCounts = snap.TypeCounts()
 	if s.SmoothedCounts == nil {
 		s.SmoothedCounts = make(map[string]float64)
 	}
 	smoothMap(s.TypeCounts, s.SmoothedCounts, config.CountSmoothAlpha)
 
-	// Category counts — raw and smoothed
-	s.CategoryCounts = collector.CategoryCounts(s.TypeCounts)
+	// Category counts — clear and repopulate in place
+	clearMap(s.CategoryCounts)
+	for typeCode, count := range s.TypeCounts {
+		cat, ok := collector.TypeToCategory[typeCode]
+		if !ok {
+			cat = "shell"
+		}
+		s.CategoryCounts[cat] += count
+	}
 	if s.SmoothedCats == nil {
 		s.SmoothedCats = make(map[string]float64)
 	}
@@ -138,13 +119,8 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		s.OfflineDuration = snap.Timestamp.Sub(s.OfflineSince)
 	}
 
-	// Track online/offline per tick — copy to release old backing array
-	s.OnlineLog = append(s.OnlineLog, snap.Online)
-	if len(s.OnlineLog) > config.MaxHistory {
-		trimmed := make([]bool, config.MaxHistory)
-		copy(trimmed, s.OnlineLog[len(s.OnlineLog)-config.MaxHistory:])
-		s.OnlineLog = trimmed
-	}
+	// Track online/offline per tick — O(1) ring buffer push
+	s.OnlineLog.Push(snap.Online)
 
 	// Headroom projection
 	s.Headroom = EstimateHeadroom(
@@ -185,7 +161,11 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	// Headroom alerts
 	if s.Headroom.HeadroomBytes < config.HeadroomCritBytes*GB && s.Headroom.Warning != "" {
 		// Only alert once per threshold crossing (check last alert)
-		if len(s.Alerts) == 0 || s.Alerts[len(s.Alerts)-1].Message != s.Headroom.Warning {
+		lastMsg := ""
+		if s.Alerts.Len() > 0 {
+			lastMsg = s.Alerts.Peek().Message
+		}
+		if lastMsg != s.Headroom.Warning {
 			s.addAlert(AlertEntry{
 				Time:    snap.Timestamp,
 				Message: s.Headroom.Warning,
@@ -202,6 +182,51 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		}
 	} else {
 		s.idleTicker = 0
+	}
+}
+
+// computePIDDeltas calculates spawn/death counts using pre-allocated maps.
+func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
+	// Build current PID set in scratch map (clear + reuse)
+	clearBoolMap(s.scratchPIDs)
+	for _, p := range snap.AllProcs {
+		s.scratchPIDs[p.PID] = true
+	}
+
+	if s.PrevPIDs != nil {
+		spawns := 0
+		deaths := 0
+		for pid := range s.scratchPIDs {
+			if !s.PrevPIDs[pid] {
+				spawns++
+			}
+		}
+		for pid := range s.PrevPIDs {
+			if !s.scratchPIDs[pid] {
+				deaths++
+			}
+		}
+		s.recentSpawns.Push(spawns)
+		s.recentDeaths.Push(deaths)
+		s.SpawnRate = smoothedRateRing(s.recentSpawns)
+		s.DeathRate = smoothedRateRing(s.recentDeaths)
+		s.NetRate = s.SpawnRate - s.DeathRate
+
+		// Alert on spawn bursts
+		if spawns >= config.SpawnBurstThreshold {
+			s.addAlert(AlertEntry{
+				Time:    snap.Timestamp,
+				Message: "spawn burst -- " + strconv.Itoa(spawns) + " new procs",
+				Level:   ThreatHot,
+			})
+		}
+	}
+
+	// Swap scratch into PrevPIDs, reuse the old PrevPIDs as next scratch
+	s.scratchPIDs, s.PrevPIDs = s.PrevPIDs, s.scratchPIDs
+	// If PrevPIDs was nil (first tick), allocate a new scratch
+	if s.scratchPIDs == nil {
+		s.scratchPIDs = make(map[int]bool)
 	}
 }
 
@@ -277,26 +302,35 @@ func (s *AppState) IsIdle() bool {
 
 // LastSpawns returns the most recent raw spawn count.
 func (s *AppState) LastSpawns() int {
-	if len(s.recentSpawns) == 0 {
+	if s.recentSpawns.Len() == 0 {
 		return 0
 	}
-	return s.recentSpawns[len(s.recentSpawns)-1]
+	return s.recentSpawns.Peek()
 }
 
 // LastDeaths returns the most recent raw death count.
 func (s *AppState) LastDeaths() int {
-	if len(s.recentDeaths) == 0 {
+	if s.recentDeaths.Len() == 0 {
 		return 0
 	}
-	return s.recentDeaths[len(s.recentDeaths)-1]
+	return s.recentDeaths.Peek()
 }
 
 func (s *AppState) addAlert(a AlertEntry) {
-	s.Alerts = append(s.Alerts, a)
-	if len(s.Alerts) > s.maxAlerts {
-		trimmed := make([]AlertEntry, s.maxAlerts)
-		copy(trimmed, s.Alerts[len(s.Alerts)-s.maxAlerts:])
-		s.Alerts = trimmed
+	s.Alerts.Push(a)
+}
+
+// clearMap removes all keys from a map[string]int without deallocating.
+func clearMap(m map[string]int) {
+	for k := range m {
+		delete(m, k)
+	}
+}
+
+// clearBoolMap removes all keys from a map[int]bool without deallocating.
+func clearBoolMap(m map[int]bool) {
+	for k := range m {
+		delete(m, k)
 	}
 }
 
@@ -322,15 +356,16 @@ func smoothMap(raw map[string]int, smoothed map[string]float64, alpha float64) {
 	}
 }
 
-// smoothedRate computes exponentially weighted moving average of recent values.
-func smoothedRate(vals []int) float64 {
-	if len(vals) == 0 {
+// smoothedRateRing computes EMA over ring buffer contents.
+func smoothedRateRing(r *RingBuffer[int]) float64 {
+	n := r.Len()
+	if n == 0 {
 		return 0
 	}
 	alpha := config.RateSmoothAlpha
-	ema := float64(vals[0])
-	for _, v := range vals[1:] {
-		ema = alpha*float64(v) + (1-alpha)*ema
+	ema := float64(r.At(0))
+	for i := 1; i < n; i++ {
+		ema = alpha*float64(r.At(i)) + (1-alpha)*ema
 	}
 	return ema
 }

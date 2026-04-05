@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	colorful "github.com/lucasb-eyer/go-colorful"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // SparkThresholds defines the warn/crit boundaries for per-dot coloring.
@@ -24,6 +25,33 @@ var (
 	gradYellow = mustHex("#eab308")
 	gradRed    = mustHex("#ef4444")
 )
+
+// Pre-computed blend LUTs: 101 entries each for ratio 0.00–1.00 quantized to integers.
+// greenYellowColorLUT[i] = gradGreen.BlendHcl(gradYellow, i/100).Clamped()
+// yellowRedColorLUT[i]   = gradYellow.BlendHcl(gradRed, i/100).Clamped()
+// Corresponding ANSI escape strings cached alongside.
+var (
+	greenYellowColorLUT [101]colorful.Color
+	yellowRedColorLUT   [101]colorful.Color
+	greenYellowANSILUT  [101]string
+	yellowRedANSILUT    [101]string
+	gradGreenANSI       string
+	gradRedANSI         string
+)
+
+func init() {
+	for i := 0; i <= 100; i++ {
+		ratio := float64(i) / 100.0
+		gy := gradGreen.BlendHcl(gradYellow, ratio).Clamped()
+		yr := gradYellow.BlendHcl(gradRed, ratio).Clamped()
+		greenYellowColorLUT[i] = gy
+		yellowRedColorLUT[i] = yr
+		greenYellowANSILUT[i] = truecolorFg(gy)
+		yellowRedANSILUT[i] = truecolorFg(yr)
+	}
+	gradGreenANSI = truecolorFg(gradGreen)
+	gradRedANSI = truecolorFg(gradRed)
+}
 
 func mustHex(hex string) colorful.Color {
 	c, _ := colorful.Hex(hex)
@@ -48,8 +76,20 @@ type rainbowEntry struct {
 	color string
 }
 
+// blendIndex clamps a ratio to [0,1] and converts to a LUT index 0–100.
+func blendIndex(ratio float64) int {
+	if ratio <= 0 {
+		return 0
+	}
+	if ratio >= 1 {
+		return 100
+	}
+	return int(ratio * 100)
+}
+
 // severityColorful returns the perceptual gradient color for a value.
 // Green→yellow below warn, yellow→red between warn and crit, red above crit.
+// Uses pre-computed LUTs for HCL blends — quantized to 1% steps.
 func severityColorful(v float64, thresh *SparkThresholds) colorful.Color {
 	if thresh == nil {
 		return gradGreen
@@ -59,21 +99,37 @@ func severityColorful(v float64, thresh *SparkThresholds) colorful.Color {
 		return gradRed
 	case v >= thresh.Warn:
 		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
-		return gradYellow.BlendHcl(gradRed, ratio).Clamped()
+		return yellowRedColorLUT[blendIndex(ratio)]
 	default:
 		if thresh.Warn <= 0 {
 			return gradGreen
 		}
 		ratio := v / thresh.Warn
-		return gradGreen.BlendHcl(gradYellow, ratio).Clamped()
+		return greenYellowColorLUT[blendIndex(ratio)]
 	}
 }
 
 // severityColor returns a truecolor ANSI escape for a value relative to
 // thresholds. Interpolates green→yellow below warn, yellow→red between
-// warn and crit, solid red above crit. Produces smooth per-dot gradients.
+// warn and crit, solid red above crit. Uses pre-computed LUTs to avoid
+// per-call BlendHcl + fmt.Sprintf overhead.
 func severityColor(v float64, thresh *SparkThresholds) string {
-	return truecolorFg(severityColorful(v, thresh))
+	if thresh == nil {
+		return gradGreenANSI
+	}
+	switch {
+	case v >= thresh.Crit:
+		return gradRedANSI
+	case v >= thresh.Warn:
+		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
+		return yellowRedANSILUT[blendIndex(ratio)]
+	default:
+		if thresh.Warn <= 0 {
+			return gradGreenANSI
+		}
+		ratio := v / thresh.Warn
+		return greenYellowANSILUT[blendIndex(ratio)]
+	}
 }
 
 // truecolorFg emits \033[38;2;R;G;Bm for 24-bit foreground color.
@@ -218,98 +274,183 @@ type SparkPair struct {
 	Bottom string
 }
 
+// Package-level gauge sparkline thresholds — allocated once, reused every frame.
+var (
+	CPUSparkThresh    = SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}
+	MemSparkThresh    = SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}
+	DecompSparkThresh = SparkThresholds{Warn: config.DecompSparkWarn, Crit: config.DecompSparkCrit}
+	SwapSparkThresh   = SparkThresholds{Warn: config.SwapSparkWarn, Crit: config.SwapSparkCrit}
+	GPUSparkThresh    = SparkThresholds{Warn: config.GPUSparkWarn, Crit: config.GPUSparkCrit}
+)
+
+// SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
+// Allocate once via NewSparkBufs and pass to RenderSparklineBuf / RenderSparklineWithMaskBuf.
+type SparkBufs struct {
+	interpData []float64 // reused by prepareSparkDataBuf
+	interpMask []bool    // reused by prepareSparkMaskBuf
+	padData    []float64 // reused for padding in prepareSparkDataBuf
+	padMask    []bool    // reused for padding in prepareSparkMaskBuf
+}
+
+// NewSparkBufs creates reusable buffers sized for the given sparkline width.
+func NewSparkBufs(maxWidth int) *SparkBufs {
+	// prepareSparkData pads to width+1, then interpolates to 2*(width+1)-1.
+	// The visible window is width*2. Allocate for the interpolated size.
+	interpCap := 2*(maxWidth+1) - 1
+	padCap := maxWidth + 1
+	return &SparkBufs{
+		interpData: make([]float64, 0, interpCap),
+		interpMask: make([]bool, 0, interpCap),
+		padData:    make([]float64, 0, padCap),
+		padMask:    make([]bool, 0, padCap),
+	}
+}
+
+// prepareSparkDataBuf is like prepareSparkData but reuses buf.interpData and
+// buf.padData to avoid allocations. The returned slice is only valid until the
+// next call.
+func prepareSparkDataBuf(data []float64, width int, buf *SparkBufs) []float64 {
+	minRaw := width + 1
+	src := data
+	if len(data) < minRaw {
+		padded := buf.padData[:minRaw]
+		gap := minRaw - len(data)
+		for i := 0; i < gap; i++ {
+			padded[i] = 0
+		}
+		copy(padded[gap:], data)
+		src = padded
+	}
+
+	// Interpolate into buf.interpData
+	if len(src) < 2 {
+		return src
+	}
+	outLen := 2*len(src) - 1
+	interp := buf.interpData[:outLen]
+	for i, v := range src {
+		interp[i*2] = v
+		if i > 0 {
+			interp[i*2-1] = (src[i-1] + v) / 2
+		}
+	}
+
+	need := width * 2
+	if len(interp) > need {
+		interp = interp[len(interp)-need:]
+	}
+	return interp
+}
+
+// prepareSparkMaskBuf is like prepareSparkMask but reuses buf.interpMask and
+// buf.padMask to avoid allocations. The returned slice is only valid until the
+// next call.
+func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
+	minRaw := width + 1
+	src := mask
+	if len(mask) < minRaw {
+		padded := buf.padMask[:minRaw]
+		gap := minRaw - len(mask)
+		for i := 0; i < gap; i++ {
+			padded[i] = true
+		}
+		copy(padded[gap:], mask)
+		src = padded
+	}
+
+	// Interpolate into buf.interpMask
+	if len(src) < 2 {
+		return src
+	}
+	outLen := 2*len(src) - 1
+	interp := buf.interpMask[:outLen]
+	for i, v := range src {
+		interp[i*2] = v
+		if i > 0 {
+			interp[i*2-1] = src[i-1]
+		}
+	}
+
+	need := width * 2
+	if len(interp) > need {
+		interp = interp[len(interp)-need:]
+	}
+	return interp
+}
+
 // RenderSparkline renders a 2-row double-resolution braille sparkline. Each
 // character packs two samples (left + right columns), and two vertically
 // stacked characters give 8 levels per column (~12.5% granularity at max 100).
 // HEIGHT is proportional, COLOR encodes severity.
 // Edge fades dim the outermost characters for smooth data entry and exit.
 func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) SparkPair {
-	if width <= 0 {
-		return SparkPair{}
-	}
-
-	visible := prepareSparkData(data, width)
-
-	// Find peak for auto-scaling
-	peak := maxOverride
-	if peak <= 0 {
-		for _, v := range visible {
-			if v > peak {
-				peak = v
-			}
-		}
-	}
-	if peak <= 0 {
-		peak = 1
-	}
-
-	var top, bot strings.Builder
-
-	for i := 0; i < len(visible); i += 2 {
-
-		vL := visible[i]
-		if vL < 0 {
-			vL = 0
-		}
-		levL := valueToLevel(vL, peak)
-
-		var vR float64
-		var levR int
-		if i+1 < len(visible) {
-			vR = visible[i+1]
-			if vR < 0 {
-				vR = 0
-			}
-			levR = valueToLevel(vR, peak)
-		}
-
-		realBotL, realTopL := levelSplit(levL)
-		realBotR, realTopR := levelSplit(levR)
-
-		colorVal := vL
-		if vR > colorVal {
-			colorVal = vR
-		}
-		color := severityColorful(colorVal, thresh)
-
-		topBits := leftBits[realTopL] | rightBits[realTopR]
-		botBits := leftBits[realBotL] | rightBits[realBotR]
-
-		renderBrailleChar(&bot, botBits, color)
-		renderBrailleChar(&top, topBits, color)
-	}
-
-	return SparkPair{Top: top.String(), Bottom: bot.String()}
+	return renderSparklineCore(data, nil, width, maxOverride, thresh, 0, nil)
 }
 
 // RenderSparklineWithMask renders a 2-row sparkline where offline ticks become
 // rainbow dots. Two samples per character, two stacked characters per column.
 // Edge fades dim the outermost characters for smooth data entry and exit.
 func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) SparkPair {
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, nil)
+}
+
+// RenderSparklineWithMaskBuf is like RenderSparklineWithMask but reuses
+// pre-allocated interpolation buffers to avoid per-frame allocations.
+func RenderSparklineWithMaskBuf(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf)
+}
+
+// renderSparklineCore is the shared implementation for all sparkline rendering.
+// When mask is nil, all samples are treated as online (no rainbow/offline logic).
+// When buf is non-nil, interpolation buffers are reused to avoid allocations.
+func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
 	if width <= 0 {
 		return SparkPair{}
 	}
 
-	// Align data and mask to same length (use shorter)
-	n := len(data)
-	if len(online) < n {
-		n = len(online)
-	}
-	if n == 0 {
-		return RenderSparkline(data, width, maxOverride, thresh)
+	hasMask := mask != nil
+
+	// Align data and mask to same length when mask is present
+	alignedData := data
+	alignedMask := mask
+	if hasMask {
+		n := len(data)
+		if len(mask) < n {
+			n = len(mask)
+		}
+		if n == 0 {
+			hasMask = false
+			alignedData = data
+		} else {
+			alignedData = data[len(data)-n:]
+			alignedMask = mask[len(mask)-n:]
+		}
 	}
 
-	// Trim to aligned length, then pad+interpolate+window via shared helpers
-	alignedData := data[len(data)-n:]
-	alignedMask := online[len(online)-n:]
-	visibleData := prepareSparkData(alignedData, width)
-	visibleMask := prepareSparkMask(alignedMask, width)
+	// Prepare visible data (and mask) via pad+interpolate+window
+	var visibleData []float64
+	var visibleMask []bool
+	if buf != nil {
+		visibleData = prepareSparkDataBuf(alignedData, width, buf)
+		if hasMask {
+			visibleMask = prepareSparkMaskBuf(alignedMask, width, buf)
+		}
+	} else {
+		visibleData = prepareSparkData(alignedData, width)
+		if hasMask {
+			visibleMask = prepareSparkMask(alignedMask, width)
+		}
+	}
 
-	// Find peak for auto-scaling (only online values)
+	// Find peak for auto-scaling
 	peak := maxOverride
 	if peak <= 0 {
 		for i, v := range visibleData {
-			if i < len(visibleMask) && visibleMask[i] && v > peak {
+			// When masked, only count online values for peak detection
+			if hasMask && i < len(visibleMask) && !visibleMask[i] {
+				continue
+			}
+			if v > peak {
 				peak = v
 			}
 		}
@@ -326,7 +467,7 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		// Left sample
 		vL := visibleData[i]
 		onL := true
-		if i < len(visibleMask) {
+		if hasMask && i < len(visibleMask) {
 			onL = visibleMask[i]
 		}
 
@@ -336,13 +477,13 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 		hasRight := i+1 < len(visibleData)
 		if hasRight {
 			vR = visibleData[i+1]
-			if i+1 < len(visibleMask) {
+			if hasMask && i+1 < len(visibleMask) {
 				onR = visibleMask[i+1]
 			}
 		}
 
 		// Both offline → rainbow character (bottom only, top blank)
-		if !onL && (!hasRight || !onR) {
+		if hasMask && !onL && (!hasRight || !onR) {
 			ch, color := rainbowChar(charIdx)
 			bot.WriteString(color)
 			bot.WriteRune(ch)
@@ -351,7 +492,7 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 			continue
 		}
 
-		// Mixed online/offline or both online
+		// Compute levels for online samples
 		colorVal := 0.0
 		var levL, levR int
 
@@ -375,11 +516,13 @@ func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverri
 
 		// Offline side gets a filler pattern (bottom row only)
 		var offlineLBits, offlineRBits rune
-		if !onL && hasRight && onR {
-			offlineLBits = leftBits[1+int(rune(i/2)*5)%3]
-		}
-		if hasRight && !onR {
-			offlineRBits = rightBits[1+int(rune(i/2)*3)%3]
+		if hasMask {
+			if !onL && hasRight && onR {
+				offlineLBits = leftBits[1+int(rune(charIdx)*5)%3]
+			}
+			if hasRight && !onR {
+				offlineRBits = rightBits[1+int(rune(charIdx)*3)%3]
+			}
 		}
 
 		realBotL, realTopL := levelSplit(levL)

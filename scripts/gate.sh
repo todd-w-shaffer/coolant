@@ -58,9 +58,9 @@ fi
 # Compute concurrency cap: floor((cores - 2) / agents), min 1
 compute_cap() {
   local agents
-  agents=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "0")
-  # Validate integer — corrupted counter defaults to 1 agent
-  if ! [[ "$agents" =~ ^[0-9]+$ ]] || [ "$agents" -lt 1 ]; then
+  agents=$(_read_counter)
+  # Zero agents means no contention — default to 1 for the division
+  if [ "$agents" -lt 1 ]; then
     agents=1
   fi
   local cap=$(( (_COOLANT_NCPU - 2) / agents ))
