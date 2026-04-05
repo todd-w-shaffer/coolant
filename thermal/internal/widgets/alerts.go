@@ -29,7 +29,7 @@ func (a *Alerts) Update(state *model.AppState) {
 }
 
 func (a *Alerts) View() string {
-	if a.state == nil || len(a.state.Alerts) == 0 {
+	if a.state == nil || a.state.Alerts.Len() == 0 {
 		return ""
 	}
 
@@ -37,13 +37,10 @@ func (a *Alerts) View() string {
 	if visible <= 0 {
 		visible = 2
 	}
-	if visible > len(a.state.Alerts) {
-		visible = len(a.state.Alerts)
-	}
-	start := len(a.state.Alerts) - visible
+	recent := a.state.Alerts.Last(visible)
 
 	var lines []string
-	for _, alert := range a.state.Alerts[start:] {
+	for _, alert := range recent {
 		ts := ui.DimText(alert.Time.Format("15:04:05"))
 		color := ui.ThreatColor[alert.Level]
 		msg := ui.ColorText(color, alert.Message)

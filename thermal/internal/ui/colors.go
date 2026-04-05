@@ -26,17 +26,35 @@ func DimText(text string) string {
 
 // GaugeDot defines a colored dot indicator for sparkline rows.
 type GaugeDot struct {
-	Char  string
-	ANSI  string // raw ANSI color (for sparkline context where lipgloss isn't used)
-	Color color.Color
+	Char      string
+	ANSI      string      // raw ANSI color (for sparkline context where lipgloss isn't used)
+	Color     color.Color // lipgloss color for styled rendering
+	Formatted string      // pre-computed: ANSI + Char + reset + space (e.g., "\033[37m●\033[0m ")
 }
 
 // GaugeDots are the sparkline row indicators: CPU (white), MEM (cyan), COMP (magenta), GPU (green).
-var GaugeDots = []GaugeDot{
-	{"●", "\033[37m", lipgloss.Color("7")}, // cpu — white
-	{"●", "\033[36m", lipgloss.Color("6")}, // mem — cyan
-	{"●", "\033[35m", lipgloss.Color("5")}, // compressor — magenta
-	{"●", "\033[32m", lipgloss.Color("2")}, // gpu — green (future sparkline color)
+var GaugeDots []GaugeDot
+
+func init() {
+	raw := []struct {
+		char  string
+		ansi  string
+		color color.Color
+	}{
+		{"●", "\033[37m", lipgloss.Color("7")}, // cpu — white
+		{"●", "\033[36m", lipgloss.Color("6")}, // mem — cyan
+		{"●", "\033[35m", lipgloss.Color("5")}, // compressor — magenta
+		{"●", "\033[32m", lipgloss.Color("2")}, // gpu — green (future sparkline color)
+	}
+	GaugeDots = make([]GaugeDot, len(raw))
+	for i, r := range raw {
+		GaugeDots[i] = GaugeDot{
+			Char:      r.char,
+			ANSI:      r.ansi,
+			Color:     r.color,
+			Formatted: r.ansi + r.char + "\033[0m ",
+		}
+	}
 }
 
 // TypeColor maps process type codes to lipgloss colors, shared across all widgets.

@@ -31,6 +31,7 @@ type Gauges struct {
 	renderOnline  []bool         // online/offline state pushed every AnimTick
 	peaks         [3]float64     // decaying peak per gauge — snaps up, fades slowly
 	seeded        bool           // true after first snapshot (skip spring on init)
+	sparkBufs     [3]*SparkBufs  // reusable interpolation buffers, one per gauge
 }
 
 func NewGauges() *Gauges {
@@ -162,11 +163,11 @@ func (g *Gauges) View() string {
 
 	gauges := []gauge{
 		{g.renderHistory[0], g.springs[0].pos, 100,
-			SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}, 0, fmtPct},
+			CPUSparkThresh, 0, fmtPct},
 		{g.renderHistory[1], g.springs[1].pos, 100,
-			SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}, 1, fmtPct},
+			MemSparkThresh, 1, fmtPct},
 		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
-			SparkThresholds{Warn: config.DecompSparkWarn, Crit: config.DecompSparkCrit}, 2, fmtDecomp},
+			DecompSparkThresh, 2, fmtDecomp},
 	}
 
 	var lines []string
@@ -177,8 +178,13 @@ func (g *Gauges) View() string {
 		gd := ui.GaugeDots[ga.dotIdx]
 		dot := gd.ANSI + gd.Char + sparkReset
 
-		// Render 2-row sparkline with online/offline mask
-		pair := RenderSparklineWithMask(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2)
+		// Lazily allocate reusable interpolation buffers
+		if g.sparkBufs[i] == nil {
+			g.sparkBufs[i] = NewSparkBufs(sparkWidth)
+		}
+
+		// Render 2-row sparkline with online/offline mask (buffer-pooled)
+		pair := RenderSparklineWithMaskBuf(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i])
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string

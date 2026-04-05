@@ -76,22 +76,33 @@ func sampleDecompressions(cumulative int64) int64 {
 	return delta
 }
 
-// CollectSystem gathers CPU, memory, and swap stats from macOS system tools.
-// CPU% uses mach host_statistics (same as Activity Monitor) via SampleCPUPercent.
-// Memory and swap use sysctl/vm_stat.
-func CollectSystem(ctx context.Context) (SystemStats, error) {
-	// Cache static values (hw.memsize, hw.ncpu, hw.pagesize) — they never change.
+// CollectCPU gathers CPU-only stats via cgo mach host_statistics — no subprocess.
+// Called from the fast loop (150ms). Static values (memsize, ncpu) are cached once.
+func CollectCPU() SystemStats {
 	staticSysctl.once.Do(initStaticSysctl)
 
 	var stats SystemStats
 	stats.Timestamp = time.Now()
 	stats.MemTotalBytes = staticSysctl.memTotal
 	stats.NCPUs = staticSysctl.ncpu
-
-	// CPU% from mach kernel ticks — no subprocess needed
 	stats.CPUPercent = SampleCPUPercent()
+	return stats
+}
 
-	// Only dynamic values need per-tick subprocess calls: vm.swapusage + vm_stat + ioreg GPU
+// SlowStats holds the subprocess-heavy stats collected at 1s intervals.
+type SlowStats struct {
+	MemUsedBytes   int64
+	SwapUsedBytes  int64
+	SwapTotalBytes int64
+	Decompressions int64
+	GPUPercent     float64
+}
+
+// CollectSlowStats gathers swap, memory (vm_stat), and GPU via subprocesses.
+// Called from the slow loop (1s) to avoid spawning 3 processes every 150ms.
+func CollectSlowStats(ctx context.Context) SlowStats {
+	staticSysctl.once.Do(initStaticSysctl)
+
 	type result struct {
 		key string
 		val string
@@ -111,27 +122,34 @@ func CollectSystem(ctx context.Context) (SystemStats, error) {
 		ch <- result{"gpu", out}
 	}()
 
+	var slow SlowStats
+	// Temporary SystemStats for reuse of existing parse helpers
+	var tmp SystemStats
+
 	for i := 0; i < 3; i++ {
 		r := <-ch
 		switch r.key {
 		case "swap":
-			parseSwap(r.val, &stats)
+			parseSwap(r.val, &tmp)
+			slow.SwapUsedBytes = tmp.SwapUsedBytes
+			slow.SwapTotalBytes = tmp.SwapTotalBytes
 		case "vmstat":
 			if r.val != "" {
 				active := parseVMStatField(r.val, "Pages active")
 				wired := parseVMStatField(r.val, "Pages wired down")
 				compressed := parseVMStatField(r.val, "Pages occupied by compressor")
-				stats.MemUsedBytes = (active + wired + compressed) * staticSysctl.pageSize
+				slow.MemUsedBytes = (active + wired + compressed) * staticSysctl.pageSize
 
 				cumDecomps := parseVMStatField(r.val, "Decompressions")
-				stats.Decompressions = sampleDecompressions(cumDecomps)
+				slow.Decompressions = sampleDecompressions(cumDecomps)
 			}
 		case "gpu":
-			parseGPU(r.val, &stats)
+			parseGPU(r.val, &tmp)
+			slow.GPUPercent = tmp.GPUPercent
 		}
 	}
 
-	return stats, nil
+	return slow
 }
 
 func execCmd(ctx context.Context, name string, args ...string) (string, error) {

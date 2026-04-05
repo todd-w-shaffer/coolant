@@ -2,20 +2,20 @@ package widgets
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// Package-level thresholds — allocated once, reused every View() frame.
+// Pointers to shared threshold vars from sparkline.go — no per-frame allocation.
 var (
-	ratesCPUThresh  = &SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}
-	ratesMemThresh  = &SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}
-	ratesSwapThresh = &SparkThresholds{Warn: config.SwapSparkWarn, Crit: config.SwapSparkCrit}
-	ratesGPUThresh  = &SparkThresholds{Warn: config.GPUSparkWarn, Crit: config.GPUSparkCrit}
+	ratesCPUThresh  = &CPUSparkThresh
+	ratesMemThresh  = &MemSparkThresh
+	ratesSwapThresh = &SwapSparkThresh
+	ratesGPUThresh  = &GPUSparkThresh
 )
 
 // Rates renders spawn/death/net rates + system stats, all fixed-width:
@@ -68,32 +68,53 @@ func (r *Rates) View() string {
 	memTotalGB := snap.System.MemTotalBytes / int64(model.GB)
 	memPct := snap.System.MemPercent()
 	swapGB := float64(snap.System.SwapUsedBytes) / float64(model.GB)
-
 	gpuPct := int(snap.System.GPUPercent)
 
-	cpuDot := ui.GaugeDots[0].ANSI + ui.GaugeDots[0].Char + "\033[0m "
-	memDot := ui.GaugeDots[1].ANSI + ui.GaugeDots[1].Char + "\033[0m "
-	swapDot := ui.GaugeDots[2].ANSI + ui.GaugeDots[2].Char + "\033[0m "
-	gpuDot := ui.GaugeDots[3].ANSI + ui.GaugeDots[3].Char + "\033[0m "
+	var sb strings.Builder
+	sb.Grow(256)
 
-	cpuStr := fmt.Sprintf("%sCPU:%s%03d%%%s", cpuDot, severityColor(snap.System.CPUPercent, ratesCPUThresh), cpuPct, sparkReset)
-	memStr := fmt.Sprintf("%sMEM:%s%04.1f/%02dGB%s", memDot, severityColor(memPct, ratesMemThresh), memUsedGB, memTotalGB, sparkReset)
-	swapStr := fmt.Sprintf("%sSWAP:%s%04.1fGB%s", swapDot, severityColor(swapGB, ratesSwapThresh), swapGB, sparkReset)
-	gpuStr := fmt.Sprintf("%sGPU:%s%03d%%%s", gpuDot, severityColor(snap.System.GPUPercent, ratesGPUThresh), gpuPct, sparkReset)
+	// Gauge stats: " ●CPU:NNN% ●MEM:NN.N/NNGB ●SWAP:NN.NGB ●GPU:NNN%"
+	sb.WriteString(" ")
+	sb.WriteString(ui.GaugeDots[0].Formatted)
+	sb.WriteString("CPU:")
+	sb.WriteString(severityColor(snap.System.CPUPercent, ratesCPUThresh))
+	sb.WriteString(fmt.Sprintf("%03d%%", cpuPct))
+	sb.WriteString(sparkReset)
 
-	sep := ui.DimText("  |  ")
+	sb.WriteString("  ")
+	sb.WriteString(ui.GaugeDots[1].Formatted)
+	sb.WriteString("MEM:")
+	sb.WriteString(severityColor(memPct, ratesMemThresh))
+	sb.WriteString(fmt.Sprintf("%04.1f/%02dGB", memUsedGB, memTotalGB))
+	sb.WriteString(sparkReset)
 
-	stats := fmt.Sprintf(" %s  %s  %s  %s",
-		cpuStr, memStr, swapStr, gpuStr,
-	)
+	sb.WriteString("  ")
+	sb.WriteString(ui.GaugeDots[2].Formatted)
+	sb.WriteString("SWAP:")
+	sb.WriteString(severityColor(swapGB, ratesSwapThresh))
+	sb.WriteString(fmt.Sprintf("%04.1fGB", swapGB))
+	sb.WriteString(sparkReset)
 
-	rates := fmt.Sprintf("%s  %s  %s",
-		ui.ColorText(lipgloss.Color("208"), spawnStr),
-		ui.ColorText(ui.CyanColor, deathStr),
-		ui.ColorText(lipgloss.Color("7"), netStr),
-	)
+	sb.WriteString("  ")
+	sb.WriteString(ui.GaugeDots[3].Formatted)
+	sb.WriteString("GPU:")
+	sb.WriteString(severityColor(snap.System.GPUPercent, ratesGPUThresh))
+	sb.WriteString(fmt.Sprintf("%03d%%", gpuPct))
+	sb.WriteString(sparkReset)
 
-	help := ui.DimText("[h] help")
+	// Separator
+	sb.WriteString(ui.DimText("  |  "))
 
-	return stats + sep + rates + "  " + help
+	// Rates: warm/cool/net
+	sb.WriteString(ui.ColorText(lipgloss.Color("208"), spawnStr))
+	sb.WriteString("  ")
+	sb.WriteString(ui.ColorText(ui.CyanColor, deathStr))
+	sb.WriteString("  ")
+	sb.WriteString(ui.ColorText(lipgloss.Color("7"), netStr))
+
+	// Help hint
+	sb.WriteString("  ")
+	sb.WriteString(ui.DimText("[h] help"))
+
+	return sb.String()
 }

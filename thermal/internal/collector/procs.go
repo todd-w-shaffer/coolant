@@ -86,8 +86,39 @@ type rawProc struct {
 	comm string
 }
 
-// CollectProcs finds all Claude root sessions and builds their descendant trees.
-func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
+// ProcCollector reuses pre-allocated maps across ticks to reduce GC pressure.
+// Not safe for concurrent use — the fast loop calls Collect sequentially.
+type ProcCollector struct {
+	children map[int][]int   // ppid → [pid, ...]
+	byPID    map[int]rawProc // pid → rawProc
+	allProcs []rawProc       // reused backing slice
+	roots    []int           // reused backing slice
+	queue    []int           // BFS queue, reused
+	visited  map[int]bool    // BFS visited set, reused
+}
+
+// clearMaps resets maps and slices for reuse without reallocating.
+func (pc *ProcCollector) clearMaps() {
+	for k := range pc.children {
+		delete(pc.children, k)
+	}
+	for k := range pc.byPID {
+		delete(pc.byPID, k)
+	}
+	pc.allProcs = pc.allProcs[:0]
+	pc.roots = pc.roots[:0]
+	if pc.visited == nil {
+		pc.visited = make(map[int]bool, 256)
+	} else {
+		for k := range pc.visited {
+			delete(pc.visited, k)
+		}
+	}
+}
+
+// Collect finds all Claude root sessions and builds their descendant trees.
+// Reuses pre-allocated maps to avoid allocating every 150ms tick.
+func (pc *ProcCollector) Collect(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, config.ProcTimeout)
 	defer cancel()
 
@@ -97,10 +128,9 @@ func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
 		return nil, nil, err
 	}
 
-	// Parse into raw process list and build parent→children map
-	var allProcs []rawProc
-	children := make(map[int][]int) // ppid → [pid, ...]
+	pc.clearMaps()
 
+	// Parse into raw process list and build parent→children map
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -110,53 +140,51 @@ func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
 		if p.pid == 0 {
 			continue
 		}
-		allProcs = append(allProcs, p)
-		children[p.ppid] = append(children[p.ppid], p.pid)
+		pc.allProcs = append(pc.allProcs, p)
+		pc.children[p.ppid] = append(pc.children[p.ppid], p.pid)
 	}
 
 	// Index by PID for fast lookup
-	byPID := make(map[int]rawProc, len(allProcs))
-	for _, p := range allProcs {
-		byPID[p.pid] = p
+	for _, p := range pc.allProcs {
+		pc.byPID[p.pid] = p
 	}
 
 	// Find Claude root processes
-	var roots []int
-	for _, p := range allProcs {
+	for _, p := range pc.allProcs {
 		name := strings.ToLower(basename(p.comm))
 		if strings.Contains(name, "claude") {
-			roots = append(roots, p.pid)
+			pc.roots = append(pc.roots, p.pid)
 		}
 	}
 
 	// For each root, walk the descendant tree
 	var sessions []SessionTree
 	var flatProcs []ProcessInfo
-	visited := make(map[int]bool)
 
-	for _, rootPID := range roots {
-		root, ok := byPID[rootPID]
+	for _, rootPID := range pc.roots {
+		root, ok := pc.byPID[rootPID]
 		if !ok {
 			continue
 		}
 
 		// BFS to find all descendants
-		queue := []int{rootPID}
-		visited[rootPID] = true
+		pc.queue = pc.queue[:0]
+		pc.queue = append(pc.queue, rootPID)
+		pc.visited[rootPID] = true
 		var descendants []ProcessInfo
 
-		for len(queue) > 0 {
-			pid := queue[0]
-			queue = queue[1:]
+		for len(pc.queue) > 0 {
+			pid := pc.queue[0]
+			pc.queue = pc.queue[1:]
 
-			for _, childPID := range children[pid] {
-				if visited[childPID] {
+			for _, childPID := range pc.children[pid] {
+				if pc.visited[childPID] {
 					continue
 				}
-				visited[childPID] = true
-				queue = append(queue, childPID)
+				pc.visited[childPID] = true
+				pc.queue = append(pc.queue, childPID)
 
-				if child, ok := byPID[childPID]; ok {
+				if child, ok := pc.byPID[childPID]; ok {
 					pi := ProcessInfo{
 						PID:      child.pid,
 						PPID:     child.ppid,
@@ -179,6 +207,15 @@ func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
 	}
 
 	return sessions, flatProcs, nil
+}
+
+// CollectProcs is a convenience wrapper for callers that don't need map reuse.
+func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
+	pc := &ProcCollector{
+		children: make(map[int][]int, 512),
+		byPID:    make(map[int]rawProc, 512),
+	}
+	return pc.Collect(ctx)
 }
 
 // parseProcessLine parses one line of "ps -Ao pid=,ppid=,pcpu=,rss=,comm=" output.

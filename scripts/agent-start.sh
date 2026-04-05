@@ -7,19 +7,19 @@ source "${SCRIPT_DIR}/common.sh"
 
 # Read hook stdin for agent metadata
 input=$(cat)
-session_id=$(_json_escape "$(echo "$input" | _json_field session_id)")
-agent_id=$(_json_escape "$(echo "$input" | _json_field agent_id)")
-agent_type=$(_json_escape "$(echo "$input" | _json_field agent_type)")
+_extract_agent_fields "$input"
 
 # Atomic increment via mkdir mutex (see common.sh)
-coolant_lock
-current=$(cat "$COOLANT_COUNTER" 2>/dev/null || echo "0")
+if ! coolant_lock; then
+  coolant_log "agent-start: lock failed, proceeding unprotected"
+fi
+current=$(_read_counter)
 next=$((current + 1))
 echo "$next" > "$COOLANT_COUNTER"
 coolant_unlock
 
 coolant_log "agent started ($next active)"
-coolant_event '"event":"agent.start","session_id":"'"$session_id"'","agent_id":"'"$agent_id"'","agent_type":"'"$agent_type"'","agent_count":'"$next"
+coolant_event '"event":"agent.start","session_id":"'"$_agent_session_id"'","agent_id":"'"$_agent_id"'","agent_type":"'"$_agent_type"'","agent_count":'"$next"
 
 # Auto-engage at threshold
 if [ "$next" -ge "$COOLANT_THRESHOLD" ] && [ ! -f "$COOLANT_LOCKFILE" ]; then

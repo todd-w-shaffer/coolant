@@ -32,13 +32,44 @@ _json_escape() {
 }
 
 # Extract a top-level string field from single-line JSON on stdin.
+# Uses bash regex instead of forking sed.
 _json_field() {
-  sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  local _jf_input _jf_key="$1"
+  _jf_input=$(cat)
+  if [[ "$_jf_input" =~ \"$_jf_key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
 }
 
 # Extract "command" from inside tool_input object on stdin.
+# Uses bash regex instead of forking sed.
 _nested_command() {
-  sed -n 's/.*"tool_input"[[:space:]]*:[[:space:]]*{[^}]*"command"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
+  local _nc_input
+  _nc_input=$(cat)
+  if [[ "$_nc_input" =~ \"tool_input\"[[:space:]]*:[[:space:]]*\{[^\}]*\"command\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+# Read the agent counter file, validate as positive integer, default to 0.
+_read_counter() {
+  local val
+  val=$(cat "$COOLANT_COUNTER" 2>/dev/null) || val=""
+  if [[ "$val" =~ ^[0-9]+$ ]]; then
+    printf '%s' "$val"
+  else
+    printf '%s' "0"
+  fi
+}
+
+# Extract session_id, agent_id, agent_type from hook JSON.
+# Reads from the variable name passed as $1 (or "_eaf_stdin" from stdin).
+# Sets: _agent_session_id, _agent_id, _agent_type
+_extract_agent_fields() {
+  local _eaf_json="$1"
+  _agent_session_id=$(_json_escape "$(echo "$_eaf_json" | _json_field session_id)")
+  _agent_id=$(_json_escape "$(echo "$_eaf_json" | _json_field agent_id)")
+  _agent_type=$(_json_escape "$(echo "$_eaf_json" | _json_field agent_type)")
 }
 
 # Atomic counter operations using mkdir as a POSIX mutex.
@@ -54,7 +85,7 @@ coolant_lock() {
       rmdir "$_COOLANT_MUTEX" 2>/dev/null
       return 1
     fi
-    sleep 0.01
+    read -t 0.01 < /dev/null 2>/dev/null || true
   done
 }
 

@@ -105,19 +105,14 @@ func (h *Horizontal) View() string {
 	// Lines 3-8: 2-row sparklines (6 lines) or help overlay
 	if h.helpMode && h.height >= 5 {
 		lines = append(lines, h.helpView()...)
-	} else if h.height >= 8 {
-		for _, line := range strings.Split(h.gauges.View(), "\n") {
-			lines = append(lines, line)
-		}
-	} else if h.height >= 6 {
-		gaugeLines := strings.Split(h.gauges.View(), "\n")
-		if len(gaugeLines) >= 4 {
-			lines = append(lines, gaugeLines[0], gaugeLines[1])
-			lines = append(lines, gaugeLines[2], gaugeLines[3])
-		}
 	} else if h.height >= 4 {
 		gaugeLines := strings.Split(h.gauges.View(), "\n")
-		if len(gaugeLines) >= 2 {
+		if h.height >= 8 {
+			lines = append(lines, gaugeLines...)
+		} else if h.height >= 6 && len(gaugeLines) >= 4 {
+			lines = append(lines, gaugeLines[0], gaugeLines[1])
+			lines = append(lines, gaugeLines[2], gaugeLines[3])
+		} else if len(gaugeLines) >= 2 {
 			lines = append(lines, gaugeLines[0], gaugeLines[1])
 		}
 	}
