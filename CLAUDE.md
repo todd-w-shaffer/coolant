@@ -28,7 +28,6 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 .claude-plugin/plugin.json   # plugin manifest
 hooks/hooks.json             # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
 scripts/common.sh            # shared config, paths, log + JSONL event functions
-scripts/monitor.sh           # live TUI dashboard (run in separate terminal)
 scripts/toggle.sh            # manual parallel mode on/off/status
 scripts/preflight.sh         # SessionStart hook: warn about missing worktree exclusions
 scripts/gate.sh              # PreToolUse hook: cap test runners, suppress build tools
@@ -38,7 +37,18 @@ thermal/                     # Go thermal dashboard binary (see below)
 skills/parallel/SKILL.md     # /coolant:parallel skill definition
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
 tests/*.bats                 # bats test files, one per script
+assets/                      # VHS tape files, demo GIFs, marketing screenshots
 ```
+
+### Archive folders (gitignored — do not read, reference, or treat as current)
+
+Historical artifacts kept for nostalgia. May be stale or broken.
+
+- `docs/archive/` — superseded specs and explorations
+- `scripts/archive/` — old bash TUI (monitor.sh, sparkline.sh, agents.sh), replaced by Go thermal
+- `tests/archive/` — tests for archived scripts
+- `thermal/cmd/archive/` — one-off Go experiments (breathe, comets, sparkdebug)
+- `bin/archive/` — compiled binaries from archived experiments
 
 ### thermal/ (Go thermal dashboard)
 
@@ -47,7 +57,6 @@ Thermal dashboard rendered via bubbletea. Runs as a bottom tmux strip or standal
 ```
 thermal/
 ├── cmd/thermal/main.go      # bubbletea app, flag parsing
-├── cmd/breathe/main.go      # braille dot fade test (color-as-opacity proof of concept)
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
@@ -127,4 +136,3 @@ bats tests/ -f "auto-engage"       # name pattern
 - `tests/test_helper.bash` provides `setup`/`teardown` — isolates all state to a temp directory so tests never touch real `/tmp/coolant-*` files.
 - Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir. Scripts respect these via the defaults in `common.sh`.
 - New scripts must have tests before merge. New behavior on existing scripts must have a failing test first (red-green-refactor).
-- Smoke test for TUI monitor: `echo "q" | bash scripts/monitor.sh --refresh 1`
