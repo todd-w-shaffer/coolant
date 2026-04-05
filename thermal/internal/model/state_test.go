@@ -184,15 +184,7 @@ func TestAlertOnHeadroomWarning(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	heavyProcs := []collector.ProcessInfo{
-		{PID: 1, TypeCode: "V"},
-		{PID: 2, TypeCode: "V"},
-		{PID: 3, TypeCode: "V"},
-		{PID: 4, TypeCode: "N"},
-		{PID: 5, TypeCode: "N"},
-	}
-	s.Update(testSnap(t, withTime(now), withProcs(heavyProcs),
-		withMem(14*int64(GB), testMemTotal)))
+	s.Update(overcommittedSnap(t, now))
 
 	found := false
 	for i := 0; i < s.Alerts.Len(); i++ {
@@ -211,22 +203,10 @@ func TestAlertDeduplication(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	heavyProcs := []collector.ProcessInfo{
-		{PID: 1, TypeCode: "V"},
-		{PID: 2, TypeCode: "V"},
-		{PID: 3, TypeCode: "V"},
-		{PID: 4, TypeCode: "N"},
-		{PID: 5, TypeCode: "N"},
-	}
-	overcommitted := func(ts time.Time) collector.Snapshot {
-		return testSnap(t, withTime(ts), withProcs(heavyProcs),
-			withMem(14*int64(GB), testMemTotal))
-	}
-
-	s.Update(overcommitted(now))
+	s.Update(overcommittedSnap(t, now))
 	alertsAfterFirst := s.Alerts.Len()
 
-	s.Update(overcommitted(now.Add(time.Second)))
+	s.Update(overcommittedSnap(t, now.Add(time.Second)))
 	alertsAfterSecond := s.Alerts.Len()
 
 	headroomCount := 0
