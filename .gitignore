@@ -1,2 +1,8 @@
 # Built binaries
 bin/
+
+# Archived artifacts — historical, not in use
+docs/archive/
+scripts/archive/
+tests/archive/
+thermal/cmd/archive/
