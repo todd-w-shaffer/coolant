@@ -75,6 +75,7 @@ func (h *Horizontal) Update(state *model.AppState) {
 
 // AnimTick advances spring animations between snapshots.
 func (h *Horizontal) AnimTick() {
+	h.headline.AnimTick()
 	h.gauges.AnimTick()
 }
 
