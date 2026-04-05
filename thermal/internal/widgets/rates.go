@@ -184,11 +184,17 @@ func formatFixedCount(n int) string {
 // ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]
 func renderSessionRow(sessions []collector.SessionTree, desktopRunning, chromeHostRunning bool) string {
 	groups := sessionGroupCounts(sessions)
-	if len(groups) == 0 {
-		return ui.DimText("no sessions")
+
+	// Static indicators first: Desktop, Chrome
+	var parts []string
+	if desktopRunning {
+		parts = append(parts, ui.DimText("⊞ Desktop"))
+	}
+	if chromeHostRunning {
+		parts = append(parts, ui.DimText("⊙ Chrome"))
 	}
 
-	var parts []string
+	// Dynamic: Code sessions on the right
 	idle := 0
 	for _, g := range groups {
 		total := g.total()
@@ -198,7 +204,7 @@ func renderSessionRow(sessions []collector.SessionTree, desktopRunning, chromeHo
 		}
 
 		var sb strings.Builder
-		sb.WriteString(ui.ColorText(ui.CyanColor, ui.SessionGlyph))
+		sb.WriteString(ui.ColorText(ui.CyanColor, "⌬"))
 		sb.WriteString(" ")
 
 		for i, cat := range collector.Categories {
@@ -219,13 +225,6 @@ func renderSessionRow(sessions []collector.SessionTree, desktopRunning, chromeHo
 
 	if idle > 0 {
 		parts = append(parts, ui.DimText(fmt.Sprintf("+%d", idle)))
-	}
-
-	if desktopRunning {
-		parts = append(parts, ui.DimText("⊞ Desktop"))
-	}
-	if chromeHostRunning {
-		parts = append(parts, ui.DimText("⊙ Chrome"))
 	}
 
 	return strings.Join(parts, "  ")
