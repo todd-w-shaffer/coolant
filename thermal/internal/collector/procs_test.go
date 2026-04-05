@@ -285,6 +285,84 @@ func TestBuildTreesNoClaude(t *testing.T) {
 	}
 }
 
+func TestBuildTreesExcludesDesktopApp(t *testing.T) {
+	// Claude Desktop Electron processes should NOT be treated as CLI sessions
+	ps := []byte(
+		"  7923  1   0.5  104496 /Applications/Claude.app/Contents/MacOS/Claude\n" +
+			"  7982  7923   0.1  51392 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper\n" +
+			"  8003  7923   0.2  40544 /Applications/Claude.app/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)\n" +
+			"  92690  4473   1.0  273616 claude\n" + // real CLI session
+			"  200  92690   5.0  8192 node\n", // CLI child
+	)
+	pc := newProcCollector()
+	sessions, flatProcs, err := pc.buildTrees(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should only find 1 session (CLI), not 4 (Desktop + helpers + CLI)
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1 (CLI only, not Desktop)", len(sessions))
+	}
+	if sessions[0].RootPID != 92690 {
+		t.Errorf("RootPID = %d, want 92690 (CLI)", sessions[0].RootPID)
+	}
+	if len(flatProcs) != 1 {
+		t.Errorf("flatProcs = %d, want 1 (node)", len(flatProcs))
+	}
+}
+
+func TestBuildTreesDesktopDetected(t *testing.T) {
+	ps := []byte(
+		"  7923  1   0.5  104496 /Applications/Claude.app/Contents/MacOS/Claude\n" +
+			"  92690  4473   1.0  273616 claude\n",
+	)
+	pc := newProcCollector()
+	sessions, _, err := pc.buildTrees(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Only CLI session
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+
+	// Desktop should be detected via DesktopRunning
+	if !pc.DesktopRunning {
+		t.Error("DesktopRunning = false, want true")
+	}
+}
+
+func TestBuildTreesNoDesktop(t *testing.T) {
+	ps := []byte(
+		"  92690  4473   1.0  273616 claude\n" +
+			"  200  92690   5.0  8192 node\n",
+	)
+	pc := newProcCollector()
+	pc.buildTrees(ps)
+
+	if pc.DesktopRunning {
+		t.Error("DesktopRunning = true, want false (no Desktop app)")
+	}
+}
+
+func TestBuildTreesClaudeCodeStillMatches(t *testing.T) {
+	// "claude-code" should still match as a CLI session
+	ps := []byte(
+		"  30  1   0.0  1024 claude-code\n" +
+			"  40  30   2.0  256 bash\n",
+	)
+	pc := newProcCollector()
+	sessions, _, err := pc.buildTrees(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+}
+
 func TestBuildTreesEmptyInput(t *testing.T) {
 	pc := newProcCollector()
 	sessions, flatProcs, err := pc.buildTrees([]byte(""))
