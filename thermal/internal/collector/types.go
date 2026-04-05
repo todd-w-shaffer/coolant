@@ -82,24 +82,6 @@ func (s Snapshot) TotalProcs() int {
 	return len(s.AllProcs)
 }
 
-// TypeCounts returns aggregate type counts across all sessions.
-func (s Snapshot) TypeCounts() map[string]int {
-	counts := make(map[string]int)
-	for _, p := range s.AllProcs {
-		counts[p.TypeCode]++
-	}
-	return counts
-}
-
-// PIDs returns the set of all descendant PIDs.
-func (s Snapshot) PIDs() map[int]bool {
-	pids := make(map[int]bool, len(s.AllProcs))
-	for _, p := range s.AllProcs {
-		pids[p.PID] = true
-	}
-	return pids
-}
-
 // Category represents what Claude is doing, not what executable is running.
 type Category struct {
 	Name  string // "test", "build", "run", "search", "shell"
@@ -130,17 +112,4 @@ var TypeToCategory = map[string]string{
 	"S": "shell",  // bash, sh, zsh, sed, awk
 	"C": "shell",  // cat, git, curl, wget
 	"X": "shell",  // unknown
-}
-
-// CategoryCounts returns category → count from type counts.
-func CategoryCounts(typeCounts map[string]int) map[string]int {
-	cats := make(map[string]int)
-	for typeCode, count := range typeCounts {
-		cat, ok := TypeToCategory[typeCode]
-		if !ok {
-			cat = "shell"
-		}
-		cats[cat] += count
-	}
-	return cats
 }

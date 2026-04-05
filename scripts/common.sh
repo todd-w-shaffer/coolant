@@ -63,13 +63,25 @@ _read_counter() {
 }
 
 # Extract session_id, agent_id, agent_type from hook JSON.
-# Reads from the variable name passed as $1 (or "_eaf_stdin" from stdin).
+# Inline regex + parameter expansion — zero forks.
 # Sets: _agent_session_id, _agent_id, _agent_type
 _extract_agent_fields() {
-  local _eaf_json="$1"
-  _agent_session_id=$(_json_escape "$(echo "$_eaf_json" | _json_field session_id)")
-  _agent_id=$(_json_escape "$(echo "$_eaf_json" | _json_field agent_id)")
-  _agent_type=$(_json_escape "$(echo "$_eaf_json" | _json_field agent_type)")
+  local _eaf_json="$1" _val
+
+  _val=""
+  [[ "$_eaf_json" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
+  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
+  _agent_session_id="$_val"
+
+  _val=""
+  [[ "$_eaf_json" =~ \"agent_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
+  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
+  _agent_id="$_val"
+
+  _val=""
+  [[ "$_eaf_json" =~ \"agent_type\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
+  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
+  _agent_type="$_val"
 }
 
 # Atomic counter operations using mkdir as a POSIX mutex.

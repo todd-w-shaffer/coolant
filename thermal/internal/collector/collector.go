@@ -20,8 +20,8 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 
 	var (
 		mu     sync.Mutex
-		online bool      // last-known network state
-		slow   SlowStats // last-known subprocess-heavy stats
+		online bool        // last-known network state
+		slow   SystemStats // last-known subprocess-heavy stats
 	)
 
 	// Slow loop: network + swap/vm_stat/GPU at 1s
@@ -37,7 +37,7 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 
 				// Run network check and slow stats concurrently
 				var netResult bool
-				var statsResult SlowStats
+				var statsResult SystemStats
 				var wg sync.WaitGroup
 
 				wg.Add(2)

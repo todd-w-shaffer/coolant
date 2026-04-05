@@ -31,23 +31,17 @@ var (
 // yellowRedColorLUT[i]   = gradYellow.BlendHcl(gradRed, i/100).Clamped()
 // Corresponding ANSI escape strings cached alongside.
 var (
-	greenYellowColorLUT [101]colorful.Color
-	yellowRedColorLUT   [101]colorful.Color
-	greenYellowANSILUT  [101]string
-	yellowRedANSILUT    [101]string
-	gradGreenANSI       string
-	gradRedANSI         string
+	greenYellowANSILUT [101]string
+	yellowRedANSILUT   [101]string
+	gradGreenANSI      string
+	gradRedANSI        string
 )
 
 func init() {
 	for i := 0; i <= 100; i++ {
 		ratio := float64(i) / 100.0
-		gy := gradGreen.BlendHcl(gradYellow, ratio).Clamped()
-		yr := gradYellow.BlendHcl(gradRed, ratio).Clamped()
-		greenYellowColorLUT[i] = gy
-		yellowRedColorLUT[i] = yr
-		greenYellowANSILUT[i] = truecolorFg(gy)
-		yellowRedANSILUT[i] = truecolorFg(yr)
+		greenYellowANSILUT[i] = truecolorFg(gradGreen.BlendHcl(gradYellow, ratio).Clamped())
+		yellowRedANSILUT[i] = truecolorFg(gradYellow.BlendHcl(gradRed, ratio).Clamped())
 	}
 	gradGreenANSI = truecolorFg(gradGreen)
 	gradRedANSI = truecolorFg(gradRed)
@@ -58,11 +52,11 @@ func mustHex(hex string) colorful.Color {
 	return c
 }
 
-// renderBrailleChar writes one braille character at full brightness,
+// renderBrailleChar writes one braille character with a pre-computed ANSI color,
 // or a space if the pattern is empty.
-func renderBrailleChar(sb *strings.Builder, bits rune, color colorful.Color) {
+func renderBrailleChar(sb *strings.Builder, bits rune, ansiColor string) {
 	if bits != 0 {
-		sb.WriteString(truecolorFg(color))
+		sb.WriteString(ansiColor)
 		sb.WriteRune(0x2800 | bits)
 		sb.WriteString(sparkReset)
 	} else {
@@ -85,28 +79,6 @@ func blendIndex(ratio float64) int {
 		return 100
 	}
 	return int(ratio * 100)
-}
-
-// severityColorful returns the perceptual gradient color for a value.
-// Green→yellow below warn, yellow→red between warn and crit, red above crit.
-// Uses pre-computed LUTs for HCL blends — quantized to 1% steps.
-func severityColorful(v float64, thresh *SparkThresholds) colorful.Color {
-	if thresh == nil {
-		return gradGreen
-	}
-	switch {
-	case v >= thresh.Crit:
-		return gradRed
-	case v >= thresh.Warn:
-		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
-		return yellowRedColorLUT[blendIndex(ratio)]
-	default:
-		if thresh.Warn <= 0 {
-			return gradGreen
-		}
-		ratio := v / thresh.Warn
-		return greenYellowColorLUT[blendIndex(ratio)]
-	}
 }
 
 // severityColor returns a truecolor ANSI escape for a value relative to
@@ -284,7 +256,7 @@ var (
 )
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
-// Allocate once via NewSparkBufs and pass to RenderSparklineBuf / RenderSparklineWithMaskBuf.
+// Allocate once via NewSparkBufs and pass to RenderSparklineWithMaskBuf.
 type SparkBufs struct {
 	interpData []float64 // reused by prepareSparkDataBuf
 	interpMask []bool    // reused by prepareSparkMaskBuf
@@ -320,6 +292,9 @@ func prepareSparkDataBuf(data []float64, width int, buf *SparkBufs) []float64 {
 		}
 		copy(padded[gap:], data)
 		src = padded
+	} else if len(data) > minRaw {
+		// Truncate to the most recent minRaw elements before interpolating
+		src = data[len(data)-minRaw:]
 	}
 
 	// Interpolate into buf.interpData
@@ -356,6 +331,8 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 		}
 		copy(padded[gap:], mask)
 		src = padded
+	} else if len(mask) > minRaw {
+		src = mask[len(mask)-minRaw:]
 	}
 
 	// Interpolate into buf.interpMask
@@ -378,24 +355,15 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 	return interp
 }
 
-// RenderSparkline renders a 2-row double-resolution braille sparkline. Each
-// character packs two samples (left + right columns), and two vertically
-// stacked characters give 8 levels per column (~12.5% granularity at max 100).
-// HEIGHT is proportional, COLOR encodes severity.
-// Edge fades dim the outermost characters for smooth data entry and exit.
+// RenderSparkline renders a 2-row braille sparkline without masking or buffers.
+// Retained for callers outside the hot path (e.g. debug tools).
 func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) SparkPair {
 	return renderSparklineCore(data, nil, width, maxOverride, thresh, 0, nil)
 }
 
-// RenderSparklineWithMask renders a 2-row sparkline where offline ticks become
-// rainbow dots. Two samples per character, two stacked characters per column.
-// Edge fades dim the outermost characters for smooth data entry and exit.
-func RenderSparklineWithMask(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int) SparkPair {
-	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, nil)
-}
-
-// RenderSparklineWithMaskBuf is like RenderSparklineWithMask but reuses
-// pre-allocated interpolation buffers to avoid per-frame allocations.
+// RenderSparklineWithMaskBuf renders a 2-row sparkline where offline ticks become
+// rainbow dots, reusing pre-allocated interpolation buffers to avoid per-frame
+// allocations. Two samples per character, two stacked characters per column.
 func RenderSparklineWithMaskBuf(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
 	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf)
 }
@@ -528,13 +496,13 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		realBotL, realTopL := levelSplit(levL)
 		realBotR, realTopR := levelSplit(levR)
 
-		color := severityColorful(colorVal, thresh)
+		ansi := severityColor(colorVal, thresh)
 
 		topBits := leftBits[realTopL] | rightBits[realTopR]
 		botBits := leftBits[realBotL] | rightBits[realBotR] | offlineLBits | offlineRBits
 
-		renderBrailleChar(&bot, botBits, color)
-		renderBrailleChar(&top, topBits, color)
+		renderBrailleChar(&bot, botBits, ansi)
+		renderBrailleChar(&top, topBits, ansi)
 	}
 
 	return SparkPair{Top: top.String(), Bottom: bot.String()}
