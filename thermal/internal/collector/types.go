@@ -69,12 +69,13 @@ func (s SessionTree) TotalCPU() float64 {
 
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {
-	System      SystemStats
-	Sessions    []SessionTree // one per Claude root process
-	AllProcs    []ProcessInfo // flat list of all Claude descendants
-	Online      bool          // can we reach the Claude API?
-	Timestamp   time.Time
-	CollectErrs []string // non-nil when collection partially failed
+	System         SystemStats
+	Sessions       []SessionTree // one per Claude root process
+	AllProcs       []ProcessInfo // flat list of all Claude descendants
+	Online         bool          // can we reach the Claude API?
+	DesktopRunning bool          // Claude Desktop (Electron) detected
+	Timestamp      time.Time
+	CollectErrs    []string // non-nil when collection partially failed
 }
 
 // TotalProcs returns the total number of Claude descendant processes.

@@ -89,12 +89,13 @@ type rawProc struct {
 // ProcCollector reuses pre-allocated maps across ticks to reduce GC pressure.
 // Not safe for concurrent use — the fast loop calls Collect sequentially.
 type ProcCollector struct {
-	children map[int][]int   // ppid → [pid, ...]
-	byPID    map[int]rawProc // pid → rawProc
-	allProcs []rawProc       // reused backing slice
-	roots    []int           // reused backing slice
-	queue    []int           // BFS queue, reused
-	visited  map[int]bool    // BFS visited set, reused
+	children       map[int][]int   // ppid → [pid, ...]
+	byPID          map[int]rawProc // pid → rawProc
+	allProcs       []rawProc       // reused backing slice
+	roots          []int           // reused backing slice
+	queue          []int           // BFS queue, reused
+	visited        map[int]bool    // BFS visited set, reused
+	DesktopRunning bool            // true when Claude Desktop (Electron) is detected
 }
 
 // clearMaps resets maps and slices for reuse without reallocating.
@@ -148,10 +149,15 @@ func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessIn
 		pc.byPID[p.pid] = p
 	}
 
-	// Find Claude root processes
+	// Find Claude CLI root processes, excluding Desktop app (Electron)
+	pc.DesktopRunning = false
 	for _, p := range pc.allProcs {
+		if strings.Contains(p.comm, "Claude.app") {
+			pc.DesktopRunning = true
+			continue
+		}
 		name := strings.ToLower(basename(p.comm))
-		if strings.Contains(name, "claude") {
+		if strings.HasPrefix(name, "claude") {
 			pc.roots = append(pc.roots, p.pid)
 		}
 	}
