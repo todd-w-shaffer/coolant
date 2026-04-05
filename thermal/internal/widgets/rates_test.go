@@ -77,10 +77,18 @@ func TestSessionGroupCountsUnknownTypeDefaultsToShell(t *testing.T) {
 
 // ── renderSessionRow ─────────────────────────────────────────
 
-func TestRenderSessionRowEmpty(t *testing.T) {
+func TestRenderSessionRowEmptyNoCode(t *testing.T) {
 	got := renderSessionRow(nil, false, false)
-	if !strings.Contains(got, "no sessions") {
-		t.Errorf("renderSessionRow(nil, false, false) = %q, want 'no sessions'", got)
+	// No sessions, no Desktop, no Chrome — should be empty
+	if got != "" {
+		t.Errorf("renderSessionRow(nil, false, false) = %q, want empty", got)
+	}
+}
+
+func TestRenderSessionRowEmptyWithDesktop(t *testing.T) {
+	got := renderSessionRow(nil, true, true)
+	if !strings.Contains(got, "Desktop") || !strings.Contains(got, "Chrome") {
+		t.Errorf("expected Desktop and Chrome even with no sessions, got %q", got)
 	}
 }
 
