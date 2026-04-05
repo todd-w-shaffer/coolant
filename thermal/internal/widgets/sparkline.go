@@ -262,19 +262,31 @@ type SparkBufs struct {
 	interpMask []bool    // reused by prepareSparkMaskBuf
 	padData    []float64 // reused for padding in prepareSparkDataBuf
 	padMask    []bool    // reused for padding in prepareSparkMaskBuf
+	lastWidth  int       // cached width to skip redundant grow checks
 }
 
 // NewSparkBufs creates reusable buffers sized for the given sparkline width.
 func NewSparkBufs(maxWidth int) *SparkBufs {
-	// prepareSparkData pads to width+1, then interpolates to 2*(width+1)-1.
-	// The visible window is width*2. Allocate for the interpolated size.
-	interpCap := 2*(maxWidth+1) - 1
-	padCap := maxWidth + 1
-	return &SparkBufs{
-		interpData: make([]float64, 0, interpCap),
-		interpMask: make([]bool, 0, interpCap),
-		padData:    make([]float64, 0, padCap),
-		padMask:    make([]bool, 0, padCap),
+	b := &SparkBufs{}
+	b.grow(maxWidth)
+	return b
+}
+
+// grow reallocates buffers if width exceeds current capacity.
+func (b *SparkBufs) grow(width int) {
+	if width <= b.lastWidth {
+		return
+	}
+	b.lastWidth = width
+	interpCap := 2*(width+1) - 1
+	padCap := width + 1
+	if cap(b.interpData) < interpCap {
+		b.interpData = make([]float64, 0, interpCap)
+		b.interpMask = make([]bool, 0, interpCap)
+	}
+	if cap(b.padData) < padCap {
+		b.padData = make([]float64, 0, padCap)
+		b.padMask = make([]bool, 0, padCap)
 	}
 }
 
@@ -282,6 +294,7 @@ func NewSparkBufs(maxWidth int) *SparkBufs {
 // buf.padData to avoid allocations. The returned slice is only valid until the
 // next call.
 func prepareSparkDataBuf(data []float64, width int, buf *SparkBufs) []float64 {
+	buf.grow(width)
 	minRaw := width + 1
 	src := data
 	if len(data) < minRaw {
@@ -321,6 +334,7 @@ func prepareSparkDataBuf(data []float64, width int, buf *SparkBufs) []float64 {
 // buf.padMask to avoid allocations. The returned slice is only valid until the
 // next call.
 func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
+	buf.grow(width)
 	minRaw := width + 1
 	src := mask
 	if len(mask) < minRaw {

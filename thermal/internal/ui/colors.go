@@ -80,6 +80,37 @@ var CategoryColor = map[string]color.Color{
 	"shell":  lipgloss.Color("8"),   // gray — ephemeral
 }
 
+// SessionGlyph is the diamond icon for session/agent markers.
+const SessionGlyph = "◆"
+
+// CategoryGlyph maps activity categories to distinct single-cell unicode glyphs.
+// Visual weight mirrors resource weight: heavy categories get solid shapes.
+var CategoryGlyph = map[string]string{
+	"test":   "▲", // triangle — danger, the machine killer
+	"build":  "■", // square — solid, heavy
+	"run":    "●", // circle — standard process
+	"search": "◇", // hollow diamond — lightweight
+	"shell":  "·", // middle dot — ephemeral
+}
+
+// CategoryGlyphDefault is used when category is unknown.
+const CategoryGlyphDefault = "·"
+
+// CategoryGlyphFormatted holds pre-rendered ANSI-colored glyph strings,
+// eliminating per-frame lipgloss.NewStyle() allocations in hot render paths.
+var CategoryGlyphFormatted map[string]string
+
+func init() {
+	CategoryGlyphFormatted = make(map[string]string, len(CategoryGlyph))
+	for name, glyph := range CategoryGlyph {
+		clr := CategoryColor[name]
+		if clr == nil {
+			clr = DimColor
+		}
+		CategoryGlyphFormatted[name] = ColorText(clr, glyph)
+	}
+}
+
 // Threshold defaults.
 const (
 	SpawnWarn = 10

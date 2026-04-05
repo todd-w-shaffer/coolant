@@ -118,9 +118,10 @@ func (h *Horizontal) View() string {
 		}
 	}
 
-	// Stats line: spawn/death/net + CPU/MEM/SWAP
+	// Stats lines: spawn/death/net + CPU/MEM/SWAP, then sessions + processes
 	if h.height >= 9 {
-		lines = append(lines, h.rates.View())
+		rateLines := strings.Split(h.rates.View(), "\n")
+		lines = append(lines, rateLines...)
 	}
 
 	// Pad to fill height
@@ -137,10 +138,13 @@ func (h *Horizontal) View() string {
 func (h *Horizontal) helpView() []string {
 	dot := func(i int) string { return ui.GaugeDots[i].ANSI + ui.GaugeDots[i].Char + "\033[0m" }
 	desc := lipgloss.Color("250")
+	cg := ui.CategoryGlyphFormatted
 	return []string{
 		fmt.Sprintf(" %s  %s  %s", dot(0), ui.ColorText(desc, "CPU"), ui.ColorText(desc, "how hard your cores are working — when this maxes out, everything slows down")),
 		fmt.Sprintf(" %s  %s  %s", dot(1), ui.ColorText(desc, "MEM"), ui.ColorText(desc, "memory actually in use by apps — when this fills up, swap starts and things get ugly")),
 		fmt.Sprintf(" %s  %s  %s", dot(2), ui.ColorText(desc, "COMP"), ui.ColorText(desc, "memory compressor struggling — this spikes 10-20s before your machine locks up")),
+		fmt.Sprintf(" %s  %s  %s %s %s %s %s", ui.ColorText(ui.CyanColor, ui.SessionGlyph), ui.ColorText(desc, "session"),
+			cg["test"], cg["build"], cg["run"], cg["search"], cg["shell"]),
 	}
 }
 

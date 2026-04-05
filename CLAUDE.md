@@ -12,17 +12,23 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 Subject line in imperative mood. Body includes a `Recipe:` block (a distilled prompt that would reproduce the change in one shot) and a `Changes:` block (per-file narrative). No Co-Authored-By lines.
 
-### TDD (bash scripts)
+### TDD (all functional code)
 
-Strict red-green-refactor. One feature per cycle.
+Strict red-green-refactor for **any** code that can break — bash, Go, or otherwise. No exceptions. One feature per cycle.
 
-1. **Red** — Write a failing `.bats` test in `tests/`. Do NOT write any implementation yet. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`).
+1. **Red** — Write a failing test first. Do NOT write any implementation yet.
 2. **Green** — Implement the minimum code to pass. Nothing more.
 3. **Refactor** — Improve code quality while keeping tests green. Do not skip this step.
 
-### Testing (Go)
+Bug fixes follow the same cycle: write a test that reproduces the bug (red), fix it (green), clean up (refactor).
 
-Table-driven tests in `*_test.go` files next to the code they test. New pure functions must have tests. Use `t.Helper()` on test helpers, direct assertions with `t.Errorf`/`t.Fatalf` — no test framework. Run: `cd thermal && go test ./...`
+#### Bash tests
+
+`.bats` files in `tests/`. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`). Uses [bats-core](https://github.com/bats-core/bats-core).
+
+#### Go tests
+
+Table-driven tests in `*_test.go` files next to the code they test. Use `t.Helper()` on test helpers, direct assertions with `t.Errorf`/`t.Fatalf` — no test framework. Run: `cd thermal && go test ./...`
 
 ## Project structure
 

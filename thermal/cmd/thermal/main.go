@@ -44,7 +44,7 @@ func newModel(demoMode bool) model {
 
 func (m model) Init() tea.Cmd {
 	if m.demoMode {
-		go demo.RunV2(m.snapChan, 250*time.Millisecond, m.done)
+		go demo.RunV2(m.snapChan, m.eventChan, 250*time.Millisecond, m.done)
 	} else {
 		go collector.Run(m.snapChan, config.FastInterval, m.done)
 	}
