@@ -89,13 +89,14 @@ type rawProc struct {
 // ProcCollector reuses pre-allocated maps across ticks to reduce GC pressure.
 // Not safe for concurrent use — the fast loop calls Collect sequentially.
 type ProcCollector struct {
-	children       map[int][]int   // ppid → [pid, ...]
-	byPID          map[int]rawProc // pid → rawProc
-	allProcs       []rawProc       // reused backing slice
-	roots          []int           // reused backing slice
-	queue          []int           // BFS queue, reused
-	visited        map[int]bool    // BFS visited set, reused
-	DesktopRunning bool            // true when Claude Desktop (Electron) is detected
+	children          map[int][]int   // ppid → [pid, ...]
+	byPID             map[int]rawProc // pid → rawProc
+	allProcs          []rawProc       // reused backing slice
+	roots             []int           // reused backing slice
+	queue             []int           // BFS queue, reused
+	visited           map[int]bool    // BFS visited set, reused
+	DesktopRunning    bool            // true when Claude Desktop main process is detected
+	ChromeHostRunning bool            // true when chrome-native-host (browser extension bridge) is detected
 }
 
 // clearMaps resets maps and slices for reuse without reallocating.
@@ -149,11 +150,16 @@ func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessIn
 		pc.byPID[p.pid] = p
 	}
 
-	// Find Claude CLI root processes, excluding Desktop app (Electron)
+	// Find Claude CLI root processes, excluding Desktop app and browser bridge
 	pc.DesktopRunning = false
+	pc.ChromeHostRunning = false
 	for _, p := range pc.allProcs {
 		if strings.Contains(p.comm, "Claude.app") {
-			pc.DesktopRunning = true
+			if strings.Contains(p.comm, "chrome-native-host") {
+				pc.ChromeHostRunning = true
+			} else {
+				pc.DesktopRunning = true
+			}
 			continue
 		}
 		name := strings.ToLower(basename(p.comm))

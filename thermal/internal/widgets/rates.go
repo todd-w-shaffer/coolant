@@ -117,9 +117,9 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.DimText("[h] help"))
 
-	// Hierarchical session row: ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]  ☐ Desktop
+	// Hierarchical session row: ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]  ⊞ Desktop  ⊙ Chrome
 	sb.WriteString("\n ")
-	sb.WriteString(renderSessionRow(snap.Sessions, snap.DesktopRunning))
+	sb.WriteString(renderSessionRow(snap.Sessions, snap.DesktopRunning, snap.ChromeHostRunning))
 
 	return sb.String()
 }
@@ -182,7 +182,7 @@ func formatFixedCount(n int) string {
 
 // renderSessionRow produces the hierarchical session display:
 // ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]
-func renderSessionRow(sessions []collector.SessionTree, desktopRunning bool) string {
+func renderSessionRow(sessions []collector.SessionTree, desktopRunning, chromeHostRunning bool) string {
 	groups := sessionGroupCounts(sessions)
 	if len(groups) == 0 {
 		return ui.DimText("no sessions")
@@ -222,7 +222,10 @@ func renderSessionRow(sessions []collector.SessionTree, desktopRunning bool) str
 	}
 
 	if desktopRunning {
-		parts = append(parts, ui.DimText("☐ Desktop"))
+		parts = append(parts, ui.DimText("⊞ Desktop"))
+	}
+	if chromeHostRunning {
+		parts = append(parts, ui.DimText("⊙ Chrome"))
 	}
 
 	return strings.Join(parts, "  ")

@@ -78,9 +78,9 @@ func TestSessionGroupCountsUnknownTypeDefaultsToShell(t *testing.T) {
 // ── renderSessionRow ─────────────────────────────────────────
 
 func TestRenderSessionRowEmpty(t *testing.T) {
-	got := renderSessionRow(nil, false)
+	got := renderSessionRow(nil, false, false)
 	if !strings.Contains(got, "no sessions") {
-		t.Errorf("renderSessionRow(nil, false) = %q, want 'no sessions'", got)
+		t.Errorf("renderSessionRow(nil, false, false) = %q, want 'no sessions'", got)
 	}
 }
 
@@ -95,7 +95,7 @@ func TestRenderSessionRowContainsGlyphs(t *testing.T) {
 			},
 		},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	testGlyph := ui.CategoryGlyph["test"]
 	runGlyph := ui.CategoryGlyph["run"]
 	shellGlyph := ui.CategoryGlyph["shell"]
@@ -117,7 +117,7 @@ func TestRenderSessionRowContainsCount(t *testing.T) {
 			Descendants: []collector.ProcessInfo{{TypeCode: "V"}, {TypeCode: "V"}},
 		},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	if !strings.Contains(got, "[02]") {
 		t.Errorf("expected [02] count in %q", got)
 	}
@@ -133,7 +133,7 @@ func TestRenderSessionRowGlyphOrder(t *testing.T) {
 			},
 		},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	testGlyph := ui.CategoryGlyph["test"]
 	shellGlyph := ui.CategoryGlyph["shell"]
 	testIdx := strings.Index(got, testGlyph)
@@ -153,7 +153,7 @@ func TestRenderSessionRowIdleSessionsHidden(t *testing.T) {
 		{RootPID: 1002, Descendants: nil},
 		{RootPID: 1003, Descendants: nil},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	// Should show "+3" idle count, not three dim diamonds
 	if !strings.Contains(got, "+3") {
 		t.Errorf("expected +3 idle trailer, got %q", got)
@@ -166,7 +166,7 @@ func TestRenderSessionRowMixedActiveAndIdle(t *testing.T) {
 		{RootPID: 1002, Descendants: nil},
 		{RootPID: 1003, Descendants: nil},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	// Active session should show glyphs and count
 	if !strings.Contains(got, "[01]") {
 		t.Errorf("expected [01] for active session, got %q", got)
@@ -182,7 +182,7 @@ func TestRenderSessionRowAllActiveNoTrailer(t *testing.T) {
 		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
 		{RootPID: 1002, Descendants: []collector.ProcessInfo{{TypeCode: "N"}}},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	// No idle trailer when all sessions are active
 	if strings.Contains(got, "+") {
 		t.Errorf("should have no idle trailer when all active, got %q", got)
@@ -194,7 +194,7 @@ func TestRenderSessionRowMultipleSessions(t *testing.T) {
 		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
 		{RootPID: 1002, Descendants: []collector.ProcessInfo{{TypeCode: "N"}, {TypeCode: "N"}}},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, false)
 	if !strings.Contains(got, "[01]") {
 		t.Errorf("expected [01] for first session in %q", got)
 	}
@@ -207,19 +207,45 @@ func TestRenderSessionRowDesktopIndicator(t *testing.T) {
 	sessions := []collector.SessionTree{
 		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
 	}
-	got := renderSessionRow(sessions, true)
+	got := renderSessionRow(sessions, true, false)
 	if !strings.Contains(got, "Desktop") {
 		t.Errorf("expected Desktop indicator, got %q", got)
 	}
+	if strings.Contains(got, "Chrome") {
+		t.Errorf("should not show Chrome, got %q", got)
+	}
 }
 
-func TestRenderSessionRowNoDesktop(t *testing.T) {
+func TestRenderSessionRowChromeIndicator(t *testing.T) {
 	sessions := []collector.SessionTree{
 		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
 	}
-	got := renderSessionRow(sessions, false)
+	got := renderSessionRow(sessions, false, true)
+	if !strings.Contains(got, "Chrome") {
+		t.Errorf("expected Chrome indicator, got %q", got)
+	}
 	if strings.Contains(got, "Desktop") {
-		t.Errorf("should not show Desktop indicator, got %q", got)
+		t.Errorf("should not show Desktop, got %q", got)
+	}
+}
+
+func TestRenderSessionRowBothIndicators(t *testing.T) {
+	sessions := []collector.SessionTree{
+		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
+	}
+	got := renderSessionRow(sessions, true, true)
+	if !strings.Contains(got, "Desktop") || !strings.Contains(got, "Chrome") {
+		t.Errorf("expected both indicators, got %q", got)
+	}
+}
+
+func TestRenderSessionRowNoIndicators(t *testing.T) {
+	sessions := []collector.SessionTree{
+		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
+	}
+	got := renderSessionRow(sessions, false, false)
+	if strings.Contains(got, "Desktop") || strings.Contains(got, "Chrome") {
+		t.Errorf("should not show any indicators, got %q", got)
 	}
 }
 

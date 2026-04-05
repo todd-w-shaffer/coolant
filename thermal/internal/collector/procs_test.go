@@ -315,6 +315,7 @@ func TestBuildTreesExcludesDesktopApp(t *testing.T) {
 func TestBuildTreesDesktopDetected(t *testing.T) {
 	ps := []byte(
 		"  7923  1   0.5  104496 /Applications/Claude.app/Contents/MacOS/Claude\n" +
+			"  7982  7923   0.1  51392 /Applications/Claude.app/Contents/Frameworks/Claude Helper.app/Contents/MacOS/Claude Helper\n" +
 			"  92690  4473   1.0  273616 claude\n",
 	)
 	pc := newProcCollector()
@@ -323,14 +324,47 @@ func TestBuildTreesDesktopDetected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Only CLI session
 	if len(sessions) != 1 {
 		t.Fatalf("sessions = %d, want 1", len(sessions))
 	}
-
-	// Desktop should be detected via DesktopRunning
 	if !pc.DesktopRunning {
 		t.Error("DesktopRunning = false, want true")
+	}
+	if pc.ChromeHostRunning {
+		t.Error("ChromeHostRunning = true, want false (no native host)")
+	}
+}
+
+func TestBuildTreesChromeHostDetected(t *testing.T) {
+	ps := []byte(
+		"  77254  77137   0.0  4096 /Applications/Claude.app/Contents/Helpers/chrome-native-host\n" +
+			"  92690  4473   1.0  273616 claude\n",
+	)
+	pc := newProcCollector()
+	pc.buildTrees(ps)
+
+	if pc.DesktopRunning {
+		t.Error("DesktopRunning = true, want false (only chrome host, not Desktop)")
+	}
+	if !pc.ChromeHostRunning {
+		t.Error("ChromeHostRunning = false, want true")
+	}
+}
+
+func TestBuildTreesBothDesktopAndChrome(t *testing.T) {
+	ps := []byte(
+		"  7923  1   0.5  104496 /Applications/Claude.app/Contents/MacOS/Claude\n" +
+			"  77254  77137   0.0  4096 /Applications/Claude.app/Contents/Helpers/chrome-native-host\n" +
+			"  92690  4473   1.0  273616 claude\n",
+	)
+	pc := newProcCollector()
+	pc.buildTrees(ps)
+
+	if !pc.DesktopRunning {
+		t.Error("DesktopRunning = false, want true")
+	}
+	if !pc.ChromeHostRunning {
+		t.Error("ChromeHostRunning = false, want true")
 	}
 }
 
@@ -343,7 +377,10 @@ func TestBuildTreesNoDesktop(t *testing.T) {
 	pc.buildTrees(ps)
 
 	if pc.DesktopRunning {
-		t.Error("DesktopRunning = true, want false (no Desktop app)")
+		t.Error("DesktopRunning = true, want false")
+	}
+	if pc.ChromeHostRunning {
+		t.Error("ChromeHostRunning = true, want false")
 	}
 }
 
