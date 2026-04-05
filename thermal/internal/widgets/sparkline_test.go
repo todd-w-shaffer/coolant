@@ -356,6 +356,43 @@ func TestPrepareSparkMaskBufPadsFalseAsOnline(t *testing.T) {
 	}
 }
 
+// ── SparkBufs resize on width growth ──────────────────────────
+
+func TestSparkBufsWidthGrowthNoPanic(t *testing.T) {
+	// Simulate terminal resize: buffer allocated at small width, then used at larger width.
+	// This is the exact scenario that caused the [:471] with capacity 401 panic.
+	smallWidth := 80
+	buf := NewSparkBufs(smallWidth)
+
+	data := make([]float64, 300)
+	for i := range data {
+		data[i] = float64(i)
+	}
+
+	largeWidth := 235 // typical wide terminal after font size decrease
+	// This must not panic
+	got := prepareSparkDataBuf(data, largeWidth, buf)
+	if len(got) != largeWidth*2 {
+		t.Errorf("len = %d, want %d", len(got), largeWidth*2)
+	}
+}
+
+func TestSparkBufsMaskWidthGrowthNoPanic(t *testing.T) {
+	smallWidth := 80
+	buf := NewSparkBufs(smallWidth)
+
+	mask := make([]bool, 300)
+	for i := range mask {
+		mask[i] = true
+	}
+
+	largeWidth := 235
+	got := prepareSparkMaskBuf(mask, largeWidth, buf)
+	if len(got) != largeWidth*2 {
+		t.Errorf("len = %d, want %d", len(got), largeWidth*2)
+	}
+}
+
 // ── RenderSparkline ───────────────────────────────────────────
 
 func TestRenderSparklineNonEmpty(t *testing.T) {

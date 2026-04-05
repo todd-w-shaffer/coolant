@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"fmt"
 	"math/rand"
 	"time"
 
@@ -12,7 +13,7 @@ var demoTypes = []string{"N", "G", "V", "S", "R", "F", "C", "P", "T", "X"}
 
 // RunV2 generates synthetic Snapshots for the new layout modes.
 // It simulates a realistic scenario: calm → ramp → hot → cool down, cycling.
-func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan struct{}) {
+func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, interval time.Duration, done <-chan struct{}) {
 	defer close(ch)
 
 	ticker := time.NewTicker(interval)
@@ -21,6 +22,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 	var procs []collector.ProcessInfo
 	nextPID := 10000
 	allSessionPIDs := []int{1001, 1002, 1003} // pool of session PIDs
+	prevActiveCount := 0
 	tick := 0
 
 	// Base system stats (realistic M-series Mac)
@@ -50,6 +52,31 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 			activeCount = 2
 		}
 		sessionPIDs := allSessionPIDs[:activeCount]
+
+		// Emit synthetic agent events when session count changes
+		if eventCh != nil && activeCount != prevActiveCount {
+			now := time.Now()
+			if activeCount > prevActiveCount {
+				for i := prevActiveCount; i < activeCount; i++ {
+					eventCh <- collector.GateEvent{
+						Timestamp: now,
+						Event:     collector.EventAgentStart,
+						AgentID:   fmt.Sprintf("demo-agent-%d", allSessionPIDs[i]),
+						AgentType: "general-purpose",
+					}
+				}
+			} else {
+				for i := activeCount; i < prevActiveCount; i++ {
+					eventCh <- collector.GateEvent{
+						Timestamp: now,
+						Event:     collector.EventAgentStop,
+						AgentID:   fmt.Sprintf("demo-agent-%d", allSessionPIDs[i]),
+						AgentType: "general-purpose",
+					}
+				}
+			}
+			prevActiveCount = activeCount
+		}
 
 		// Age existing procs
 		for i := range procs {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
@@ -18,8 +19,8 @@ var (
 	ratesGPUThresh  = &GPUSparkThresh
 )
 
-// Rates renders spawn/death/net rates + system stats, all fixed-width:
-// spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11.2/16.0GB  SWAP:00.0GB  GPU:005%
+// Rates renders spawn/death/net rates + system stats, all fixed-width,
+// plus a hierarchical session row showing per-session category-typed process glyphs.
 type Rates struct {
 	width int
 	state *model.AppState
@@ -116,5 +117,104 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.DimText("[h] help"))
 
+	// Hierarchical session row: ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]
+	sb.WriteString("\n ")
+	sb.WriteString(renderSessionRow(snap.Sessions))
+
 	return sb.String()
+}
+
+// sessionGroup holds categorized process counts for one session.
+// Uses a fixed array indexed by category order instead of a map to avoid
+// per-frame map allocations in the hot render path.
+type sessionGroup struct {
+	cats [numCategories]int
+}
+
+// numCategories is len(collector.Categories), known at compile time.
+const numCategories = 5
+
+// catIndex maps category name → fixed array index. Built once at init.
+var catIndex map[string]int
+
+func init() {
+	catIndex = make(map[string]int, numCategories)
+	for i, cat := range collector.Categories {
+		catIndex[cat.Name] = i
+	}
+}
+
+func (g *sessionGroup) total() int {
+	t := 0
+	for _, c := range g.cats {
+		t += c
+	}
+	return t
+}
+
+// sessionGroupCounts categorizes each session's descendants by activity category.
+func sessionGroupCounts(sessions []collector.SessionTree) []sessionGroup {
+	if len(sessions) == 0 {
+		return nil
+	}
+	groups := make([]sessionGroup, len(sessions))
+	for i, sess := range sessions {
+		for _, p := range sess.Descendants {
+			cat, ok := collector.TypeToCategory[p.TypeCode]
+			if !ok {
+				cat = "shell"
+			}
+			if idx, ok := catIndex[cat]; ok {
+				groups[i].cats[idx]++
+			}
+		}
+	}
+	return groups
+}
+
+// formatFixedCount returns a 2-digit fixed-width count, or "++" for >= 100.
+func formatFixedCount(n int) string {
+	if n >= 100 {
+		return "++"
+	}
+	return fmt.Sprintf("%02d", n)
+}
+
+// renderSessionRow produces the hierarchical session display:
+// ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]
+func renderSessionRow(sessions []collector.SessionTree) string {
+	groups := sessionGroupCounts(sessions)
+	if len(groups) == 0 {
+		return ui.DimText("no sessions")
+	}
+
+	var parts []string
+	for _, g := range groups {
+		total := g.total()
+		if total == 0 {
+			parts = append(parts, ui.DimText(ui.SessionGlyph))
+			continue
+		}
+
+		var sb strings.Builder
+		sb.WriteString(ui.ColorText(ui.CyanColor, ui.SessionGlyph))
+		sb.WriteString(" ")
+
+		for i, cat := range collector.Categories {
+			n := g.cats[i]
+			if n == 0 {
+				continue
+			}
+			formatted := ui.CategoryGlyphFormatted[cat.Name]
+			if formatted == "" {
+				formatted = ui.DimText(ui.CategoryGlyphDefault)
+			}
+			sb.WriteString(strings.Repeat(formatted, n))
+		}
+
+		sb.WriteString(ui.DimText(" [" + formatFixedCount(total) + "]"))
+		parts = append(parts, sb.String())
+	}
+
+	return strings.Join(parts, "  ")
 }

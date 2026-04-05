@@ -46,6 +46,9 @@ type AppState struct {
 	// Pre-allocated scratch maps (cleared and reused each tick)
 	scratchPIDs map[int]bool
 
+	// Agent tracking (from JSONL events, not process discovery)
+	activeAgents map[string]bool
+
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
 
@@ -66,6 +69,7 @@ func NewAppState() *AppState {
 		TypeCounts:     make(map[string]int),
 		CategoryCounts: make(map[string]int),
 		scratchPIDs:    make(map[int]bool),
+		activeAgents:   make(map[string]bool),
 	}
 }
 
@@ -259,12 +263,14 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 			Level:   ThreatCool,
 		})
 		s.PluginActive = true
+		s.activeAgents[ev.AgentID] = true
 	case collector.EventAgentStop:
 		s.addAlert(AlertEntry{
 			Time:    ev.Timestamp,
 			Message: "agent " + ev.AgentType + " stopped (" + shortID(ev.AgentID) + ")",
 			Level:   ThreatCool,
 		})
+		delete(s.activeAgents, ev.AgentID)
 	case collector.EventParallelEngaged:
 		s.addAlert(AlertEntry{
 			Time:    ev.Timestamp,
@@ -293,6 +299,11 @@ func (s *AppState) StableQuip() string {
 		return IdleMessage(s.IdleCycle)
 	}
 	return s.stableQuip
+}
+
+// AgentCount returns the number of live subagents (tracked via JSONL events).
+func (s *AppState) AgentCount() int {
+	return len(s.activeAgents)
 }
 
 // IsIdle returns true when no Claude sessions are detected.
