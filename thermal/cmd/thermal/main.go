@@ -98,6 +98,10 @@ func currentUser() string {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case parentExitMsg:
+		close(m.done)
+		return m, tea.Quit
+
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -155,6 +159,8 @@ func main() {
 	m := newModel(*demoMode)
 
 	p := tea.NewProgram(m)
+
+	go watchParent(p)
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

@@ -12,13 +12,17 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 Subject line in imperative mood. Body includes a `Recipe:` block (a distilled prompt that would reproduce the change in one shot) and a `Changes:` block (per-file narrative). No Co-Authored-By lines.
 
-### TDD (bash scripts only)
+### TDD (bash scripts)
 
 Strict red-green-refactor. One feature per cycle.
 
 1. **Red** — Write a failing `.bats` test in `tests/`. Do NOT write any implementation yet. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`).
 2. **Green** — Implement the minimum code to pass. Nothing more.
 3. **Refactor** — Improve code quality while keeping tests green. Do not skip this step.
+
+### Testing (Go)
+
+Table-driven tests in `*_test.go` files next to the code they test. New pure functions must have tests. Use `t.Helper()` on test helpers, direct assertions with `t.Errorf`/`t.Fatalf` — no test framework. Run: `cd thermal && go test ./...`
 
 ## Project structure
 

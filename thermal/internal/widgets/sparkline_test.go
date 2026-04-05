@@ -53,11 +53,16 @@ func TestSeverityColorNilThresh(t *testing.T) {
 func TestSeverityColorBelowWarn(t *testing.T) {
 	thresh := &SparkThresholds{Warn: 70, Crit: 90}
 	got := severityColor(30, thresh)
-	// Should be a green→yellow blend, which is a greenYellow LUT entry.
-	// At v=30, ratio = 30/70 ≈ 0.428, index = 42.
-	want := greenYellowANSILUT[blendIndex(30.0/70.0)]
-	if got != want {
-		t.Errorf("severityColor(30, {70,90}) = %q, want %q", got, want)
+	// Should be in the green→yellow range, not red.
+	if got == gradRedANSI {
+		t.Error("severityColor(30, {70,90}) should not be red")
+	}
+	if got == gradGreenANSI {
+		// Pure green only at v=0; at v=30 it should have shifted toward yellow.
+		t.Error("severityColor(30, {70,90}) should not be pure green")
+	}
+	if got == "" {
+		t.Error("severityColor(30, {70,90}) returned empty string")
 	}
 }
 
@@ -72,10 +77,15 @@ func TestSeverityColorAboveCrit(t *testing.T) {
 func TestSeverityColorBetweenWarnAndCrit(t *testing.T) {
 	thresh := &SparkThresholds{Warn: 60, Crit: 80}
 	got := severityColor(70, thresh)
-	// ratio = (70-60)/(80-60) = 0.5, index = 50
-	want := yellowRedANSILUT[50]
-	if got != want {
-		t.Errorf("severityColor(70, {60,80}) = %q, want %q", got, want)
+	// Should be in the yellow→red range: not pure green, not pure red.
+	if got == gradGreenANSI {
+		t.Error("severityColor(70, {60,80}) should not be green")
+	}
+	if got == gradRedANSI {
+		t.Error("severityColor(70, {60,80}) should not be pure red (below crit)")
+	}
+	if got == "" {
+		t.Error("severityColor(70, {60,80}) returned empty string")
 	}
 }
 

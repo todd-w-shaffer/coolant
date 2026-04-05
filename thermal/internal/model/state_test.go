@@ -9,47 +9,10 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
-// baseSnap returns a minimal valid snapshot at the given time.
-func baseSnap(t *testing.T, ts time.Time) collector.Snapshot {
-	t.Helper()
-	return collector.Snapshot{
-		System: collector.SystemStats{
-			MemTotalBytes: 16 * int64(GB),
-		},
-		Online:    true,
-		Timestamp: ts,
-	}
-}
-
-// snapWithProcs returns a snapshot with the given processes.
-func snapWithProcs(t *testing.T, ts time.Time, procs []collector.ProcessInfo) collector.Snapshot {
-	t.Helper()
-	snap := baseSnap(t, ts)
-	snap.AllProcs = procs
-	snap.Sessions = []collector.SessionTree{{RootPID: 1, Descendants: procs}}
-	return snap
-}
-
-// overcommittedSnap returns a snapshot with heavy procs and high memory usage.
-func overcommittedSnap(t *testing.T, ts time.Time) collector.Snapshot {
-	t.Helper()
-	procs := []collector.ProcessInfo{
-		{PID: 1, TypeCode: "V"},
-		{PID: 2, TypeCode: "V"},
-		{PID: 3, TypeCode: "V"},
-		{PID: 4, TypeCode: "N"},
-		{PID: 5, TypeCode: "N"},
-	}
-	snap := snapWithProcs(t, ts, procs)
-	snap.System.MemUsedBytes = 14 * int64(GB)
-	snap.System.MemTotalBytes = 16 * int64(GB)
-	return snap
-}
-
 func TestFirstUpdateSeedsState(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
-	snap := baseSnap(t, now)
+	snap := testSnap(t, withTime(now))
 	s.Update(snap)
 
 	if s.Current == nil {
@@ -70,27 +33,24 @@ func TestSpawnDeathDeltasAcrossTwoUpdates(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	// First tick: 3 processes
 	procs1 := []collector.ProcessInfo{
 		{PID: 100, TypeCode: "N"},
 		{PID: 101, TypeCode: "S"},
 		{PID: 102, TypeCode: "V"},
 	}
-	s.Update(snapWithProcs(t, now, procs1))
+	s.Update(testSnap(t, withTime(now), withProcs(procs1)))
 
-	// After first tick, no spawn/death yet (no previous PIDs to compare)
 	if s.LastSpawns() != 0 {
 		t.Errorf("LastSpawns after first tick = %d, want 0", s.LastSpawns())
 	}
 
-	// Second tick: PID 101 died, PID 103 and 104 spawned
 	procs2 := []collector.ProcessInfo{
 		{PID: 100, TypeCode: "N"},
 		{PID: 102, TypeCode: "V"},
 		{PID: 103, TypeCode: "S"},
 		{PID: 104, TypeCode: "G"},
 	}
-	s.Update(snapWithProcs(t, now.Add(time.Second), procs2))
+	s.Update(testSnap(t, withTime(now.Add(time.Second)), withProcs(procs2)))
 
 	if s.LastSpawns() != 2 {
 		t.Errorf("LastSpawns = %d, want 2 (PIDs 103, 104)", s.LastSpawns())
@@ -102,14 +62,13 @@ func TestSpawnDeathDeltasAcrossTwoUpdates(t *testing.T) {
 
 func TestTypeCountsPopulated(t *testing.T) {
 	s := NewAppState()
-	now := time.Now()
 	procs := []collector.ProcessInfo{
 		{PID: 1, TypeCode: "V"},
 		{PID: 2, TypeCode: "V"},
 		{PID: 3, TypeCode: "N"},
 		{PID: 4, TypeCode: "S"},
 	}
-	s.Update(snapWithProcs(t, now, procs))
+	s.Update(testSnap(t, withProcs(procs)))
 
 	if s.TypeCounts["V"] != 2 {
 		t.Errorf("TypeCounts[V] = %d, want 2", s.TypeCounts["V"])
@@ -124,7 +83,6 @@ func TestTypeCountsPopulated(t *testing.T) {
 
 func TestCategoryCountsPopulated(t *testing.T) {
 	s := NewAppState()
-	now := time.Now()
 	procs := []collector.ProcessInfo{
 		{PID: 1, TypeCode: "V"}, // test
 		{PID: 2, TypeCode: "T"}, // build
@@ -133,7 +91,7 @@ func TestCategoryCountsPopulated(t *testing.T) {
 		{PID: 5, TypeCode: "G"}, // search
 		{PID: 6, TypeCode: "S"}, // shell
 	}
-	s.Update(snapWithProcs(t, now, procs))
+	s.Update(testSnap(t, withProcs(procs)))
 
 	expected := map[string]int{
 		"test":   1,
@@ -153,16 +111,14 @@ func TestTypeCountsClearedBetweenUpdates(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	// First tick has V procs
 	procs1 := []collector.ProcessInfo{{PID: 1, TypeCode: "V"}}
-	s.Update(snapWithProcs(t, now, procs1))
+	s.Update(testSnap(t, withTime(now), withProcs(procs1)))
 	if s.TypeCounts["V"] != 1 {
 		t.Fatalf("TypeCounts[V] = %d, want 1", s.TypeCounts["V"])
 	}
 
-	// Second tick has no V procs, only S
 	procs2 := []collector.ProcessInfo{{PID: 2, TypeCode: "S"}}
-	s.Update(snapWithProcs(t, now.Add(time.Second), procs2))
+	s.Update(testSnap(t, withTime(now.Add(time.Second)), withProcs(procs2)))
 
 	if got := s.TypeCounts["V"]; got != 0 {
 		t.Errorf("TypeCounts[V] after second tick = %d, want 0 (cleared)", got)
@@ -173,18 +129,12 @@ func TestOnlineOfflineTransitions(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	// Start online
-	snap1 := baseSnap(t, now)
-	snap1.Online = true
-	s.Update(snap1)
+	s.Update(testSnap(t, withTime(now), withOnline(true)))
 	if !s.Online {
 		t.Error("should be online after online snapshot")
 	}
 
-	// Go offline
-	snap2 := baseSnap(t, now.Add(time.Second))
-	snap2.Online = false
-	s.Update(snap2)
+	s.Update(testSnap(t, withTime(now.Add(time.Second)), withOnline(false)))
 	if s.Online {
 		t.Error("should be offline after offline snapshot")
 	}
@@ -192,18 +142,12 @@ func TestOnlineOfflineTransitions(t *testing.T) {
 		t.Error("OfflineSince should be set when going offline")
 	}
 
-	// Stay offline — duration should increase
-	snap3 := baseSnap(t, now.Add(5*time.Second))
-	snap3.Online = false
-	s.Update(snap3)
+	s.Update(testSnap(t, withTime(now.Add(5*time.Second)), withOnline(false)))
 	if s.OfflineDuration < 4*time.Second {
 		t.Errorf("OfflineDuration = %v, want >= 4s", s.OfflineDuration)
 	}
 
-	// Come back online
-	snap4 := baseSnap(t, now.Add(10*time.Second))
-	snap4.Online = true
-	s.Update(snap4)
+	s.Update(testSnap(t, withTime(now.Add(10*time.Second)), withOnline(true)))
 	if !s.Online {
 		t.Error("should be online after reconnect")
 	}
@@ -216,15 +160,13 @@ func TestAlertOnSpawnBurst(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	// First tick: no procs
-	s.Update(baseSnap(t, now))
+	s.Update(testSnap(t, withTime(now)))
 
-	// Second tick: burst of procs exceeding threshold
 	procs := make([]collector.ProcessInfo, config.SpawnBurstThreshold)
 	for i := range procs {
 		procs[i] = collector.ProcessInfo{PID: 200 + i, TypeCode: "N"}
 	}
-	s.Update(snapWithProcs(t, now.Add(time.Second), procs))
+	s.Update(testSnap(t, withTime(now.Add(time.Second)), withProcs(procs)))
 
 	found := false
 	for i := 0; i < s.Alerts.Len(); i++ {
@@ -242,7 +184,15 @@ func TestAlertOnHeadroomWarning(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	s.Update(overcommittedSnap(t, now))
+	heavyProcs := []collector.ProcessInfo{
+		{PID: 1, TypeCode: "V"},
+		{PID: 2, TypeCode: "V"},
+		{PID: 3, TypeCode: "V"},
+		{PID: 4, TypeCode: "N"},
+		{PID: 5, TypeCode: "N"},
+	}
+	s.Update(testSnap(t, withTime(now), withProcs(heavyProcs),
+		withMem(14*int64(GB), testMemTotal)))
 
 	found := false
 	for i := 0; i < s.Alerts.Len(); i++ {
@@ -261,13 +211,24 @@ func TestAlertDeduplication(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	s.Update(overcommittedSnap(t, now))
+	heavyProcs := []collector.ProcessInfo{
+		{PID: 1, TypeCode: "V"},
+		{PID: 2, TypeCode: "V"},
+		{PID: 3, TypeCode: "V"},
+		{PID: 4, TypeCode: "N"},
+		{PID: 5, TypeCode: "N"},
+	}
+	overcommitted := func(ts time.Time) collector.Snapshot {
+		return testSnap(t, withTime(ts), withProcs(heavyProcs),
+			withMem(14*int64(GB), testMemTotal))
+	}
+
+	s.Update(overcommitted(now))
 	alertsAfterFirst := s.Alerts.Len()
 
-	s.Update(overcommittedSnap(t, now.Add(time.Second)))
+	s.Update(overcommitted(now.Add(time.Second)))
 	alertsAfterSecond := s.Alerts.Len()
 
-	// Count headroom-related alerts
 	headroomCount := 0
 	for i := 0; i < s.Alerts.Len(); i++ {
 		msg := s.Alerts.At(i).Message
@@ -284,14 +245,11 @@ func TestAlertDeduplication(t *testing.T) {
 
 func TestSessionCountTracked(t *testing.T) {
 	s := NewAppState()
-	now := time.Now()
-
-	snap := baseSnap(t, now)
-	snap.Sessions = []collector.SessionTree{
+	snap := testSnap(t, withSessions([]collector.SessionTree{
 		{RootPID: 1},
 		{RootPID: 2},
 		{RootPID: 3},
-	}
+	}))
 	s.Update(snap)
 
 	if s.SessionCount != 3 {
@@ -303,16 +261,13 @@ func TestIsIdle(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	// No sessions → idle
-	s.Update(baseSnap(t, now))
+	s.Update(testSnap(t, withTime(now)))
 	if !s.IsIdle() {
 		t.Error("IsIdle should be true with no sessions")
 	}
 
-	// With sessions → not idle
-	snap := baseSnap(t, now.Add(time.Second))
-	snap.Sessions = []collector.SessionTree{{RootPID: 1}}
-	s.Update(snap)
+	s.Update(testSnap(t, withTime(now.Add(time.Second)),
+		withSessions([]collector.SessionTree{{RootPID: 1}})))
 	if s.IsIdle() {
 		t.Error("IsIdle should be false with sessions")
 	}
@@ -322,17 +277,9 @@ func TestOnlineLogTracksPerTick(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	snap1 := baseSnap(t, now)
-	snap1.Online = true
-	s.Update(snap1)
-
-	snap2 := baseSnap(t, now.Add(time.Second))
-	snap2.Online = false
-	s.Update(snap2)
-
-	snap3 := baseSnap(t, now.Add(2*time.Second))
-	snap3.Online = true
-	s.Update(snap3)
+	s.Update(testSnap(t, withTime(now), withOnline(true)))
+	s.Update(testSnap(t, withTime(now.Add(time.Second)), withOnline(false)))
+	s.Update(testSnap(t, withTime(now.Add(2*time.Second)), withOnline(true)))
 
 	if s.OnlineLog.Len() != 3 {
 		t.Fatalf("OnlineLog.Len = %d, want 3", s.OnlineLog.Len())
