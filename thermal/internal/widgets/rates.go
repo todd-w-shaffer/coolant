@@ -189,10 +189,11 @@ func renderSessionRow(sessions []collector.SessionTree) string {
 	}
 
 	var parts []string
+	idle := 0
 	for _, g := range groups {
 		total := g.total()
 		if total == 0 {
-			parts = append(parts, ui.DimText(ui.SessionGlyph))
+			idle++
 			continue
 		}
 
@@ -214,6 +215,10 @@ func renderSessionRow(sessions []collector.SessionTree) string {
 
 		sb.WriteString(ui.DimText(" [" + formatFixedCount(total) + "]"))
 		parts = append(parts, sb.String())
+	}
+
+	if idle > 0 {
+		parts = append(parts, ui.DimText(fmt.Sprintf("+%d", idle)))
 	}
 
 	return strings.Join(parts, "  ")

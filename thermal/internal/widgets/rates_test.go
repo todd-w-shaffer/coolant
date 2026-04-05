@@ -146,17 +146,46 @@ func TestRenderSessionRowGlyphOrder(t *testing.T) {
 	}
 }
 
-func TestRenderSessionRowEmptySessionCollapses(t *testing.T) {
+func TestRenderSessionRowIdleSessionsHidden(t *testing.T) {
+	// Empty sessions should not render individual diamonds
 	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: nil}, // no children
+		{RootPID: 1001, Descendants: nil},
+		{RootPID: 1002, Descendants: nil},
+		{RootPID: 1003, Descendants: nil},
 	}
 	got := renderSessionRow(sessions)
-	// Should show dim diamond only, no count like [00]
-	if strings.Contains(got, "[00]") {
-		t.Errorf("empty session should not show [00] count, got %q", got)
+	// Should show "+3" idle count, not three dim diamonds
+	if !strings.Contains(got, "+3") {
+		t.Errorf("expected +3 idle trailer, got %q", got)
 	}
-	if !strings.Contains(got, ui.SessionGlyph) {
-		t.Errorf("empty session should still show diamond glyph, got %q", got)
+}
+
+func TestRenderSessionRowMixedActiveAndIdle(t *testing.T) {
+	sessions := []collector.SessionTree{
+		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
+		{RootPID: 1002, Descendants: nil},
+		{RootPID: 1003, Descendants: nil},
+	}
+	got := renderSessionRow(sessions)
+	// Active session should show glyphs and count
+	if !strings.Contains(got, "[01]") {
+		t.Errorf("expected [01] for active session, got %q", got)
+	}
+	// Two idle sessions should show +2 trailer
+	if !strings.Contains(got, "+2") {
+		t.Errorf("expected +2 idle trailer, got %q", got)
+	}
+}
+
+func TestRenderSessionRowAllActiveNoTrailer(t *testing.T) {
+	sessions := []collector.SessionTree{
+		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
+		{RootPID: 1002, Descendants: []collector.ProcessInfo{{TypeCode: "N"}}},
+	}
+	got := renderSessionRow(sessions)
+	// No idle trailer when all sessions are active
+	if strings.Contains(got, "+") {
+		t.Errorf("should have no idle trailer when all active, got %q", got)
 	}
 }
 
