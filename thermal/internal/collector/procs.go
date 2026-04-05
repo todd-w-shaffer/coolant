@@ -116,16 +116,21 @@ func (pc *ProcCollector) Collect(ctx context.Context) ([]SessionTree, []ProcessI
 	ctx, cancel := context.WithTimeout(ctx, config.ProcTimeout)
 	defer cancel()
 
-	// Get all processes in one call
 	out, err := exec.CommandContext(ctx, "ps", "-Ao", "pid=,ppid=,pcpu=,rss=,comm=").Output()
 	if err != nil {
 		return nil, nil, err
 	}
 
+	return pc.buildTrees(out)
+}
+
+// buildTrees parses ps output and builds session trees.
+// Separated from Collect so it can be tested with synthetic input.
+func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessInfo, error) {
 	pc.clearMaps()
 
 	// Parse into raw process list and build parent→children map
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(string(psOutput), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

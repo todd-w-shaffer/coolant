@@ -180,3 +180,121 @@ func TestBasename(t *testing.T) {
 		})
 	}
 }
+
+// newProcCollector creates a ProcCollector with pre-allocated maps for testing.
+func newProcCollector() *ProcCollector {
+	return &ProcCollector{
+		children: make(map[int][]int),
+		byPID:    make(map[int]rawProc),
+	}
+}
+
+func TestBuildTreesSingleSession(t *testing.T) {
+	// Synthetic ps output: claude root (PID 100) with two children.
+	ps := []byte(
+		"  100  1   0.5  4096 claude\n" +
+			"  200  100   5.0  8192 node\n" +
+			"  300  100   2.0  1024 vitest\n" +
+			"  400  200   0.0  512 grep\n" + // grandchild of claude via node
+			"  500  1   0.0  256 launchd\n", // unrelated process
+	)
+	pc := newProcCollector()
+	sessions, flatProcs, err := pc.buildTrees(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+	s := sessions[0]
+	if s.RootPID != 100 {
+		t.Errorf("RootPID = %d, want 100", s.RootPID)
+	}
+	if s.RootComm != "claude" {
+		t.Errorf("RootComm = %q, want %q", s.RootComm, "claude")
+	}
+	// Descendants: node(200), vitest(300), grep(400) — not claude itself, not launchd.
+	if len(s.Descendants) != 3 {
+		t.Fatalf("descendants = %d, want 3", len(s.Descendants))
+	}
+	if len(flatProcs) != 3 {
+		t.Errorf("flatProcs = %d, want 3", len(flatProcs))
+	}
+
+	// Verify classification and RSS conversion (KB → bytes).
+	pidMap := map[int]ProcessInfo{}
+	for _, p := range s.Descendants {
+		pidMap[p.PID] = p
+	}
+	node := pidMap[200]
+	if node.TypeCode != "N" {
+		t.Errorf("node TypeCode = %q, want N", node.TypeCode)
+	}
+	if node.RSSBytes != 8192*1024 {
+		t.Errorf("node RSSBytes = %d, want %d", node.RSSBytes, 8192*1024)
+	}
+	vt := pidMap[300]
+	if vt.TypeCode != "V" {
+		t.Errorf("vitest TypeCode = %q, want V", vt.TypeCode)
+	}
+	gr := pidMap[400]
+	if gr.TypeCode != "G" {
+		t.Errorf("grep TypeCode = %q, want G", gr.TypeCode)
+	}
+}
+
+func TestBuildTreesMultipleSessions(t *testing.T) {
+	ps := []byte(
+		"  10  1   0.0  1024 claude\n" +
+			"  20  10   1.0  512 node\n" +
+			"  30  1   0.0  1024 claude-code\n" +
+			"  40  30   2.0  256 bash\n",
+	)
+	pc := newProcCollector()
+	sessions, flatProcs, err := pc.buildTrees(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2", len(sessions))
+	}
+	if len(flatProcs) != 2 {
+		t.Errorf("flatProcs = %d, want 2 (node + bash)", len(flatProcs))
+	}
+}
+
+func TestBuildTreesNoClaude(t *testing.T) {
+	ps := []byte(
+		"  1  0   0.0  0 launchd\n" +
+			"  100  1   5.0  8192 node\n" +
+			"  200  1   2.0  4096 bash\n",
+	)
+	pc := newProcCollector()
+	sessions, flatProcs, err := pc.buildTrees(ps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sessions) != 0 {
+		t.Errorf("sessions = %d, want 0 (no claude)", len(sessions))
+	}
+	if len(flatProcs) != 0 {
+		t.Errorf("flatProcs = %d, want 0", len(flatProcs))
+	}
+}
+
+func TestBuildTreesEmptyInput(t *testing.T) {
+	pc := newProcCollector()
+	sessions, flatProcs, err := pc.buildTrees([]byte(""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("sessions = %d, want 0", len(sessions))
+	}
+	if len(flatProcs) != 0 {
+		t.Errorf("flatProcs = %d, want 0", len(flatProcs))
+	}
+}

@@ -3,25 +3,11 @@ package model
 import (
 	"testing"
 
-	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
-// makeSnap builds a snapshot with specified system stats for Classify testing.
-func makeSnap(t *testing.T, cpuPct float64, memUsed, memTotal, swapUsed int64) collector.Snapshot {
-	t.Helper()
-	return collector.Snapshot{
-		System: collector.SystemStats{
-			CPUPercent:    cpuPct,
-			MemUsedBytes:  memUsed,
-			MemTotalBytes: memTotal,
-			SwapUsedBytes: swapUsed,
-		},
-	}
-}
-
 func TestClassifyAllZero(t *testing.T) {
-	snap := makeSnap(t, 0, 0, 16*GB, 0)
+	snap := testSnap(t)
 	if got := Classify(snap, 0); got != ThreatCool {
 		t.Errorf("all-zero snapshot: got %v, want ThreatCool", got)
 	}
@@ -30,7 +16,7 @@ func TestClassifyAllZero(t *testing.T) {
 func TestClassifyHighMemoryAlone(t *testing.T) {
 	cases := []struct {
 		name      string
-		memPct    float64 // will compute memUsed from this
+		memPct    float64
 		wantMin   ThreatLevel
 		spawnRate float64
 	}{
@@ -40,9 +26,7 @@ func TestClassifyHighMemoryAlone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			memTotal := int64(16 * GB)
-			memUsed := int64(tc.memPct / 100.0 * float64(memTotal))
-			snap := makeSnap(t, 0, memUsed, memTotal, 0)
+			snap := testSnap(t, withMem(pctToBytes(tc.memPct), testMemTotal))
 			got := Classify(snap, tc.spawnRate)
 			if got < tc.wantMin {
 				t.Errorf("mem %.0f%%: got %v, want at least %v", tc.memPct, got, tc.wantMin)
@@ -62,7 +46,7 @@ func TestClassifyHighCPUAlone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			snap := makeSnap(t, tc.cpu, 0, 16*GB, 0)
+			snap := testSnap(t, withCPU(tc.cpu))
 			got := Classify(snap, 0)
 			if got < tc.wantMin {
 				t.Errorf("CPU %.0f%%: got %v, want at least %v", tc.cpu, got, tc.wantMin)
@@ -83,7 +67,7 @@ func TestClassifyHighSwapAlone(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			snap := makeSnap(t, 0, 0, 16*GB, tc.swap)
+			snap := testSnap(t, withSwap(tc.swap))
 			got := Classify(snap, 0)
 			if got < tc.wantMin {
 				t.Errorf("swap %d: got %v, want at least %v", tc.swap, got, tc.wantMin)
@@ -94,9 +78,12 @@ func TestClassifyHighSwapAlone(t *testing.T) {
 
 func TestClassifyMultipleModerateSignalsCombine(t *testing.T) {
 	// Warm mem (score 1) + warm CPU (score 1) + warm swap (score 1) = score 3 → Hot
-	memTotal := int64(16 * GB)
-	memUsed := int64((config.MemWarmPct + 1) / 100.0 * float64(memTotal))
-	snap := makeSnap(t, config.CPUWarmPct+1, memUsed, memTotal, int64(config.SwapWarmBytes)+1)
+	memUsed := pctToBytes(config.MemWarmPct + 1)
+	snap := testSnap(t,
+		withCPU(config.CPUWarmPct+1),
+		withMem(memUsed, testMemTotal),
+		withSwap(int64(config.SwapWarmBytes)+1),
+	)
 	got := Classify(snap, 0)
 	if got != ThreatHot {
 		t.Errorf("three moderate signals: got %v, want ThreatHot (score=3)", got)
@@ -105,9 +92,8 @@ func TestClassifyMultipleModerateSignalsCombine(t *testing.T) {
 
 func TestClassifyBoundaryAtWarm(t *testing.T) {
 	// Exactly at MemWarmPct should NOT trigger (uses >)
-	memTotal := int64(16 * GB)
-	memUsed := int64(config.MemWarmPct * float64(memTotal) / 100.0)
-	snap := makeSnap(t, 0, memUsed, memTotal, 0)
+	memUsed := pctToBytes(config.MemWarmPct)
+	snap := testSnap(t, withMem(memUsed, testMemTotal))
 	got := Classify(snap, 0)
 	if got != ThreatCool {
 		t.Errorf("exactly at MemWarmPct: got %v, want ThreatCool", got)
@@ -115,26 +101,22 @@ func TestClassifyBoundaryAtWarm(t *testing.T) {
 }
 
 func TestClassifySpawnRateAddsToScore(t *testing.T) {
-	// Warm mem (score 1) + spawn rate escalation (score 1) = score 2 → warm
-	// Without spawn rate it would be score 1 → warm too, but let's verify
-	// the score contribution: warm mem + warm CPU (score 2) + spawn = 3 → hot
-	memTotal := int64(16 * GB)
-	memUsed := int64((config.MemWarmPct + 1) / 100.0 * float64(memTotal))
-	snap := makeSnap(t, config.CPUWarmPct+1, memUsed, memTotal, 0)
+	// warm mem + warm CPU (score 2) + spawn = 3 → hot
+	memUsed := pctToBytes(config.MemWarmPct + 1)
+	snap := testSnap(t, withCPU(config.CPUWarmPct+1), withMem(memUsed, testMemTotal))
 
 	withoutSpawn := Classify(snap, 0)
-	withSpawn := Classify(snap, config.SpawnRateEscalation+1)
+	withSpawnRate := Classify(snap, config.SpawnRateEscalation+1)
 
-	if withSpawn <= withoutSpawn {
-		t.Errorf("spawn rate should escalate: without=%v, with=%v", withoutSpawn, withSpawn)
+	if withSpawnRate <= withoutSpawn {
+		t.Errorf("spawn rate should escalate: without=%v, with=%v", withoutSpawn, withSpawnRate)
 	}
 }
 
 func TestClassifyMeltdown(t *testing.T) {
 	// crit mem (3) + crit CPU (2) = 5 → meltdown
-	memTotal := int64(16 * GB)
-	memUsed := int64((config.MemCritPct + 1) / 100.0 * float64(memTotal))
-	snap := makeSnap(t, config.CPUCritPct+1, memUsed, memTotal, 0)
+	memUsed := pctToBytes(config.MemCritPct + 1)
+	snap := testSnap(t, withCPU(config.CPUCritPct+1), withMem(memUsed, testMemTotal))
 	got := Classify(snap, 0)
 	if got != ThreatMeltdown {
 		t.Errorf("crit mem + crit CPU: got %v, want ThreatMeltdown", got)
