@@ -80,7 +80,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.computePIDDeltas(&snap)
 
 	// Type counts — clear and repopulate in place
-	clearMap(s.TypeCounts)
+	clear(s.TypeCounts)
 	for _, p := range snap.AllProcs {
 		s.TypeCounts[p.TypeCode]++
 	}
@@ -90,7 +90,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	smoothMap(s.TypeCounts, s.SmoothedCounts, config.CountSmoothAlpha)
 
 	// Category counts — clear and repopulate in place
-	clearMap(s.CategoryCounts)
+	clear(s.CategoryCounts)
 	for typeCode, count := range s.TypeCounts {
 		cat, ok := collector.TypeToCategory[typeCode]
 		if !ok {
@@ -188,7 +188,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 // computePIDDeltas calculates spawn/death counts using pre-allocated maps.
 func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
 	// Build current PID set in scratch map (clear + reuse)
-	clearBoolMap(s.scratchPIDs)
+	clear(s.scratchPIDs)
 	for _, p := range snap.AllProcs {
 		s.scratchPIDs[p.PID] = true
 	}
@@ -318,20 +318,6 @@ func (s *AppState) LastDeaths() int {
 
 func (s *AppState) addAlert(a AlertEntry) {
 	s.Alerts.Push(a)
-}
-
-// clearMap removes all keys from a map[string]int without deallocating.
-func clearMap(m map[string]int) {
-	for k := range m {
-		delete(m, k)
-	}
-}
-
-// clearBoolMap removes all keys from a map[int]bool without deallocating.
-func clearBoolMap(m map[int]bool) {
-	for k := range m {
-		delete(m, k)
-	}
 }
 
 // smoothMap applies EMA smoothing: moves existing keys toward current raw counts,

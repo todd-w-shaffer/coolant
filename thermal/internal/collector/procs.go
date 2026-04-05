@@ -99,20 +99,14 @@ type ProcCollector struct {
 
 // clearMaps resets maps and slices for reuse without reallocating.
 func (pc *ProcCollector) clearMaps() {
-	for k := range pc.children {
-		delete(pc.children, k)
-	}
-	for k := range pc.byPID {
-		delete(pc.byPID, k)
-	}
+	clear(pc.children)
+	clear(pc.byPID)
 	pc.allProcs = pc.allProcs[:0]
 	pc.roots = pc.roots[:0]
 	if pc.visited == nil {
 		pc.visited = make(map[int]bool, 256)
 	} else {
-		for k := range pc.visited {
-			delete(pc.visited, k)
-		}
+		clear(pc.visited)
 	}
 }
 
@@ -207,15 +201,6 @@ func (pc *ProcCollector) Collect(ctx context.Context) ([]SessionTree, []ProcessI
 	}
 
 	return sessions, flatProcs, nil
-}
-
-// CollectProcs is a convenience wrapper for callers that don't need map reuse.
-func CollectProcs(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
-	pc := &ProcCollector{
-		children: make(map[int][]int, 512),
-		byPID:    make(map[int]rawProc, 512),
-	}
-	return pc.Collect(ctx)
 }
 
 // parseProcessLine parses one line of "ps -Ao pid=,ppid=,pcpu=,rss=,comm=" output.
