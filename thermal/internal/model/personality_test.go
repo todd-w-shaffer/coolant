@@ -37,6 +37,18 @@ func TestThreatQuipStableReturnsDeterministic(t *testing.T) {
 	}
 }
 
+func TestThreatQuipRandomVaries(t *testing.T) {
+	// Random mode should produce more than one distinct quip over many calls.
+	// Each level has 10 quips, so 50 calls should see variation.
+	seen := make(map[string]bool)
+	for i := 0; i < 50; i++ {
+		seen[ThreatQuip(ThreatCool)] = true
+	}
+	if len(seen) < 2 {
+		t.Errorf("ThreatQuip random mode produced only %d distinct quips over 50 calls", len(seen))
+	}
+}
+
 func TestThreatQuipUnknownLevelFallback(t *testing.T) {
 	// Unknown threat level has no quips — should fall back to level.String().
 	got := ThreatQuip(ThreatLevel(99))

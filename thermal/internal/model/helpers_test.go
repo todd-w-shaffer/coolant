@@ -62,6 +62,21 @@ func withSessions(sessions []collector.SessionTree) snapOpt {
 	return func(s *collector.Snapshot) { s.Sessions = sessions }
 }
 
+// overcommittedSnap returns a snapshot with 3xV + 2xN heavy procs and 14GB used.
+func overcommittedSnap(t *testing.T, ts time.Time) collector.Snapshot {
+	t.Helper()
+	return testSnap(t, withTime(ts),
+		withProcs([]collector.ProcessInfo{
+			{PID: 1, TypeCode: "V"},
+			{PID: 2, TypeCode: "V"},
+			{PID: 3, TypeCode: "V"},
+			{PID: 4, TypeCode: "N"},
+			{PID: 5, TypeCode: "N"},
+		}),
+		withMem(14*int64(GB), testMemTotal),
+	)
+}
+
 // pctToBytes converts a memory percentage to bytes relative to testMemTotal.
 // Exists as a function (not inline arithmetic) to prevent Go constant folding
 // from rejecting float64→int64 conversions at compile time.
