@@ -34,6 +34,17 @@ const (
 	SpringDamping = 1.0 // critically damped
 )
 
+// Agent icon breathing animation.
+const (
+	BreatheMinBright = 0.25  // dimmest point of breathing cycle
+	BreatheMaxBright = 1.0   // brightest point
+	BreathePhaseStep = 0.105 // radians per AnimTick (~2s cycle at 30fps: 2π/60)
+	BreatheBaseR     = 0.0   // base icon color: cyan-green (teal — intentionally no red)
+	BreatheBaseG     = 210.0 //
+	BreatheBaseB     = 190.0 //
+	BreatheFadeEps   = 0.01  // spring position below which a dying icon is removed
+)
+
 // ── History / buffer sizes ─────────────────────────────────
 
 const (

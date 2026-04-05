@@ -20,7 +20,7 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 
 	var procs []collector.ProcessInfo
 	nextPID := 10000
-	sessionPIDs := []int{1001, 1002} // simulate 2 Claude sessions
+	allSessionPIDs := []int{1001, 1002, 1003} // pool of session PIDs
 	tick := 0
 
 	// Base system stats (realistic M-series Mac)
@@ -36,6 +36,20 @@ func RunV2(ch chan<- collector.Snapshot, interval time.Duration, done <-chan str
 
 		// Phase cycling: calm (0-30), ramp (30-60), hot (60-90), cool (90-120)
 		phase := (tick / 30) % 4
+
+		// Active sessions scale with phase: calm=1, ramp=2, hot=3, cool=2
+		var activeCount int
+		switch phase {
+		case 0:
+			activeCount = 1
+		case 1:
+			activeCount = 2
+		case 2:
+			activeCount = 3
+		case 3:
+			activeCount = 2
+		}
+		sessionPIDs := allSessionPIDs[:activeCount]
 
 		// Age existing procs
 		for i := range procs {
