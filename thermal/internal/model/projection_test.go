@@ -13,7 +13,7 @@ func TestEstimateHeadroomKnownTypes(t *testing.T) {
 		"S": 3, // 3 * 20MB = 60MB
 	}
 	memTotal := testMemTotal
-	memUsed := int64(8 * GB)
+	memUsed := 8 * int64(GB)
 
 	info := EstimateHeadroom(typeCounts, memUsed, memTotal)
 
@@ -39,7 +39,7 @@ func TestEstimateHeadroomNegativeOverCommitted(t *testing.T) {
 		"N": 5,  // 5GB committed — total 15GB
 	}
 	memTotal := testMemTotal
-	memUsed := int64(14 * GB) // only 2GB available
+	memUsed := 14 * int64(GB) // only 2GB available
 
 	info := EstimateHeadroom(typeCounts, memUsed, memTotal)
 
@@ -76,7 +76,7 @@ func TestEstimateHeadroomComfortable(t *testing.T) {
 		"S": 1, // 20MB committed — negligible
 	}
 	memTotal := testMemTotal
-	memUsed := int64(4 * GB) // 12GB available, plenty of headroom
+	memUsed := 4 * int64(GB) // 12GB available, plenty of headroom
 
 	info := EstimateHeadroom(typeCounts, memUsed, memTotal)
 
