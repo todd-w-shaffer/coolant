@@ -128,6 +128,7 @@ func collectFast(pc *ProcCollector) Snapshot {
 			snap.Sessions = r.sessions
 			snap.AllProcs = r.allProcs
 			snap.DesktopRunning = pc.DesktopRunning
+			snap.ChromeHostRunning = pc.ChromeHostRunning
 		} else {
 			snap.CollectErrs = append(snap.CollectErrs, "procs: "+r.err.Error())
 		}
