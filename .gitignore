@@ -1,5 +1,10 @@
 # Built binaries
 bin/
+coolant
+thermal/thermal
+
+# macOS
+.DS_Store
 
 # Archived artifacts — historical, not in use
 docs/archive/
