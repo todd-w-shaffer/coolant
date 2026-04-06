@@ -105,7 +105,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	if s.SmoothedCats == nil {
 		s.SmoothedCats = make(map[string]float64)
 	}
-	smoothMap(s.CategoryCounts, s.SmoothedCats, config.CountSmoothAlpha)
+	smoothMapPerKey(s.CategoryCounts, s.SmoothedCats)
 
 	s.SessionCount = len(snap.Sessions)
 
@@ -329,6 +329,38 @@ func (s *AppState) LastDeaths() int {
 
 func (s *AppState) addAlert(a AlertEntry) {
 	s.Alerts.Push(a)
+}
+
+// smoothMapPerKey applies EMA smoothing with per-category alpha:
+// fixed categories (build, shell) use CountSmoothAlpha for snappy response,
+// dynamic runtimes use RuntimeSmoothAlpha for slower decay so they linger visibly.
+func smoothMapPerKey(raw map[string]int, smoothed map[string]float64) {
+	for key, count := range raw {
+		alpha := catAlpha(key)
+		if prev, ok := smoothed[key]; ok {
+			smoothed[key] = alpha*float64(count) + (1-alpha)*prev
+		} else {
+			smoothed[key] = float64(count)
+		}
+	}
+	for key, prev := range smoothed {
+		if _, ok := raw[key]; !ok {
+			alpha := catAlpha(key)
+			decayed := (1 - alpha) * prev
+			if decayed < 0.5 {
+				delete(smoothed, key)
+			} else {
+				smoothed[key] = decayed
+			}
+		}
+	}
+}
+
+func catAlpha(name string) float64 {
+	if collector.FixedCategories[name] {
+		return config.CountSmoothAlpha
+	}
+	return config.RuntimeSmoothAlpha
 }
 
 // smoothMap applies EMA smoothing: moves existing keys toward current raw counts,
