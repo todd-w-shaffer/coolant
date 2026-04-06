@@ -2,7 +2,7 @@
 
 A resource management layer for Claude Code -- prevents machines from melting when parallel agents run unthrottled.
 
-![thermal dashboard](assets/thermal-demo.gif)
+![three Claude Code sessions with thermal dashboard](assets/hero.png)
 
 ## What it does
 
@@ -25,6 +25,8 @@ curl -fsSL https://github.com/todd-w-shaffer/coolant/releases/latest/download/th
 # See it in action
 thermal --demo
 ```
+
+![thermal dashboard demo](assets/thermal-demo.gif)
 
 ## The dashboard
 
