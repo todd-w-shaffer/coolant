@@ -13,7 +13,10 @@ The **dashboard** gives you a real-time read on system pressure so you know when
 ## Quick start
 
 ```bash
-# Install the plugin (hooks + skills)
+# Add the coolant marketplace (one time)
+claude plugin marketplace add todd-w-shaffer/coolant
+
+# Install the plugin
 claude plugin install coolant
 
 # Install the dashboard (macOS only)
