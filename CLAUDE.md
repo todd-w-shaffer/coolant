@@ -101,7 +101,7 @@ thermal/
 └── go.sum
 ```
 
-**Dependencies:** Go 1.26+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
+**Dependencies:** Go 1.25+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
 
 **Build:** `cd thermal && go build -o ../bin/thermal ./cmd/thermal/`
 
