@@ -85,7 +85,7 @@ thermal/
 │   │       └── messages.csv  # embedded status bar messages per threat level
 │   ├── widgets/
 │   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char)
-│   │   ├── headline.go       # thermal bar: overall temp + 5 category boxes
+│   │   ├── headline.go       # thermal bar: overall temp + dynamic process categories
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   └── alerts.go         # scrolling alert log
