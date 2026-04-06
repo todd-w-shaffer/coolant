@@ -1,9 +1,9 @@
 Output assets/thermal-demo.gif
 
 Set Shell "bash"
-Set FontSize 13
+Set FontSize 11
 Set Width 960
-Set Height 340
+Set Height 150
 Set Padding 0
 
 Hide
