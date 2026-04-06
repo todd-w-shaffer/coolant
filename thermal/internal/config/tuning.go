@@ -105,10 +105,10 @@ const IdleTickerModulo = 8 // ticks between idle message rotation
 var CatThresholds = map[string][2]int{
 	"build":  {1, 3},   // few procs but each spawns heavy child trees
 	"shell":  {15, 40}, // ephemeral
-	"node":   {4, 10},  // each ~500MB-1.5GB
-	"go":     {2, 5},   // heavier per-process
-	"python": {3, 8},   // variable weight
-	"rust":   {2, 5},   // heavy compilation
+	"node":   {1, 8},   // warm on first appearance — each ~500MB-1.5GB
+	"go":     {1, 4},   // warm on first appearance — heavier per-process
+	"python": {1, 6},   // warm on first appearance — variable weight
+	"rust":   {1, 4},   // warm on first appearance — heavy compilation
 }
 
 // Default category thresholds when category name is unknown.
