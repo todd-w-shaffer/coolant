@@ -91,7 +91,7 @@ const (
 // ── EMA smoothing ──────────────────────────────────────────
 
 const (
-	CountSmoothAlpha = 0.15 // type/category count EMA
+	CountSmoothAlpha = 0.08 // type/category count EMA — slow decay so dynamic runtimes linger visibly
 	RateSmoothAlpha  = 0.3  // spawn/death rate EMA
 )
 
