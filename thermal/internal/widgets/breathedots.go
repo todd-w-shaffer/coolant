@@ -85,9 +85,11 @@ func (b *BreatheDots) AnimTick() {
 }
 
 // Render produces the styled dot string and its visible cell width.
+// glyphHollow and glyphFilled alternate based on the breathing phase —
+// the dot "fills up" at peak brightness and "empties" at the trough.
 // bg is the cell background for transparency (nil = no background).
 // maxDots caps visible dots (0 = unlimited).
-func (b *BreatheDots) Render(glyph string, bg color.Color, maxDots int) (string, int) {
+func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, maxDots int) (string, int) {
 	if len(b.dots) == 0 {
 		return "", 0
 	}
@@ -108,6 +110,12 @@ func (b *BreatheDots) Render(glyph string, bg color.Color, maxDots int) (string,
 		}
 		if brightness > 1 {
 			brightness = 1
+		}
+
+		// Pick glyph: filled above midpoint, hollow below
+		glyph := glyphHollow
+		if breathT > 0.5 {
+			glyph = glyphFilled
 		}
 
 		fg := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",

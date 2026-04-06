@@ -121,7 +121,7 @@ func TestBreatheDotAnimTickFreezesPhaseDying(t *testing.T) {
 
 func TestBreatheDotRenderEmpty(t *testing.T) {
 	b := NewBreatheDots()
-	str, w := b.Render("●", nil, 0)
+	str, w := b.Render("⬡", "⬢", nil, 0)
 	if str != "" || w != 0 {
 		t.Errorf("empty Render() = (%q, %d), want (\"\", 0)", str, w)
 	}
@@ -134,7 +134,7 @@ func TestBreatheDotRenderVisWidth(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
 	}
-	_, w := b.Render("●", nil, 0)
+	_, w := b.Render("⬡", "⬢", nil, 0)
 	// 3 dots with spaces between: vis width = 3 + 2 = 5
 	if w != 5 {
 		t.Errorf("Render visWidth = %d, want 5", w)
@@ -147,7 +147,7 @@ func TestBreatheDotRenderMaxDots(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
 	}
-	_, w := b.Render("●", nil, 3)
+	_, w := b.Render("⬡", "⬢", nil, 3)
 	// Capped at 3 dots: vis width = 3 + 2 = 5
 	if w != 5 {
 		t.Errorf("Render with maxDots=3 visWidth = %d, want 5", w)
