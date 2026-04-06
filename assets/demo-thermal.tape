@@ -2,17 +2,18 @@ Output assets/thermal-demo.gif
 
 Set Shell "bash"
 Set FontSize 13
-Set Width 1200
-Set Height 350
+Set Width 960
+Set Height 340
 Set Padding 0
 
+Hide
 Type "cd /Users/toddwshaffer/Desktop/apps/coolant && ./bin/thermal --demo"
 Enter
-Sleep 500ms
-
-# Collapse the install-plugin notification bar
+Sleep 1s
 Type "c"
+Sleep 500ms
+Show
 
-Sleep 20s
+Sleep 14s
 
 Type "q"
