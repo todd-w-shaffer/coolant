@@ -13,11 +13,11 @@ The **dashboard** gives you a real-time read on system pressure so you know when
 ## Quick start
 
 ```bash
-# Add the coolant marketplace (one time)
-claude plugin marketplace add todd-w-shaffer/coolant
+# Add the marketplace (one time)
+claude plugin marketplace add todd-w-shaffer/marketplace
 
 # Install the plugin
-claude plugin install coolant
+claude plugin install coolant@todd-w-shaffer
 
 # Install the dashboard (macOS only)
 curl -fsSL https://github.com/todd-w-shaffer/coolant/releases/latest/download/thermal-darwin-$(uname -m) -o /usr/local/bin/thermal && chmod +x /usr/local/bin/thermal
