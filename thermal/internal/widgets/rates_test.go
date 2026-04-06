@@ -22,10 +22,11 @@ func TestSessionGroupCountsCategorizesDescendants(t *testing.T) {
 		{
 			RootPID: 1001,
 			Descendants: []collector.ProcessInfo{
-				{TypeCode: "V"}, // test
-				{TypeCode: "V"}, // test
-				{TypeCode: "N"}, // run
-				{TypeCode: "S"}, // shell
+				{TypeCode: "V"},  // node (vitest shows as node)
+				{TypeCode: "V"},  // node
+				{TypeCode: "N"},  // node
+				{TypeCode: "S"},  // shell
+				{TypeCode: "GO"}, // go
 			},
 		},
 	}
@@ -34,17 +35,17 @@ func TestSessionGroupCountsCategorizesDescendants(t *testing.T) {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
 	g := got[0]
-	if g.total() != 4 {
-		t.Errorf("total = %d, want 4", g.total())
+	if g.total() != 5 {
+		t.Errorf("total = %d, want 5", g.total())
 	}
-	if g.cats[catIndex["test"]] != 2 {
-		t.Errorf("cats[test] = %d, want 2", g.cats[catIndex["test"]])
-	}
-	if g.cats[catIndex["run"]] != 1 {
-		t.Errorf("cats[run] = %d, want 1", g.cats[catIndex["run"]])
+	if g.cats[catIndex["node"]] != 3 {
+		t.Errorf("cats[node] = %d, want 3", g.cats[catIndex["node"]])
 	}
 	if g.cats[catIndex["shell"]] != 1 {
 		t.Errorf("cats[shell] = %d, want 1", g.cats[catIndex["shell"]])
+	}
+	if g.cats[catIndex["go"]] != 1 {
+		t.Errorf("cats[go] = %d, want 1", g.cats[catIndex["go"]])
 	}
 }
 
@@ -97,21 +98,21 @@ func TestRenderSessionRowContainsGlyphs(t *testing.T) {
 		{
 			RootPID: 1001,
 			Descendants: []collector.ProcessInfo{
-				{TypeCode: "V"}, // test → ▲
-				{TypeCode: "N"}, // run → ●
-				{TypeCode: "S"}, // shell → ·
+				{TypeCode: "N"},  // node → ●
+				{TypeCode: "GO"}, // go → ◆
+				{TypeCode: "S"},  // shell → ·
 			},
 		},
 	}
 	got := renderSessionRow(sessions, false, false)
-	testGlyph := ui.CategoryGlyph["test"]
-	runGlyph := ui.CategoryGlyph["run"]
+	nodeGlyph := ui.CategoryGlyph["node"]
+	goGlyph := ui.CategoryGlyph["go"]
 	shellGlyph := ui.CategoryGlyph["shell"]
-	if !strings.Contains(got, testGlyph) {
-		t.Errorf("missing test glyph %q in %q", testGlyph, got)
+	if !strings.Contains(got, nodeGlyph) {
+		t.Errorf("missing node glyph %q in %q", nodeGlyph, got)
 	}
-	if !strings.Contains(got, runGlyph) {
-		t.Errorf("missing run glyph %q in %q", runGlyph, got)
+	if !strings.Contains(got, goGlyph) {
+		t.Errorf("missing go glyph %q in %q", goGlyph, got)
 	}
 	if !strings.Contains(got, shellGlyph) {
 		t.Errorf("missing shell glyph %q in %q", shellGlyph, got)
@@ -136,21 +137,21 @@ func TestRenderSessionRowGlyphOrder(t *testing.T) {
 		{
 			RootPID: 1001,
 			Descendants: []collector.ProcessInfo{
-				{TypeCode: "S"}, // shell — should render last
-				{TypeCode: "V"}, // test — should render first
+				{TypeCode: "N"}, // node — should render after build/shell
+				{TypeCode: "T"}, // build — should render first
 			},
 		},
 	}
 	got := renderSessionRow(sessions, false, false)
-	testGlyph := ui.CategoryGlyph["test"]
-	shellGlyph := ui.CategoryGlyph["shell"]
-	testIdx := strings.Index(got, testGlyph)
-	shellIdx := strings.Index(got, shellGlyph)
-	if testIdx < 0 || shellIdx < 0 {
+	buildGlyph := ui.CategoryGlyph["build"]
+	nodeGlyph := ui.CategoryGlyph["node"]
+	buildIdx := strings.Index(got, buildGlyph)
+	nodeIdx := strings.Index(got, nodeGlyph)
+	if buildIdx < 0 || nodeIdx < 0 {
 		t.Fatalf("missing glyphs in %q", got)
 	}
-	if testIdx > shellIdx {
-		t.Errorf("test glyph (%d) should come before shell glyph (%d)", testIdx, shellIdx)
+	if buildIdx > nodeIdx {
+		t.Errorf("build glyph (%d) should come before node glyph (%d)", buildIdx, nodeIdx)
 	}
 }
 

@@ -84,21 +84,23 @@ func TestTypeCountsPopulated(t *testing.T) {
 func TestCategoryCountsPopulated(t *testing.T) {
 	s := NewAppState()
 	procs := []collector.ProcessInfo{
-		{PID: 1, TypeCode: "V"}, // test
-		{PID: 2, TypeCode: "T"}, // build
-		{PID: 3, TypeCode: "B"}, // build
-		{PID: 4, TypeCode: "N"}, // run
-		{PID: 5, TypeCode: "G"}, // search
-		{PID: 6, TypeCode: "S"}, // shell
+		{PID: 1, TypeCode: "V"},  // node (vitest shows as node)
+		{PID: 2, TypeCode: "T"},  // build
+		{PID: 3, TypeCode: "B"},  // build
+		{PID: 4, TypeCode: "N"},  // node
+		{PID: 5, TypeCode: "G"},  // shell (grep)
+		{PID: 6, TypeCode: "S"},  // shell
+		{PID: 7, TypeCode: "GO"}, // go
+		{PID: 8, TypeCode: "RS"}, // rust
 	}
 	s.Update(testSnap(t, withProcs(procs)))
 
 	expected := map[string]int{
-		"test":   1,
-		"build":  2,
-		"run":    1,
-		"search": 1,
-		"shell":  1,
+		"node":  2, // V + N
+		"build": 2, // T + B
+		"shell": 2, // G + S
+		"go":    1, // GO
+		"rust":  1, // RS
 	}
 	for cat, want := range expected {
 		if got := s.CategoryCounts[cat]; got != want {

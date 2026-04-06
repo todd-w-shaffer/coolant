@@ -143,10 +143,10 @@ func (h *Horizontal) helpView() []string {
 		fmt.Sprintf(" %s  %s  %s", dot(0), ui.ColorText(desc, "CPU"), ui.ColorText(desc, "how hard your cores are working — when this maxes out, everything slows down")),
 		fmt.Sprintf(" %s  %s  %s", dot(1), ui.ColorText(desc, "MEM"), ui.ColorText(desc, "memory actually in use by apps — when this fills up, swap starts and things get ugly")),
 		fmt.Sprintf(" %s  %s  %s", dot(2), ui.ColorText(desc, "COMP"), ui.ColorText(desc, "memory compressor struggling — this spikes 10-20s before your machine locks up")),
-		fmt.Sprintf(" %s %s  %s %s  %s %s %s %s %s %s", ui.DimText("⊞"), ui.ColorText(desc, "Desktop"),
+		fmt.Sprintf(" %s %s  %s %s  %s %s %s %s %s %s %s", ui.DimText("⊞"), ui.ColorText(desc, "Desktop"),
 			ui.DimText("⊙"), ui.ColorText(desc, "Chrome"),
 			ui.ColorText(ui.CyanColor, "⌬"), ui.ColorText(desc, "Code"),
-			cg["test"], cg["build"], cg["run"], cg["search"]),
+			cg["node"], cg["go"], cg["python"], cg["rust"], cg["build"]),
 	}
 }
 

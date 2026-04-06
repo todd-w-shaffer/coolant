@@ -52,12 +52,28 @@ func (h *Headline) AnimTick() {
 	h.agents.AnimTick()
 }
 
+// visibleCategories returns categories that should appear in the headline:
+// fixed categories (build, shell) always, dynamic runtimes only when count >= 0.5.
+func visibleCategories(smoothed map[string]float64) []collector.Category {
+	var visible []collector.Category
+	for _, cat := range collector.Categories {
+		if collector.FixedCategories[cat.Name] || smoothed[cat.Name] >= 0.5 {
+			visible = append(visible, cat)
+		}
+	}
+	return visible
+}
+
 func (h *Headline) View() string {
 	if h.state == nil {
 		return ""
 	}
 
-	numCats := len(collector.Categories)
+	visible := visibleCategories(h.state.SmoothedCats)
+	numCats := len(visible)
+	if numCats == 0 {
+		numCats = 1
+	}
 
 	// 50/50 split: overall gets half, categories share the other half
 	overallWidth := h.width / 2
@@ -94,9 +110,9 @@ func (h *Headline) View() string {
 		overallCell = h.buildOverallCell(quip, overallThermal.fg, overallThermal.bg, iconStr, iconVisWidth, overallWidth)
 	}
 
-	// Build category cells
+	// Build category cells — only visible ones
 	var catCells []string
-	for _, cat := range collector.Categories {
+	for _, cat := range visible {
 		smoothed := h.state.SmoothedCats[cat.Name]
 		count := int(math.Round(smoothed))
 		level := thermalLevelFor(cat.Name, count)

@@ -103,11 +103,12 @@ const IdleTickerModulo = 8 // ticks between idle message rotation
 // [warm, hot] — how many procs before a category gets warm/hot.
 
 var CatThresholds = map[string][2]int{
-	"test":   {1, 3},   // each ~1GB, even 1 vitest proc is heavy
 	"build":  {1, 3},   // few procs but each spawns heavy child trees
-	"run":    {4, 8},   // variable weight
-	"search": {10, 25}, // lightweight
 	"shell":  {15, 40}, // ephemeral
+	"node":   {4, 10},  // each ~500MB-1.5GB
+	"go":     {2, 5},   // heavier per-process
+	"python": {3, 8},   // variable weight
+	"rust":   {2, 5},   // heavy compilation
 }
 
 // Default category thresholds when category name is unknown.

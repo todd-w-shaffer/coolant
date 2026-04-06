@@ -9,7 +9,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
-var demoTypes = []string{"N", "G", "V", "S", "R", "F", "C", "P", "T", "X"}
+var demoTypes = []string{"N", "S", "C", "P", "T", "GO", "RS", "X"}
 
 // RunV2 generates synthetic Snapshots for the new layout modes.
 // It simulates a realistic scenario: calm → ramp → hot → cool down, cycling.
@@ -238,18 +238,14 @@ func typeCodeToComm(code string) string {
 	switch code {
 	case "N":
 		return "node"
-	case "V":
-		return "vitest"
 	case "T":
 		return "tsc"
 	case "P":
 		return "python3"
-	case "G":
-		return "grep"
-	case "R":
-		return "rg"
-	case "F":
-		return "find"
+	case "GO":
+		return "go"
+	case "RS":
+		return "cargo"
 	case "S":
 		return "bash"
 	case "C":
