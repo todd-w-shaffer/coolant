@@ -13,26 +13,14 @@ The **dashboard** gives you a real-time read on system pressure so you know when
 ## Quick start
 
 ```bash
-# Clone and build the dashboard
-git clone https://github.com/todd-w-shaffer/coolant.git
-cd coolant/thermal
-go build -o ../bin/thermal ./cmd/thermal/
+# Install the plugin (hooks + skills)
+claude plugin install coolant
 
-# See it in action (synthetic demo data)
-../bin/thermal --demo
+# Install the dashboard (macOS only)
+curl -fsSL https://github.com/todd-w-shaffer/coolant/releases/latest/download/thermal-darwin-$(uname -m) -o /usr/local/bin/thermal && chmod +x /usr/local/bin/thermal
 
-# Or monitor your real system
-../bin/thermal
-```
-
-Then install as a Claude Code plugin:
-
-```bash
-# Run Claude Code with coolant loaded
-claude --plugin-dir /path/to/coolant
-
-# Or install permanently (when supported)
-# claude plugin install coolant
+# See it in action
+thermal --demo
 ```
 
 ## The dashboard
@@ -64,13 +52,11 @@ The gate applies adaptive concurrency: `cap = floor((cores - 2) / agents)`, mini
 
 ## Requirements
 
-- **macOS** -- the dashboard uses cgo + mach `host_statistics` for CPU ticks, `vm_stat` for memory, `sysctl` for swap
-- **Xcode Command Line Tools** -- required for cgo (`xcode-select --install`)
-- **Go 1.25+** -- to build the thermal dashboard (`brew install go`)
+- **macOS** -- the dashboard uses native system APIs (mach kernel, vm_stat, sysctl). Prebuilt binaries for Apple Silicon and Intel.
 - **bash 3.2+** -- hooks only, ships with macOS
 - **tmux** -- optional, for running the dashboard in a bottom split pane
 
-Hooks work on any platform with bash. The thermal dashboard is macOS-only due to native system API usage.
+Hooks work on any platform with bash. The thermal dashboard is macOS-only.
 
 ## Project structure
 
