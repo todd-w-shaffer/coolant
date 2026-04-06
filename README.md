@@ -6,9 +6,9 @@ A resource management layer for Claude Code -- prevents machines from melting wh
 
 ## What it does
 
-The thermal dashboard is a real-time system monitor built for Claude Code. It renders CPU, MEM, and SWAP as double-resolution braille sparklines with severity coloring that shifts from green through yellow to red as pressure builds. Session diamonds on the headline bar encode the language-build-shell escalation dance -- each Claude Code session's diamond changes color as it progresses through compilation phases (gray idle, green active, yellow language/compile, orange build tools, red shell explosion). Breathing space invader icons show active subagents at a glance.
+Run five Claude Code agents in parallel and your machine will try to compile, test, and lint everything at once. CPU pins, memory fills, the compressor spikes, and your whole system locks up. Coolant stops that.
 
-Under the hood, coolant's hook system prevents resource exhaustion without any manual intervention. A gate hook caps concurrent test runners based on active agent count and suppresses build tools during parallel mode. Agent lifecycle hooks track spawn and death counts via structured JSONL events. The hooks run without external dependencies -- just bash 3.2 and macOS system APIs. The dashboard needs Go and Xcode Command Line Tools to build.
+The **dashboard** gives you a real-time read on system pressure so you know when to back off before things get ugly. The **hooks** do the throttling automatically -- capping concurrent test runners, suppressing build tools during parallel work, and tracking agent lifecycles. You get the throughput of parallel agents without the meltdown.
 
 ## Quick start
 
