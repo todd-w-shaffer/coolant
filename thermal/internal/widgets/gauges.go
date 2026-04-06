@@ -16,8 +16,17 @@ type springState struct {
 	vel float64
 }
 
+// Gauge label words — pre-rendered once at init.
+var gaugeLabels [3]BrailleWord
+
+func init() {
+	gaugeLabels[0] = RenderBrailleWord("CPU")
+	gaugeLabels[1] = RenderBrailleWord("MEM")
+	gaugeLabels[2] = RenderBrailleWord("SWAP")
+}
+
 // Gauges renders 3 sparklines: CPU%, MEM%, compressor decompressions/tick.
-// Each dot is severity-colored when online, rainbow when offline.
+// Braille text labels scroll in at startup and get pushed off by incoming data.
 // Numeric readouts are spring-animated for smooth easing between values.
 // Sparklines scroll at animation rate (30fps) via spring-interpolated render history.
 type Gauges struct {
@@ -131,10 +140,11 @@ func (g *Gauges) View() string {
 		return ""
 	}
 
-	// Layout: " ● <sparkline> NNN%"
-	dotWidth := 3   // " ● "
+	// Layout: " <sparkline>      " (top)
+	//         " <sparkline> NNN% " (bottom)
+	margin := 1     // leading space
 	valueWidth := 5 // " 100%"
-	sparkWidth := g.width - dotWidth - valueWidth - 1
+	sparkWidth := g.width - margin - valueWidth - 1
 	if sparkWidth < 1 {
 		sparkWidth = 1
 	}
@@ -144,7 +154,7 @@ func (g *Gauges) View() string {
 		display float64 // spring-animated value (for numeric readout)
 		max     float64
 		thresh  SparkThresholds
-		dotIdx  int // index into ui.GaugeDots
+		dotIdx  int // index into ui.GaugeDots (used for label color)
 		fmtVal  func(float64) string
 	}
 
@@ -171,13 +181,9 @@ func (g *Gauges) View() string {
 	}
 
 	var lines []string
-	padding := strings.Repeat(" ", dotWidth)
 	valuePad := strings.Repeat(" ", valueWidth)
 
 	for i, ga := range gauges {
-		gd := ui.GaugeDots[ga.dotIdx]
-		dot := gd.ANSI + gd.Char + sparkReset
-
 		// Lazily allocate reusable interpolation buffers
 		if g.sparkBufs[i] == nil {
 			g.sparkBufs[i] = NewSparkBufs(sparkWidth)
@@ -185,6 +191,9 @@ func (g *Gauges) View() string {
 
 		// Render 2-row sparkline with online/offline mask (buffer-pooled)
 		pair := RenderSparklineWithMaskBuf(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i])
+
+		// Overlay braille text label on leading empty positions
+		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, ui.GaugeDots[ga.dotIdx].ANSI)
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string
@@ -195,8 +204,8 @@ func (g *Gauges) View() string {
 			coloredVal = valColor + ga.fmtVal(ga.display) + sparkReset
 		}
 
-		lines = append(lines, fmt.Sprintf("%s%s %s", padding, pair.Top, valuePad))
-		lines = append(lines, fmt.Sprintf(" %s %s %s", dot, pair.Bottom, coloredVal))
+		lines = append(lines, fmt.Sprintf(" %s %s", pair.Top, valuePad))
+		lines = append(lines, fmt.Sprintf(" %s %s", pair.Bottom, coloredVal))
 	}
 
 	return strings.Join(lines, "\n")

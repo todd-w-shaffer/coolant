@@ -2,11 +2,13 @@ package widgets
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
@@ -113,13 +115,19 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(lipgloss.Color("7"), netStr))
 
+	// Static indicators: Desktop, Chrome
+	if snap.DesktopRunning {
+		sb.WriteString("  ")
+		sb.WriteString(ui.DimText("⊞ Desktop"))
+	}
+	if snap.ChromeHostRunning {
+		sb.WriteString("  ")
+		sb.WriteString(ui.DimText("⊙ Chrome"))
+	}
+
 	// Help hint
 	sb.WriteString("  ")
 	sb.WriteString(ui.DimText("[h] help"))
-
-	// Hierarchical session row: ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]  ⊞ Desktop  ⊙ Chrome
-	sb.WriteString("\n ")
-	sb.WriteString(renderSessionRow(snap.Sessions, snap.DesktopRunning, snap.ChromeHostRunning))
 
 	return sb.String()
 }
@@ -180,52 +188,42 @@ func formatFixedCount(n int) string {
 	return fmt.Sprintf("%02d", n)
 }
 
-// renderSessionRow produces the hierarchical session display:
-// ◆ ▲▲●●◇·· [07]  ◆ ▲▲▲●■■◇ [08]
-func renderSessionRow(sessions []collector.SessionTree, desktopRunning, chromeHostRunning bool) string {
-	groups := sessionGroupCounts(sessions)
+// Phase colors for session escalation — allocated once.
+var (
+	phaseRed    = lipgloss.Color("196")
+	phaseOrange = lipgloss.Color("208")
+	phaseYellow = lipgloss.Color("3")
+	phaseGreen  = lipgloss.Color("2")
+	phaseIdle   = lipgloss.Color("245")
+)
 
-	// Static indicators first: Desktop, Chrome
-	var parts []string
-	if desktopRunning {
-		parts = append(parts, ui.DimText("⊞ Desktop"))
-	}
-	if chromeHostRunning {
-		parts = append(parts, ui.DimText("⊙ Chrome"))
+// sessionPhaseColor determines the escalation phase for a session based on which
+// categories are active: idle → language (canary) → build → shell explosion.
+func sessionPhaseColor(g *sessionGroup) color.Color {
+	// Shell explosion: highest phase
+	shellIdx := catIndex["shell"]
+	if g.cats[shellIdx] >= config.ShellExplosionThreshold {
+		return phaseRed
 	}
 
-	// Dynamic: Code sessions on the right
-	idle := 0
-	for _, g := range groups {
-		total := g.total()
-		if total == 0 {
-			idle++
-			continue
+	// Build phase
+	buildIdx := catIndex["build"]
+	if g.cats[buildIdx] > 0 {
+		return phaseOrange
+	}
+
+	// Language phase (canary): any runtime category active
+	for _, name := range collector.RuntimeCategories {
+		if idx, ok := catIndex[name]; ok && g.cats[idx] > 0 {
+			return phaseYellow
 		}
-
-		var sb strings.Builder
-		sb.WriteString(ui.ColorText(ui.CyanColor, "⌬"))
-		sb.WriteString(" ")
-
-		for i, cat := range collector.Categories {
-			n := g.cats[i]
-			if n == 0 {
-				continue
-			}
-			formatted := ui.CategoryGlyphFormatted[cat.Name]
-			if formatted == "" {
-				formatted = ui.DimText(ui.CategoryGlyphDefault)
-			}
-			sb.WriteString(strings.Repeat(formatted, n))
-		}
-
-		sb.WriteString(ui.DimText(" [" + formatFixedCount(total) + "]"))
-		parts = append(parts, sb.String())
 	}
 
-	if idle > 0 {
-		parts = append(parts, ui.DimText(fmt.Sprintf("+%d", idle)))
+	// Active but only shells (below explosion threshold)
+	if g.total() > 0 {
+		return phaseGreen
 	}
 
-	return strings.Join(parts, "  ")
+	// Idle — shouldn't reach here (caller checks total == 0)
+	return phaseIdle
 }
