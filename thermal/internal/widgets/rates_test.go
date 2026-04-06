@@ -1,11 +1,10 @@
 package widgets
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
-	"github.com/toddwshaffer/coolant/thermal/internal/ui"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // ── sessionGroupCounts ───────────────────────────────────────
@@ -76,185 +75,91 @@ func TestSessionGroupCountsUnknownTypeDefaultsToShell(t *testing.T) {
 	}
 }
 
-// ── renderSessionRow ─────────────────────────────────────────
+// ── sessionPhaseColor ────────────────────────────────────────
 
-func TestRenderSessionRowEmptyNoCode(t *testing.T) {
-	got := renderSessionRow(nil, false, false)
-	// No sessions, no Desktop, no Chrome — should be empty
-	if got != "" {
-		t.Errorf("renderSessionRow(nil, false, false) = %q, want empty", got)
-	}
-}
-
-func TestRenderSessionRowEmptyWithDesktop(t *testing.T) {
-	got := renderSessionRow(nil, true, true)
-	if !strings.Contains(got, "Desktop") || !strings.Contains(got, "Chrome") {
-		t.Errorf("expected Desktop and Chrome even with no sessions, got %q", got)
-	}
-}
-
-func TestRenderSessionRowContainsGlyphs(t *testing.T) {
+func makeGroup(typeCodes ...string) *sessionGroup {
 	sessions := []collector.SessionTree{
-		{
-			RootPID: 1001,
-			Descendants: []collector.ProcessInfo{
-				{TypeCode: "N"},  // node → ●
-				{TypeCode: "GO"}, // go → ◆
-				{TypeCode: "S"},  // shell → ·
-			},
-		},
+		{RootPID: 1, Descendants: make([]collector.ProcessInfo, len(typeCodes))},
 	}
-	got := renderSessionRow(sessions, false, false)
-	nodeGlyph := ui.CategoryGlyph["node"]
-	goGlyph := ui.CategoryGlyph["go"]
-	shellGlyph := ui.CategoryGlyph["shell"]
-	if !strings.Contains(got, nodeGlyph) {
-		t.Errorf("missing node glyph %q in %q", nodeGlyph, got)
+	for i, tc := range typeCodes {
+		sessions[0].Descendants[i] = collector.ProcessInfo{TypeCode: tc}
 	}
-	if !strings.Contains(got, goGlyph) {
-		t.Errorf("missing go glyph %q in %q", goGlyph, got)
-	}
-	if !strings.Contains(got, shellGlyph) {
-		t.Errorf("missing shell glyph %q in %q", shellGlyph, got)
+	groups := sessionGroupCounts(sessions)
+	return &groups[0]
+}
+
+func TestSessionPhaseIdleReturnsIdle(t *testing.T) {
+	g := &sessionGroup{}
+	got := sessionPhaseColor(g)
+	if got != phaseIdle {
+		t.Errorf("empty session should return phaseIdle")
 	}
 }
 
-func TestRenderSessionRowContainsCount(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{
-			RootPID:     1001,
-			Descendants: []collector.ProcessInfo{{TypeCode: "V"}, {TypeCode: "V"}},
-		},
-	}
-	got := renderSessionRow(sessions, false, false)
-	if !strings.Contains(got, "[02]") {
-		t.Errorf("expected [02] count in %q", got)
+func TestSessionPhaseShellsOnlyReturnsGreen(t *testing.T) {
+	g := makeGroup("S", "S", "S")
+	got := sessionPhaseColor(g)
+	if got != phaseGreen {
+		t.Errorf("shells below threshold should return phaseGreen")
 	}
 }
 
-func TestRenderSessionRowGlyphOrder(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{
-			RootPID: 1001,
-			Descendants: []collector.ProcessInfo{
-				{TypeCode: "N"}, // node — should render after build/shell
-				{TypeCode: "T"}, // build — should render first
-			},
-		},
-	}
-	got := renderSessionRow(sessions, false, false)
-	buildGlyph := ui.CategoryGlyph["build"]
-	nodeGlyph := ui.CategoryGlyph["node"]
-	buildIdx := strings.Index(got, buildGlyph)
-	nodeIdx := strings.Index(got, nodeGlyph)
-	if buildIdx < 0 || nodeIdx < 0 {
-		t.Fatalf("missing glyphs in %q", got)
-	}
-	if buildIdx > nodeIdx {
-		t.Errorf("build glyph (%d) should come before node glyph (%d)", buildIdx, nodeIdx)
+func TestSessionPhaseLanguageReturnsYellow(t *testing.T) {
+	g := makeGroup("N") // node = language
+	got := sessionPhaseColor(g)
+	if got != phaseYellow {
+		t.Errorf("language category should return phaseYellow")
 	}
 }
 
-func TestRenderSessionRowIdleSessionsHidden(t *testing.T) {
-	// Empty sessions should not render individual diamonds
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: nil},
-		{RootPID: 1002, Descendants: nil},
-		{RootPID: 1003, Descendants: nil},
-	}
-	got := renderSessionRow(sessions, false, false)
-	// Should show "+3" idle count, not three dim diamonds
-	if !strings.Contains(got, "+3") {
-		t.Errorf("expected +3 idle trailer, got %q", got)
+func TestSessionPhaseBuildReturnsOrange(t *testing.T) {
+	g := makeGroup("T") // tsc = build
+	got := sessionPhaseColor(g)
+	if got != phaseOrange {
+		t.Errorf("build category should return phaseOrange")
 	}
 }
 
-func TestRenderSessionRowMixedActiveAndIdle(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
-		{RootPID: 1002, Descendants: nil},
-		{RootPID: 1003, Descendants: nil},
-	}
-	got := renderSessionRow(sessions, false, false)
-	// Active session should show glyphs and count
-	if !strings.Contains(got, "[01]") {
-		t.Errorf("expected [01] for active session, got %q", got)
-	}
-	// Two idle sessions should show +2 trailer
-	if !strings.Contains(got, "+2") {
-		t.Errorf("expected +2 idle trailer, got %q", got)
+func TestSessionPhaseBuildTrumpLanguage(t *testing.T) {
+	g := makeGroup("N", "T") // node + build
+	got := sessionPhaseColor(g)
+	if got != phaseOrange {
+		t.Errorf("build should trump language, got %v", got)
 	}
 }
 
-func TestRenderSessionRowAllActiveNoTrailer(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
-		{RootPID: 1002, Descendants: []collector.ProcessInfo{{TypeCode: "N"}}},
+func TestSessionPhaseShellExplosionReturnsRed(t *testing.T) {
+	codes := make([]string, config.ShellExplosionThreshold)
+	for i := range codes {
+		codes[i] = "S"
 	}
-	got := renderSessionRow(sessions, false, false)
-	// No idle trailer when all sessions are active
-	if strings.Contains(got, "+") {
-		t.Errorf("should have no idle trailer when all active, got %q", got)
-	}
-}
-
-func TestRenderSessionRowMultipleSessions(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
-		{RootPID: 1002, Descendants: []collector.ProcessInfo{{TypeCode: "N"}, {TypeCode: "N"}}},
-	}
-	got := renderSessionRow(sessions, false, false)
-	if !strings.Contains(got, "[01]") {
-		t.Errorf("expected [01] for first session in %q", got)
-	}
-	if !strings.Contains(got, "[02]") {
-		t.Errorf("expected [02] for second session in %q", got)
+	g := makeGroup(codes...)
+	got := sessionPhaseColor(g)
+	if got != phaseRed {
+		t.Errorf("shell explosion (%d shells) should return phaseRed", config.ShellExplosionThreshold)
 	}
 }
 
-func TestRenderSessionRowDesktopIndicator(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
+func TestSessionPhaseShellExplosionTrumpsAll(t *testing.T) {
+	codes := make([]string, config.ShellExplosionThreshold)
+	for i := range codes {
+		codes[i] = "S"
 	}
-	got := renderSessionRow(sessions, true, false)
-	if !strings.Contains(got, "Desktop") {
-		t.Errorf("expected Desktop indicator, got %q", got)
-	}
-	if strings.Contains(got, "Chrome") {
-		t.Errorf("should not show Chrome, got %q", got)
-	}
-}
-
-func TestRenderSessionRowChromeIndicator(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
-	}
-	got := renderSessionRow(sessions, false, true)
-	if !strings.Contains(got, "Chrome") {
-		t.Errorf("expected Chrome indicator, got %q", got)
-	}
-	if strings.Contains(got, "Desktop") {
-		t.Errorf("should not show Desktop, got %q", got)
+	codes = append(codes, "N", "T") // add language + build
+	g := makeGroup(codes...)
+	got := sessionPhaseColor(g)
+	if got != phaseRed {
+		t.Errorf("shell explosion should trump build and language")
 	}
 }
 
-func TestRenderSessionRowBothIndicators(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
-	}
-	got := renderSessionRow(sessions, true, true)
-	if !strings.Contains(got, "Desktop") || !strings.Contains(got, "Chrome") {
-		t.Errorf("expected both indicators, got %q", got)
-	}
-}
-
-func TestRenderSessionRowNoIndicators(t *testing.T) {
-	sessions := []collector.SessionTree{
-		{RootPID: 1001, Descendants: []collector.ProcessInfo{{TypeCode: "V"}}},
-	}
-	got := renderSessionRow(sessions, false, false)
-	if strings.Contains(got, "Desktop") || strings.Contains(got, "Chrome") {
-		t.Errorf("should not show any indicators, got %q", got)
+func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
+	for _, tc := range []string{"N", "GO", "P", "RS", "SW"} {
+		g := makeGroup(tc)
+		got := sessionPhaseColor(g)
+		if got != phaseYellow {
+			t.Errorf("runtime type %q should return phaseYellow", tc)
+		}
 	}
 }
 

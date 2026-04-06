@@ -118,10 +118,9 @@ func (h *Horizontal) View() string {
 		}
 	}
 
-	// Stats lines: spawn/death/net + CPU/MEM/SWAP, then sessions + processes
-	if h.height >= 9 {
-		rateLines := strings.Split(h.rates.View(), "\n")
-		lines = append(lines, rateLines...)
+	// Stats line: CPU/MEM/SWAP/GPU + warm/cool/net + static indicators
+	if h.height >= 8 {
+		lines = append(lines, h.rates.View())
 	}
 
 	// Pad to fill height
@@ -136,17 +135,34 @@ func (h *Horizontal) View() string {
 }
 
 func (h *Horizontal) helpView() []string {
-	dot := func(i int) string { return ui.GaugeDots[i].ANSI + ui.GaugeDots[i].Char + "\033[0m" }
-	desc := lipgloss.Color("250")
-	cg := ui.CategoryGlyphFormatted
+	d := lipgloss.Color("250")
+	ct := ui.ColorText
+
+	// Phase diamond samples
+	idle := ct(lipgloss.Color("245"), "⌬")
+	green := ct(lipgloss.Color("2"), "⌬")
+	yellow := ct(lipgloss.Color("3"), "⌬")
+	orange := ct(lipgloss.Color("208"), "⌬")
+	red := ct(lipgloss.Color("196"), "⌬")
+
 	return []string{
-		fmt.Sprintf(" %s  %s  %s", dot(0), ui.ColorText(desc, "CPU"), ui.ColorText(desc, "how hard your cores are working — when this maxes out, everything slows down")),
-		fmt.Sprintf(" %s  %s  %s", dot(1), ui.ColorText(desc, "MEM"), ui.ColorText(desc, "memory actually in use by apps — when this fills up, swap starts and things get ugly")),
-		fmt.Sprintf(" %s  %s  %s", dot(2), ui.ColorText(desc, "COMP"), ui.ColorText(desc, "memory compressor struggling — this spikes 10-20s before your machine locks up")),
-		fmt.Sprintf(" %s %s  %s %s  %s %s %s %s %s %s %s", ui.DimText("⊞"), ui.ColorText(desc, "Desktop"),
-			ui.DimText("⊙"), ui.ColorText(desc, "Chrome"),
-			ui.ColorText(ui.CyanColor, "⌬"), ui.ColorText(desc, "Code"),
-			cg["node"], cg["go"], cg["python"], cg["rust"], cg["build"]),
+		fmt.Sprintf(" %s %s  %s  %s  %s %s %s  %s %s",
+			ui.DimText("sparklines"), ct(d, "CPU cores"),
+			ct(d, "MEM app memory"),
+			ct(d, "SWAP compressor pressure — spikes before lockup"),
+			ui.DimText("|"), ui.DimText("⊞"), ct(d, "Desktop"), ui.DimText("⊙"), ct(d, "Chrome")),
+		fmt.Sprintf(" %s %s  %s %s  %s %s  %s %s  %s %s  %s",
+			ui.DimText("sessions"), idle, ct(d, "idle"),
+			green, ct(d, "active"),
+			yellow, ct(d, "language"),
+			orange, ct(d, "build"),
+			red, ct(d, "shells (30+)")),
+		fmt.Sprintf(" %s 👾 %s  %s",
+			ui.DimText("agents"),
+			ct(d, "subagents — breathing means alive, count matches headline"),
+			ui.DimText("categories track process types in the headline bar")),
+		fmt.Sprintf(" %s  %s  %s",
+			ui.DimText("[h] close"), ui.DimText("[c] collapse"), ui.DimText("[q] quit")),
 	}
 }
 

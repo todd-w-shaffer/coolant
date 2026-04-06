@@ -106,6 +106,17 @@ var Categories = []Category{
 // FixedCategories are always visible in the headline bar even when count is zero.
 var FixedCategories = map[string]bool{"build": true, "shell": true}
 
+// RuntimeCategories are the dynamic language/runtime category names (non-fixed).
+var RuntimeCategories []string
+
+func init() {
+	for _, cat := range Categories {
+		if !FixedCategories[cat.Name] {
+			RuntimeCategories = append(RuntimeCategories, cat.Name)
+		}
+	}
+}
+
 // TypeToCategory maps type codes to process-based category names.
 var TypeToCategory = map[string]string{
 	"V":  "node",   // vitest/jest show up as node in ps

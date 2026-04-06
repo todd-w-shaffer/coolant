@@ -116,6 +116,10 @@ var CatThresholds = map[string][2]int{
 // Default category thresholds when category name is unknown.
 var CatThresholdDefault = [2]int{10, 25}
 
+// ShellExplosionThreshold is the shell count at which a session is considered
+// in the "shell explosion" phase (language → build → shell dance).
+const ShellExplosionThreshold = 30
+
 // ── Gauge sparkline thresholds ─────────────────────────────
 
 const (

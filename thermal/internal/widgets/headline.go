@@ -150,18 +150,25 @@ func (h *Headline) View() string {
 		iconVisWidth += numDots
 	}
 
+	// Render session phase diamonds
+	var sessions []collector.SessionTree
+	if h.state.Current != nil {
+		sessions = h.state.Current.Sessions
+	}
+	sessionStr, sessionVisWidth := renderSessionDiamonds(sessions, iconBg)
+
 	// Build overall cell
 	var overallCell string
 	if !h.state.Online {
 		quip := model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
 		bg := lipgloss.Color("67")
 		fg := lipgloss.Color("#000000")
-		overallCell = h.buildOverallCell(quip, fg, bg, iconStr, iconVisWidth, overallWidth)
+		overallCell = h.buildOverallCell(quip, fg, bg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
 	} else {
 		overallLevel := threatToThermal(h.state.ThreatLevel)
 		overallThermal := overallGradient[overallLevel]
 		quip := h.state.StableQuip()
-		overallCell = h.buildOverallCell(quip, overallThermal.fg, overallThermal.bg, iconStr, iconVisWidth, overallWidth)
+		overallCell = h.buildOverallCell(quip, overallThermal.fg, overallThermal.bg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
 	}
 
 	// Render dynamic cells (left of fixed, grow leftward)
@@ -179,16 +186,21 @@ func (h *Headline) View() string {
 	return overallCell + strings.Join(dynamicCells, "") + strings.Join(fixedCells, "")
 }
 
-// buildOverallCell constructs the overall headline cell with quip left-aligned
-// and agent icons right-aligned, all sharing the same background.
-func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr string, iconVisWidth, totalWidth int) string {
-	// iconMargin: 1 cell gap between quip and icons when icons are present
+// buildOverallCell constructs the overall headline cell with quip left-aligned,
+// agent icons and session diamonds right-aligned, all sharing the same background.
+func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr string, iconVisWidth int, sessionStr string, sessionVisWidth int, totalWidth int) string {
+	// Margins between sections
 	iconMargin := 0
 	if iconVisWidth > 0 {
 		iconMargin = 1
 	}
+	sessionMargin := 0
+	if sessionVisWidth > 0 {
+		sessionMargin = 1
+	}
 
-	maxQuip := totalWidth - 2 - iconVisWidth - iconMargin
+	rightWidth := iconVisWidth + iconMargin + sessionVisWidth + sessionMargin
+	maxQuip := totalWidth - 2 - rightWidth
 	if maxQuip < 0 {
 		maxQuip = 0
 	}
@@ -201,16 +213,56 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr str
 
 	left := baseStyle.Render(" " + quip)
 
-	padWidth := totalWidth - 1 - len(quip) - iconVisWidth - iconMargin
+	padWidth := totalWidth - 1 - len(quip) - rightWidth
 	if padWidth < 0 {
 		padWidth = 0
 	}
 	pad := bgStyle.Render(strings.Repeat(" ", padWidth))
 
-	if iconVisWidth == 0 {
-		return left + pad
+	var right strings.Builder
+	if iconVisWidth > 0 {
+		right.WriteString(iconStr)
 	}
-	return left + pad + iconStr + bgStyle.Render(" ")
+	if sessionVisWidth > 0 {
+		if iconVisWidth > 0 {
+			right.WriteString(bgStyle.Render(" "))
+		}
+		right.WriteString(sessionStr)
+	}
+	if iconVisWidth > 0 || sessionVisWidth > 0 {
+		right.WriteString(bgStyle.Render(" "))
+	}
+
+	return left + pad + right.String()
+}
+
+// renderSessionDiamonds renders phase-colored ⌬ icons for each session,
+// placed on the given background. Returns the rendered string and its visual width.
+func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color) (string, int) {
+	if len(sessions) == 0 {
+		return "", 0
+	}
+
+	groups := sessionGroupCounts(sessions)
+	bgStyle := lipgloss.NewStyle().Background(bg)
+
+	var sb strings.Builder
+	visWidth := 0
+	for i, g := range groups {
+		if i > 0 {
+			sb.WriteString(bgStyle.Render(" "))
+			visWidth++
+		}
+		var c color.Color
+		if g.total() == 0 {
+			c = phaseIdle
+		} else {
+			c = sessionPhaseColor(&g)
+		}
+		sb.WriteString(lipgloss.NewStyle().Foreground(c).Background(bg).Render("⌬"))
+		visWidth++
+	}
+	return sb.String(), visWidth
 }
 
 func threatToThermal(t model.ThreatLevel) int {
