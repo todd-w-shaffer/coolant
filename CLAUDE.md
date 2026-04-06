@@ -36,6 +36,7 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 
 ```
 .claude-plugin/plugin.json   # plugin manifest
+.claude-plugin/marketplace.json  # marketplace definition (GitHub distribution)
 hooks/hooks.json             # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
 scripts/common.sh            # shared config, paths, log + JSONL event functions
 scripts/toggle.sh            # manual parallel mode on/off/status
