@@ -9,7 +9,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 )
 
-var demoTypes = []string{"N", "S", "C", "P", "T", "GO", "RS", "X"}
+var demoTypes = []string{"N", "S", "C", "P", "T", "GO", "RS", "SW", "X"}
 
 // RunV2 generates synthetic Snapshots for the new layout modes.
 // It simulates a realistic scenario: calm → ramp → hot → cool down, cycling.
@@ -106,6 +106,8 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			switch typeCode {
 			case "V", "N":
 				rss = int64(500+rand.Intn(1000)) * model.MB // 500MB-1.5GB
+			case "SW":
+				rss = int64(200+rand.Intn(600)) * model.MB // 200MB-800MB (swiftc per-module)
 			case "T", "P":
 				rss = int64(100+rand.Intn(300)) * model.MB // 100-400MB
 			default:
@@ -246,6 +248,8 @@ func typeCodeToComm(code string) string {
 		return "go"
 	case "RS":
 		return "cargo"
+	case "SW":
+		return "swiftc"
 	case "S":
 		return "bash"
 	case "C":

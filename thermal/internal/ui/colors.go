@@ -70,6 +70,7 @@ var TypeColor = map[string]color.Color{
 	"T":  lipgloss.Color("14"),  // bright cyan — tsc
 	"GO": lipgloss.Color("6"),   // cyan — go
 	"RS": lipgloss.Color("208"), // orange — rust
+	"SW": lipgloss.Color("166"), // deep orange — swift
 	"X":  lipgloss.Color("8"),   // gray — other
 }
 
@@ -81,6 +82,7 @@ var CategoryColor = map[string]color.Color{
 	"go":     lipgloss.Color("6"),   // cyan — Go runtime
 	"python": lipgloss.Color("11"),  // bright yellow — Python
 	"rust":   lipgloss.Color("208"), // orange — Rust compilation
+	"swift":  lipgloss.Color("166"), // deep orange — Swift compilation
 }
 
 // SessionGlyph is the diamond icon for session markers in the rates row.
@@ -101,6 +103,7 @@ var CategoryGlyph = map[string]string{
 	"go":     "◆", // diamond — Go runtime
 	"python": "▲", // triangle — Python
 	"rust":   "◇", // hollow diamond — Rust
+	"swift":  "⬡", // hexagon — Swift
 }
 
 // CategoryGlyphDefault is used when category is unknown.

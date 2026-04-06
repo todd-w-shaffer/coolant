@@ -41,6 +41,15 @@ var commToType = map[string]string{
 	"cargo": "RS",
 	"rustc": "RS",
 
+	// Swift runtime (SW)
+	"swift":          "SW",
+	"swiftc":         "SW",
+	"swift-frontend": "SW",
+	"swift-build":    "SW",
+	"sourcekit-lsp":  "SW",
+	"xcodebuild":     "SW",
+	"xctest":         "SW",
+
 	// Runtime (N = node, P = python/etc)
 	"node":    "N",
 	"nodejs":  "N",

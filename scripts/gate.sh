@@ -77,8 +77,10 @@ cap_flag() {
     vitest) printf '%s' "--maxConcurrency" ;;
     jest)   printf '%s' "--maxWorkers" ;;
     pytest) printf '%s' "-n" ;;
-    cargo)  if [ "$sub" = "test" ]; then printf '%s' "-j"; fi ;;
-    go)     if [ "$sub" = "test" ]; then printf '%s' "-parallel"; fi ;;
+    cargo)      if [ "$sub" = "test" ]; then printf '%s' "-j"; fi ;;
+    go)         if [ "$sub" = "test" ]; then printf '%s' "-parallel"; fi ;;
+    swift)      if [ "$sub" = "test" ]; then printf '%s' "-j"; fi ;;
+    xcodebuild) if [ "$sub" = "test" ]; then printf '%s' "-parallel-testing-worker-count"; fi ;;
   esac
 }
 
@@ -179,8 +181,21 @@ case "$binary" in
       build|vet)  gate_suppress "$command" ;;
     esac
     ;;
+  # Multi-word: Swift
+  swift)
+    case "$subcommand" in
+      test)       gate_cap "$command" "$binary" "$subcommand" ;;
+      build)      gate_suppress "$command" ;;
+    esac
+    ;;
+  xcodebuild)
+    case "$subcommand" in
+      test)                   gate_cap "$command" "$binary" "$subcommand" ;;
+      build|archive|analyze)  gate_suppress "$command" ;;
+    esac
+    ;;
   # Suppress-only targets
-  mypy|pylint|ruff)
+  swiftlint|mypy|pylint|ruff)
     gate_suppress "$command"
     ;;
   gradle|mvn|javac)

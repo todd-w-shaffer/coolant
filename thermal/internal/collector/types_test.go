@@ -17,7 +17,7 @@ func TestCommToTypeCoveredByTypeToCategory(t *testing.T) {
 func TestCategoriesContainExpectedNames(t *testing.T) {
 	expected := map[string]bool{
 		"build": true, "shell": true,
-		"node": true, "go": true, "python": true, "rust": true,
+		"node": true, "go": true, "python": true, "rust": true, "swift": true,
 	}
 	found := make(map[string]bool)
 	for _, cat := range Categories {
@@ -53,6 +53,32 @@ func TestTypeToCategory_GoAndRust(t *testing.T) {
 	}
 	if TypeToCategory["RS"] != "rust" {
 		t.Errorf("TypeToCategory[RS] = %q, want rust", TypeToCategory["RS"])
+	}
+}
+
+func TestTypeToCategory_Swift(t *testing.T) {
+	if TypeToCategory["SW"] != "swift" {
+		t.Errorf("TypeToCategory[SW] = %q, want swift", TypeToCategory["SW"])
+	}
+}
+
+func TestClassifySwiftBinaries(t *testing.T) {
+	cases := []struct {
+		comm string
+		want string
+	}{
+		{"swift", "SW"},
+		{"swiftc", "SW"},
+		{"swift-frontend", "SW"},
+		{"swift-build", "SW"},
+		{"sourcekit-lsp", "SW"},
+		{"xcodebuild", "SW"},
+		{"xctest", "SW"},
+	}
+	for _, tc := range cases {
+		if got := classifyComm(tc.comm); got != tc.want {
+			t.Errorf("classifyComm(%q) = %q, want %q", tc.comm, got, tc.want)
+		}
 	}
 }
 
