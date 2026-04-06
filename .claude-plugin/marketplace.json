@@ -1,0 +1,16 @@
+{
+  "name": "coolant",
+  "description": "Resource management for Claude Code — prevents machines from melting when parallel agents run unthrottled",
+  "owner": {
+    "name": "Todd Shaffer",
+    "url": "https://github.com/todd-w-shaffer"
+  },
+  "plugins": [
+    {
+      "name": "coolant",
+      "description": "Thermal management for Claude Code — caps test runner concurrency, suppresses build tools during parallel mode",
+      "source": ".",
+      "category": "development"
+    }
+  ]
+}
