@@ -141,14 +141,7 @@ func (h *Headline) View() string {
 		overallLevel := threatToThermal(h.state.ThreatLevel)
 		iconBg = overallGradient[overallLevel].bg
 	}
-	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyph, iconBg, 0)
-	// AgentGlyph is emoji (2 cells wide) — Render counts 1 per glyph, add the extra cell per icon
-	if iconVisWidth > 0 {
-		// visWidth = numDots + numSpacers, numDots = (visWidth+1)/2 for single-cell
-		// For 2-cell glyph, add numDots extra cells
-		numDots := (iconVisWidth + 1) / 2
-		iconVisWidth += numDots
-	}
+	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyphHollow, ui.AgentGlyphFilled, iconBg, 0)
 
 	// Render session phase diamonds
 	var sessions []collector.SessionTree
