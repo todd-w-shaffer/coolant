@@ -83,8 +83,14 @@ var CategoryColor = map[string]color.Color{
 	"rust":   lipgloss.Color("208"), // orange — Rust compilation
 }
 
-// SessionGlyph is the diamond icon for session/agent markers.
+// SessionGlyph is the diamond icon for session markers in the rates row.
 const SessionGlyph = "◆"
+
+// AgentGlyph is the space invader icon for breathing agent indicators.
+const AgentGlyph = "👾"
+
+// AgentGlyphWidth is the cell width of AgentGlyph (emoji = 2 cells).
+const AgentGlyphWidth = 2
 
 // CategoryGlyph maps activity categories to distinct single-cell unicode glyphs.
 // Visual weight mirrors resource weight: heavy categories get solid shapes.
