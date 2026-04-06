@@ -92,25 +92,25 @@ func (h *Horizontal) View() string {
 	var lines []string
 
 	// Line 1: Notification bar (collapses away with [c], hidden when empty)
-	if !h.collapsed && h.height >= 2 {
+	if !h.collapsed && h.height >= 3 {
 		if bar := h.notificationBar(); bar != "" {
 			lines = append(lines, bar)
 		}
 	}
 
-	// Line 2: Thermal bar (overall + categories)
-	if h.height >= 2 {
+	// Line 1-2: Thermal bar (overall + categories)
+	if h.height >= 1 {
 		lines = append(lines, h.headline.View())
 	}
 
 	// Lines 3-8: 2-row sparklines (6 lines) or help overlay
 	if h.helpMode && h.height >= 5 {
 		lines = append(lines, h.helpView()...)
-	} else if h.height >= 4 {
+	} else if h.height >= 3 {
 		gaugeLines := strings.Split(h.gauges.View(), "\n")
-		if h.height >= 8 {
+		if h.height >= 7 {
 			lines = append(lines, gaugeLines...)
-		} else if h.height >= 6 && len(gaugeLines) >= 4 {
+		} else if h.height >= 5 && len(gaugeLines) >= 4 {
 			lines = append(lines, gaugeLines[0], gaugeLines[1])
 			lines = append(lines, gaugeLines[2], gaugeLines[3])
 		} else if len(gaugeLines) >= 2 {
@@ -155,7 +155,7 @@ func (h *Horizontal) idleView() string {
 
 	var lines []string
 
-	if !h.collapsed {
+	if !h.collapsed && h.height >= 3 {
 		if bar := h.notificationBar(); bar != "" {
 			lines = append(lines, bar)
 		}
@@ -174,6 +174,9 @@ func (h *Horizontal) idleView() string {
 
 	for len(lines) < h.height {
 		lines = append(lines, "")
+	}
+	if len(lines) > h.height {
+		lines = lines[:h.height]
 	}
 
 	return strings.Join(lines, "\n")
