@@ -112,8 +112,13 @@ func TestClassifyComm(t *testing.T) {
 		// Build tools
 		{"webpack", "B"},
 		{"eslint", "B"},
-		{"cargo", "B"},
-		{"go", "B"},
+
+		// Go runtime
+		{"go", "GO"},
+
+		// Rust runtime
+		{"cargo", "RS"},
+		{"rustc", "RS"},
 
 		// Runtimes
 		{"node", "N"},

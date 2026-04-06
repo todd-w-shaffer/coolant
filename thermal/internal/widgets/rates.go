@@ -132,7 +132,7 @@ type sessionGroup struct {
 }
 
 // numCategories is len(collector.Categories), known at compile time.
-const numCategories = 5
+const numCategories = 6
 
 // catIndex maps category name → fixed array index. Built once at init.
 var catIndex map[string]int

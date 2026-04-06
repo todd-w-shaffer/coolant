@@ -84,34 +84,40 @@ func (s Snapshot) TotalProcs() int {
 	return len(s.AllProcs)
 }
 
-// Category represents what Claude is doing, not what executable is running.
+// Category represents a process-based grouping visible in the dashboard.
 type Category struct {
-	Name  string // "test", "build", "run", "search", "shell"
+	Name  string // "build", "shell", "node", "go", "python", "rust"
 	Label string // Display label
-	Order int    // Sort order (0 = first/most dangerous)
+	Order int    // Sort order (0 = first in headline)
 }
 
-// Default categories — hardcoded V1, will be config-driven later.
+// Categories — process-based, matching what ps actually reports.
+// Fixed categories (build, shell) always visible; runtimes appear dynamically.
 var Categories = []Category{
-	{Name: "test", Label: "test", Order: 0},
-	{Name: "build", Label: "build", Order: 1},
-	{Name: "run", Label: "run", Order: 2},
-	{Name: "search", Label: "search", Order: 3},
-	{Name: "shell", Label: "shell", Order: 4},
+	{Name: "build", Label: "build", Order: 0},
+	{Name: "shell", Label: "shell", Order: 1},
+	{Name: "node", Label: "node", Order: 2},
+	{Name: "go", Label: "go", Order: 3},
+	{Name: "python", Label: "python", Order: 4},
+	{Name: "rust", Label: "rust", Order: 5},
 }
 
-// TypeToCategory maps single-char type codes to category names.
-// Designed as a lookup table so it's easy to swap for config-driven mapping later.
+// FixedCategories are always visible in the headline bar even when count is zero.
+var FixedCategories = map[string]bool{"build": true, "shell": true}
+
+// TypeToCategory maps type codes to process-based category names.
 var TypeToCategory = map[string]string{
-	"V": "test",   // vitest, jest, mocha, pytest
-	"T": "build",  // tsc
-	"B": "build",  // bundlers, linters, compilers
-	"N": "run",    // node, deno, bun
-	"P": "run",    // python, ruby, java, docker
-	"G": "search", // grep, ag
-	"R": "search", // ripgrep
-	"F": "search", // find, fd
-	"S": "shell",  // bash, sh, zsh, sed, awk
-	"C": "shell",  // cat, git, curl, wget
-	"X": "shell",  // unknown
+	"V":  "node",   // vitest/jest show up as node in ps
+	"T":  "build",  // tsc
+	"B":  "build",  // bundlers, linters, compilers
+	"N":  "node",   // node, deno, bun
+	"P":  "python", // python, ruby, java, docker
+	"GO": "go",     // go binary
+	"RS": "rust",   // cargo, rustc
+	"G":  "shell",  // grep, ag
+	"R":  "shell",  // ripgrep
+	"F":  "shell",  // find, fd
+	"S":  "shell",  // bash, sh, zsh, sed, awk
+	"C":  "shell",  // cat, git, curl, wget
+	"X":  "shell",  // unknown
 }

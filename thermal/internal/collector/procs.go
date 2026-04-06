@@ -29,13 +29,17 @@ var commToType = map[string]string{
 	"turbo":    "B",
 	"eslint":   "B",
 	"prettier": "B",
-	"rustc":    "B",
-	"cargo":    "B",
-	"go":       "B",
 	"javac":    "B",
 	"gcc":      "B",
 	"clang":    "B",
 	"make":     "B",
+
+	// Go runtime (GO)
+	"go": "GO",
+
+	// Rust runtime (RS)
+	"cargo": "RS",
+	"rustc": "RS",
 
 	// Runtime (N = node, P = python/etc)
 	"node":    "N",

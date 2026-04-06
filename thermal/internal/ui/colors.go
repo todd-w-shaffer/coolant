@@ -59,25 +59,28 @@ func init() {
 
 // TypeColor maps process type codes to lipgloss colors, shared across all widgets.
 var TypeColor = map[string]color.Color{
-	"N": lipgloss.Color("2"),  // green — node
-	"G": lipgloss.Color("3"),  // yellow — grep
-	"V": lipgloss.Color("1"),  // red — vitest
-	"S": lipgloss.Color("6"),  // cyan — shell
-	"R": lipgloss.Color("5"),  // magenta — ripgrep
-	"F": lipgloss.Color("4"),  // blue — find
-	"C": lipgloss.Color("7"),  // white — claude
-	"P": lipgloss.Color("11"), // bright yellow — python
-	"T": lipgloss.Color("14"), // bright cyan — tsc
-	"X": lipgloss.Color("8"),  // gray — other
+	"N":  lipgloss.Color("2"),   // green — node
+	"G":  lipgloss.Color("3"),   // yellow — grep
+	"V":  lipgloss.Color("1"),   // red — vitest
+	"S":  lipgloss.Color("6"),   // cyan — shell
+	"R":  lipgloss.Color("5"),   // magenta — ripgrep
+	"F":  lipgloss.Color("4"),   // blue — find
+	"C":  lipgloss.Color("7"),   // white — claude
+	"P":  lipgloss.Color("11"),  // bright yellow — python
+	"T":  lipgloss.Color("14"),  // bright cyan — tsc
+	"GO": lipgloss.Color("6"),   // cyan — go
+	"RS": lipgloss.Color("208"), // orange — rust
+	"X":  lipgloss.Color("8"),   // gray — other
 }
 
-// CategoryColor maps activity categories to lipgloss colors.
+// CategoryColor maps process-based categories to lipgloss colors.
 var CategoryColor = map[string]color.Color{
-	"test":   lipgloss.Color("1"),   // red — the machine killer
 	"build":  lipgloss.Color("208"), // orange — heavy but finite
-	"run":    lipgloss.Color("3"),   // yellow — runtime processes
-	"search": lipgloss.Color("4"),   // blue — lightweight exploration
 	"shell":  lipgloss.Color("8"),   // gray — ephemeral
+	"node":   lipgloss.Color("2"),   // green — JS runtime
+	"go":     lipgloss.Color("6"),   // cyan — Go runtime
+	"python": lipgloss.Color("11"),  // bright yellow — Python
+	"rust":   lipgloss.Color("208"), // orange — Rust compilation
 }
 
 // SessionGlyph is the diamond icon for session/agent markers.
@@ -86,11 +89,12 @@ const SessionGlyph = "◆"
 // CategoryGlyph maps activity categories to distinct single-cell unicode glyphs.
 // Visual weight mirrors resource weight: heavy categories get solid shapes.
 var CategoryGlyph = map[string]string{
-	"test":   "▲", // triangle — danger, the machine killer
 	"build":  "■", // square — solid, heavy
-	"run":    "●", // circle — standard process
-	"search": "◇", // hollow diamond — lightweight
 	"shell":  "·", // middle dot — ephemeral
+	"node":   "●", // circle — JS runtime
+	"go":     "◆", // diamond — Go runtime
+	"python": "▲", // triangle — Python
+	"rust":   "◇", // hollow diamond — Rust
 }
 
 // CategoryGlyphDefault is used when category is unknown.
