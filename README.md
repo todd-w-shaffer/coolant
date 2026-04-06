@@ -14,7 +14,7 @@ The **dashboard** gives you a real-time read on system pressure so you know when
 
 ```bash
 # Clone and build the dashboard
-git clone https://github.com/toddwshaffer/coolant.git
+git clone https://github.com/todd-w-shaffer/coolant.git
 cd coolant/thermal
 go build -o ../bin/thermal ./cmd/thermal/
 
