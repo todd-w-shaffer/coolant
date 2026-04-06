@@ -110,6 +110,7 @@ var CatThresholds = map[string][2]int{
 	"go":     {1, 4},   // warm on first appearance — heavier per-process
 	"python": {1, 6},   // warm on first appearance — variable weight
 	"rust":   {1, 4},   // warm on first appearance — heavy compilation
+	"swift":  {1, 4},   // warm on first appearance — heavy compilation + linking
 }
 
 // Default category thresholds when category name is unknown.

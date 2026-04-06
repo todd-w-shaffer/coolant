@@ -86,7 +86,7 @@ func (s Snapshot) TotalProcs() int {
 
 // Category represents a process-based grouping visible in the dashboard.
 type Category struct {
-	Name  string // "build", "shell", "node", "go", "python", "rust"
+	Name  string // "build", "shell", "node", "go", "python", "rust", "swift"
 	Label string // Display label
 	Order int    // Sort order (0 = first in headline)
 }
@@ -100,6 +100,7 @@ var Categories = []Category{
 	{Name: "go", Label: "go", Order: 3},
 	{Name: "python", Label: "python", Order: 4},
 	{Name: "rust", Label: "rust", Order: 5},
+	{Name: "swift", Label: "swift", Order: 6},
 }
 
 // FixedCategories are always visible in the headline bar even when count is zero.
@@ -114,6 +115,7 @@ var TypeToCategory = map[string]string{
 	"P":  "python", // python, ruby, java, docker
 	"GO": "go",     // go binary
 	"RS": "rust",   // cargo, rustc
+	"SW": "swift",  // swift, swiftc, xcodebuild
 	"G":  "shell",  // grep, ag
 	"R":  "shell",  // ripgrep
 	"F":  "shell",  // find, fd

@@ -373,3 +373,51 @@ run_gate() {
   out=$(run_gate Bash "tsc --noEmit") || true
   [ -z "$out" ]
 }
+
+# ── Pattern matching: Swift ────────────────────────────────
+
+@test "gate caps swift test (not deny)" {
+  touch "$COOLANT_LOCKFILE"
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "swift test")
+  [[ "$out" == *"allow"* ]]
+  [[ "$out" == *"updatedInput"* ]]
+}
+
+@test "gate recognizes swift build" {
+  touch "$COOLANT_LOCKFILE"
+  local out
+  out=$(run_gate Bash "swift build")
+  [[ "$out" == *"deny"* ]]
+}
+
+@test "gate recognizes xcodebuild build" {
+  touch "$COOLANT_LOCKFILE"
+  local out
+  out=$(run_gate Bash "xcodebuild build")
+  [[ "$out" == *"deny"* ]]
+}
+
+@test "gate recognizes xcodebuild test with cap" {
+  touch "$COOLANT_LOCKFILE"
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "xcodebuild test")
+  [[ "$out" == *"allow"* ]]
+  [[ "$out" == *"updatedInput"* ]]
+}
+
+@test "gate recognizes swiftlint" {
+  touch "$COOLANT_LOCKFILE"
+  local out
+  out=$(run_gate Bash "swiftlint")
+  [[ "$out" == *"deny"* ]]
+}
+
+@test "gate allows swift without gated subcommand" {
+  touch "$COOLANT_LOCKFILE"
+  local out
+  out=$(run_gate Bash "swift package resolve") || true
+  [[ "$out" != *"deny"* ]]
+}

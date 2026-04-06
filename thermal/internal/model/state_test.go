@@ -109,6 +109,20 @@ func TestCategoryCountsPopulated(t *testing.T) {
 	}
 }
 
+func TestCategoryCountsIncludeSwift(t *testing.T) {
+	s := NewAppState()
+	procs := []collector.ProcessInfo{
+		{PID: 1, TypeCode: "SW"}, // swift
+		{PID: 2, TypeCode: "SW"}, // swift
+		{PID: 3, TypeCode: "N"},  // node
+	}
+	s.Update(testSnap(t, withProcs(procs)))
+
+	if got := s.CategoryCounts["swift"]; got != 2 {
+		t.Errorf("CategoryCounts[swift] = %d, want 2", got)
+	}
+}
+
 func TestTypeCountsClearedBetweenUpdates(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
