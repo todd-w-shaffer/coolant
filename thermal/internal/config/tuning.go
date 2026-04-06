@@ -91,8 +91,9 @@ const (
 // ── EMA smoothing ──────────────────────────────────────────
 
 const (
-	CountSmoothAlpha = 0.08 // type/category count EMA — slow decay so dynamic runtimes linger visibly
-	RateSmoothAlpha  = 0.3  // spawn/death rate EMA
+	CountSmoothAlpha   = 0.15 // type/category count EMA — fixed categories (build, shell)
+	RuntimeSmoothAlpha = 0.05 // slower decay for dynamic runtimes — linger ~6s after processes exit
+	RateSmoothAlpha    = 0.3  // spawn/death rate EMA
 )
 
 // ── Idle personality ───────────────────────────────────────

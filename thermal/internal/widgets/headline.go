@@ -69,13 +69,20 @@ func visibleCategories(smoothed map[string]float64) []collector.Category {
 }
 
 // renderCatCell renders a single category box at the given width.
+// Fixed categories show "name:NNN", dynamic runtimes show just "name".
 func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidth int) string {
 	s := smoothed[cat.Name]
 	count := int(math.Round(s))
 	level := thermalLevelFor(cat.Name, count)
 	thermal := thermalGradient[level]
 
-	content := fmt.Sprintf("%s:%03d", cat.Label, count)
+	var content string
+	if collector.FixedCategories[cat.Name] {
+		content = fmt.Sprintf("%s:%03d", cat.Label, count)
+	} else {
+		content = cat.Label
+	}
+
 	padTotal := cellWidth - len(content)
 	padLeft := padTotal / 2
 	padRight := padTotal - padLeft
@@ -114,9 +121,10 @@ func (h *Headline) View() string {
 	dynamicCount := len(dynamic)
 
 	// Overall cell gets what's left after fixed and dynamic
+	// Dynamic cells are compact — just the label, no count (e.g. " node " = 8 chars)
 	dynamicCellWidth := 0
 	if dynamicCount > 0 {
-		dynamicCellWidth = fixedCellWidth + 2 // slightly wider than fixed for readability
+		dynamicCellWidth = 8
 	}
 	dynamicTotalWidth := dynamicCount * dynamicCellWidth
 
