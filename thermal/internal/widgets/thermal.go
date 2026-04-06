@@ -4,6 +4,7 @@ import (
 	"image/color"
 
 	"charm.land/lipgloss/v2"
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
@@ -35,14 +36,21 @@ func thermalLevelFor(catName string, count int) int {
 		return 0
 	}
 
+	// Fixed categories (build, shell) stay cold below warm — low counts are normal.
+	// Dynamic runtimes get level 1 (amber) on any presence — their appearance is the signal.
+	if count < warm {
+		if collector.FixedCategories[catName] {
+			return 0
+		}
+		return 1
+	}
+
 	switch {
 	case count >= hot:
 		return 4
 	case count >= (warm+hot)/2:
 		return 3
-	case count >= warm:
-		return 2
 	default:
-		return 1
+		return 2
 	}
 }
