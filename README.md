@@ -1,241 +1,86 @@
 # coolant
 
-**A resource management layer for Claude Code.**
+A resource management layer for Claude Code -- prevents machines from melting when parallel agents run unthrottled.
 
-Claude Code has no awareness of the physical machine it's running on. When it spawns parallel agents, each one assumes it owns the system — launching independent `tsc`, `vitest`, and bundler processes that compete for CPU and RAM simultaneously. On a 16GB MacBook Pro with 6-15 concurrent agents, this cascade can consume 85GB of swap and freeze the machine for minutes.
-
-Coolant sits between Claude Code and your hardware. It senses system state, tracks agent processes, and throttles work to keep your machine responsive.
+![thermal dashboard](assets/thermal-demo.gif)
 
 ## What it does
 
-### Tool gating (v1)
+The thermal dashboard is a real-time system monitor built for Claude Code. It renders CPU, MEM, and SWAP as double-resolution braille sparklines with severity coloring that shifts from green through yellow to red as pressure builds. Session diamonds on the headline bar encode the language-build-shell escalation dance -- each Claude Code session's diamond changes color as it progresses through compilation phases (gray idle, green active, yellow language/compile, orange build tools, red shell explosion). Breathing space invader icons in Anthropic orange show active subagents at a glance.
 
-- **Adaptive concurrency capping** — Test runners are automatically capped based on active agent count: `cap = floor((cores - 2) / agents)`. One agent gets generous concurrency; five agents each get a fair share. No configuration needed.
+Under the hood, coolant's hook system prevents resource exhaustion without any manual intervention. A gate hook caps concurrent test runners based on active agent count and suppresses build tools during parallel mode. Agent lifecycle hooks track spawn and death counts via structured JSONL events. The whole system runs without external dependencies -- just bash 3.2 and macOS system APIs for collection, Go and bubbletea for rendering.
 
-  | Tool | Concurrency flag |
-  |------|-----------------|
-  | vitest | `--maxConcurrency N` |
-  | jest | `--maxWorkers N` |
-  | cargo test | `-j N` |
-  | go test | `-parallel N` |
-  | pytest | `-n N` |
-
-- **Build tool suppression** — Type checkers, linters, and build tools are suppressed during parallel mode (3+ agents):
-
-  | Ecosystem | Suppressed commands |
-  |-----------|-------------------|
-  | TypeScript/Node | `tsc`, `eslint`, `prettier`, `webpack`, `esbuild`, `vite build` |
-  | Rust | `cargo build`, `cargo clippy`, `cargo check` |
-  | Go | `go build`, `go vet` |
-  | Python | `mypy`, `pylint`, `ruff` |
-  | Java | `gradle`, `mvn`, `javac` |
-
-  Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes (`/usr/local/bin/tsc`).
-
-- **Agent counting** — `SubagentStart`/`SubagentStop` hooks track how many agents are alive. When the count crosses a configurable threshold (default: 3), parallel mode auto-engages. When agents finish, it disengages. No manual intervention.
-
-- **Staggered validation** — The `/coolant:parallel` skill reminds the orchestrating agent to run `check` and `build` sequentially after all agents complete, not concurrently across agents.
-
-- **JSONL event stream** — All hook activity (agent lifecycle, gating decisions, mode changes) is emitted as structured JSONL events, consumed by the thermal dashboard for real-time visibility.
-
-### System monitoring (v2)
-
-- **Live dashboard** — A terminal TUI (`monitor.sh`) that runs alongside your Claude session. Designed for a tmux side pane, built with braille-character rendering.
-
-- **Process-tree awareness** — Not just "how many node processes exist" but "which specific processes descended from this Claude session and how much CPU/memory are they using." Uses `ps` process ancestry to trace the exact subtree.
-
-- **System sensors** — CPU utilization via mach `host_statistics` (same API as Activity Monitor), memory via `vm_stat`, swap via `sysctl` — no third-party dependencies.
-
-- **Event logging** — Every mode change, agent start/stop, and hook suppression is logged with timestamps, visible in the monitor's event panel.
-
-### Thermal dashboard
-
-A terminal dashboard that monitors Claude Code's process tree in real time. Built in Go with [bubbletea](https://github.com/charmbracelet/bubbletea) and [lipgloss](https://github.com/charmbracelet/lipgloss) — a single binary collects system data directly and renders a thermal strip.
-
-- **Thermal headline** — Overall threat level with personality quip + five category boxes (test/build/run/search/shell) that glow from invisible to red based on per-category danger thresholds.
-
-- **Braille sparklines** — CPU%, MEM%, and compressor decompressions/tick as severity-colored braille bars (green/yellow/red). The compressor row is the earliest leading indicator of memory pressure — it spikes 10-20s before your machine locks up.
-
-- **Rates + stats** — System stats with colored dots linking to their sparklines (CPU, MEM, SWAP), spawn/death/net rates, and a permanent `[h]` help toggle.
-
-- **Offline detection** — Detects API connectivity loss and switches to a distinct visual mode with rainbow sparklines.
-
-- **Help overlay** — Press `h` to replace sparklines with plain-language descriptions of what each metric measures and why. Press `h` again to dismiss.
-
-- **Notification bar** — Shows install CTA when plugin is not detected. Hides automatically once the plugin is active.
-
-## Prerequisites
-
-- **macOS or Linux** (bash 3.2+)
-- **Go 1.26+** — for building the thermal dashboard (`brew install go`)
-- **tmux** — optional, if you want to run the thermal dashboard alongside your Claude session in a split (`brew install tmux`)
-- **bats-core** — optional, for running tests (`brew install bats-core`)
-
-## Installation
+## Quick start
 
 ```bash
-# 1. Install the Claude Code plugin
-#    Option A: Add to a local marketplace and install
-ln -s /path/to/coolant /path/to/your/marketplace/plugins/coolant
-claude plugin install coolant@your-marketplace --scope user
+# Clone and build the dashboard
+git clone https://github.com/toddwshaffer/coolant.git
+cd coolant/thermal
+go build -o ../bin/thermal ./cmd/thermal/
 
-#    Option B: Load directly for development (per-session)
+# See it in action (synthetic demo data)
+../bin/thermal --demo
+
+# Or monitor your real system
+../bin/thermal
+```
+
+Then install as a Claude Code plugin:
+
+```bash
+# Run Claude Code with coolant loaded
 claude --plugin-dir /path/to/coolant
 
-# 2. Build the thermal dashboard
-cd thermal && go build -o ../bin/thermal ./cmd/thermal/
+# Or install permanently (when supported)
+# claude plugin install coolant
 ```
 
-## Usage
+## The dashboard
 
-### Automatic mode
+The thermal dashboard runs as a single bottom-strip panel -- designed for a tmux split pane alongside your Claude Code session.
 
-Coolant works automatically once installed. Hooks count active agents and engage parallel mode at the threshold.
+- **Braille startup labels** -- CPU, MEM, and SWAP spelled out in braille dot art when the dashboard starts, scrolling off as real data fills in.
+- **Severity sparklines** -- 2-row braille sparklines (2 samples per character) with a green-yellow-red severity gradient. Spring-animated numeric readouts bounce to their target values.
+- **Session phase diamonds** -- Each diamond on the headline represents a Claude Code session. Color encodes escalation phase: gray (idle), green (active), yellow (language/compile), orange (build tools), red (shell explosion, 30+ processes).
+- **Agent icons** -- Breathing space invaders in Anthropic orange, one per active subagent.
+- **Headline categories** -- `build:NNN` and `shell:NNN` counts plus dynamic runtime labels (`node`, `go`, `python`, `rust`, `swift`) that appear and disappear based on what processes are actually running.
+- **System gauges** -- CPU/MEM/SWAP/GPU readouts, warm/cool/net spawn rates, Desktop/Chrome indicators.
 
-### Manual override
+Keyboard shortcuts: `h` help overlay, `q` quit.
 
-```
-/coolant:parallel on      # force parallel mode on
-/coolant:parallel off     # force parallel mode off
-/coolant:parallel status  # check current state
-```
+## Hooks
 
-### Thermal dashboard
+| Hook | Script | What it does |
+|------|--------|--------------|
+| SessionStart | `preflight.sh` | Warns about missing worktree exclusions |
+| PreToolUse | `gate.sh` | Caps test runners by agent count, suppresses build tools in parallel mode |
+| SubagentStart | `agent-start.sh` | Increments agent counter, emits JSONL event |
+| SubagentStop | `agent-stop.sh` | Decrements counter, auto-disengages parallel mode when agents finish |
 
-```bash
-# Standalone — Go binary collects system data directly
-./bin/thermal
+The gate applies adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. One agent gets generous parallelism; five agents each get a fair share. Test runners (vitest, jest, cargo test, go test, pytest) are always capped. Build tools, type checkers, and linters (tsc, eslint, cargo build, go vet, mypy, etc.) are suppressed entirely during parallel mode. Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes.
 
-# Demo mode — synthetic data, no live Claude session needed
-./bin/thermal --demo
-```
+## Skills
 
-Keyboard shortcuts: `h` help, `q` quit.
+`/coolant:parallel` -- Toggle parallel mode to suppress per-edit typecheck hooks. Commands: `on`, `off`, `status`.
 
-### Monitor (system-level)
+## Requirements
 
-Open a second terminal tab or tmux pane:
+- **macOS** -- the dashboard uses cgo + mach `host_statistics` for CPU ticks, `vm_stat` for memory, `sysctl` for swap
+- **bash 3.2+** -- hooks only, ships with macOS
+- **Go 1.26+** -- to build the thermal dashboard
+- **tmux** -- optional, for running the dashboard in a bottom split pane
 
-```bash
-bash scripts/monitor.sh
-```
+Hooks work on any platform with bash. The thermal dashboard is macOS-only due to native system API usage.
 
-Options:
-
-```bash
-bash scripts/monitor.sh --pid 12345    # monitor specific Claude PID
-bash scripts/monitor.sh --refresh 5    # custom refresh interval (default: 2s)
-COOLANT_REFRESH=5 bash scripts/monitor.sh  # same via env var
-```
-
-Press `q` to quit.
-
-### What happens automatically
-
-- **Always**: Test runners (vitest, jest, cargo test, go test, pytest) are capped with `--maxConcurrency N` based on active agent count
-- **Parallel mode (3+ agents)**: Build tools, type checkers, and linters are blocked before execution
-- **Session start**: Warns if vitest/jest configs are missing `.claude/` worktree exclusions
-- Agent lifecycle and gating events stream to the thermal dashboard
-- When all agents complete, run your build gate:
-
-```bash
-npm run check    # typecheck + tests, once
-npm run build    # bundle, once
-```
-
-## Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `COOLANT_THRESHOLD` | `3` | Agent count that triggers parallel mode |
-| `COOLANT_REFRESH` | `2` | Monitor refresh interval (seconds) |
-| `COOLANT_LOCKFILE` | `$TMPDIR/coolant-$USER.lock` | Parallel mode lockfile path |
-| `COOLANT_COUNTER` | `$TMPDIR/coolant-agents-$USER.count` | Agent counter path |
-| `COOLANT_LOG` | `$TMPDIR/coolant-$USER.log` | Event log path |
-| `COOLANT_EVENTS` | `$TMPDIR/coolant-$USER.events.jsonl` | JSONL event stream |
-
-## How it works
+## Project structure
 
 ```
-Always (any agent count):
-  vitest run -> [rewritten: vitest run --maxConcurrency 8] -> capped execution
-
-Parallel mode (3+ agents):
-  vitest run -> [rewritten: vitest run --maxConcurrency 2] -> fair share
-  tsc --noEmit -> [suppressed] -> skipped entirely
-  All agents done -> npm run check (once) -> npm run build (once)
+hooks/          # bash hook definitions
+scripts/        # hook implementations + shared config
+thermal/        # Go thermal dashboard (bubbletea)
+skills/         # /coolant:parallel skill
+tests/          # bats test suite
 ```
-
-The trade-off is intentional: you lose per-edit type feedback during parallel work, but you keep your machine alive. Type errors surface in the single validation pass at the end — the same as CI would catch them.
-
-## Architecture
-
-Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization.
-
-```
-coolant/
-├── .claude-plugin/
-│   └── plugin.json          # plugin manifest
-├── hooks/
-│   └── hooks.json           # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
-├── scripts/                 # bash — hooks, plumbing, system monitor
-│   ├── common.sh            # shared config, paths, log + JSONL event functions
-│   ├── preflight.sh         # SessionStart hook: worktree exclusion warnings
-│   ├── gate.sh              # PreToolUse hook: cap test runners, suppress build tools
-│   ├── agents.sh            # agent tracker: slot management, job detection
-│   ├── sparkline.sh         # braille chart renderers (monitor only)
-│   ├── monitor.sh           # live TUI dashboard (system-level)
-│   ├── toggle.sh            # manual parallel mode on/off/status
-│   ├── agent-start.sh       # SubagentStart hook: increment counter, emit JSONL
-│   └── agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL
-├── thermal/                 # Go — thermal dashboard binary
-│   ├── cmd/thermal/main.go  # bubbletea app entry point
-│   ├── internal/
-│   │   ├── collector/        # CPU (mach cgo), MEM/SWAP (vm_stat), process trees, JSONL tailer
-│   │   ├── model/            # AppState, threat classification, personality, event handling
-│   │   │   └── data/         # embedded CSV: status messages per threat level
-│   │   ├── widgets/          # headline, gauges, rates, alerts, sparklines
-│   │   ├── layout/           # horizontal strip compositor, help overlay
-│   │   ├── demo/             # synthetic data generator (--demo)
-│   │   └── ui/               # colors, thresholds
-│   ├── go.mod
-│   └── go.sum
-├── skills/
-│   └── parallel/
-│       └── SKILL.md          # /coolant:parallel skill definition
-└── tests/
-    ├── test_helper.bash      # bats shared setup/teardown
-    ├── agents.bats           # agent tracker tests
-    ├── sparkline.bats        # renderer tests
-    └── *.bats                # per-script test files
-```
-
-The Go binary collects system data directly via mach `host_statistics` (CPU), `vm_stat` (memory/compressor), `sysctl` (swap), and `ps` (process trees) — no external dependencies beyond cgo.
-
-## Testing
-
-```bash
-# Bash tests (hooks, plumbing)
-bats tests/
-bats tests/agents.bats
-
-# Go tests (thermal dashboard)
-cd thermal && go test ./...
-```
-
-## Roadmap
-
-- **Graduated throttling** — Progressive response as load increases: warn, reduce agent cap, suppress hooks, reap processes
-- **Process-level actuators** — `renice` build processes, `SIGSTOP`/`SIGCONT` for pause/resume, targeted kill for runaway processes
-- **Worktree lifecycle** — Detect and clean orphaned git worktrees from crashed agents
-- **Status bar integration** — Compact thermal indicator as a braille cell in the Claude Code status line
-- **Cross-session coordination** — Multiple Claude sessions sharing one machine, aware of each other's load
-
-## Compatibility
-
-- Claude Code (CLI, desktop, or IDE extension)
-- Any project with test runners or build tools that trigger heavy processes
-- macOS, Linux, WSL
 
 ## License
 
