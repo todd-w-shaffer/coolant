@@ -37,14 +37,13 @@ claude --plugin-dir /path/to/coolant
 
 ## The dashboard
 
-The thermal dashboard runs as a single bottom-strip panel -- designed for a tmux split pane alongside your Claude Code session.
+A single bottom-strip panel designed for a tmux split alongside your Claude Code session. Glance down, know the state.
 
-- **Braille startup labels** -- CPU, MEM, and SWAP spelled out in braille dot art when the dashboard starts, scrolling off as real data fills in.
-- **Severity sparklines** -- 2-row braille sparklines (2 samples per character) with a green-yellow-red severity gradient. Spring-animated numeric readouts bounce to their target values.
-- **Session phase diamonds** -- Each diamond on the headline represents a Claude Code session. Color encodes escalation phase: gray (idle), green (active), yellow (language/compile), orange (build tools), red (shell explosion, 30+ processes).
-- **Agent icons** -- Breathing hexagons that pulse hollow/filled, one per active subagent.
-- **Headline categories** -- `build:NNN` and `shell:NNN` counts plus dynamic runtime labels (`node`, `go`, `python`, `rust`, `swift`) that appear and disappear based on what processes are actually running.
-- **System gauges** -- CPU/MEM/SWAP/GPU readouts, warm/cool/net spawn rates, Desktop/Chrome indicators.
+- **Am I about to lock up?** -- CPU, MEM, and SWAP sparklines with severity coloring. Green is fine, yellow means watch it, red means act now.
+- **Which session is the problem?** -- Each diamond is a Claude Code session. Color tracks the compilation dance: idle (gray), language spinning up (yellow), build tools running (orange), shell explosion (red, 30+ processes).
+- **How many agents are running?** -- Breathing hexagons on the headline, one per active subagent. Pulsing means alive.
+- **What's eating resources?** -- Live process counts by category (`build:003 shell:087`). Runtime labels (`node`, `go`, `rust`) appear when those processes are active and disappear when they're not.
+- **System vitals** -- CPU/MEM/SWAP/GPU gauges, spawn/death rates, network connectivity.
 
 Keyboard shortcuts: `h` help overlay, `q` quit.
 
