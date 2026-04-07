@@ -36,6 +36,9 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 
 ```
 .claude-plugin/plugin.json   # plugin manifest
+.github/workflows/           # notify-marketplace.yml (triggers submodule update on push)
+claude-statusline/           # braille statusline for Claude Code (context/session/weekly bars)
+install.sh                   # interactive installer (binary + statusline + settings.json patching)
 hooks/hooks.json             # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
 scripts/common.sh            # shared config, paths, log + JSONL event functions
 scripts/toggle.sh            # manual parallel mode on/off/status
@@ -108,6 +111,14 @@ thermal/
 **Run:**
 - `./bin/thermal --demo` (thermal dashboard, synthetic data)
 - `./bin/thermal` (thermal dashboard, live system data)
+
+## Distribution
+
+Plugin and dashboard ship separately. The plugin installs via Claude Code's marketplace system; the dashboard is a prebuilt binary on GitHub Releases.
+
+- **Marketplace:** `todd-w-shaffer/marketplace` repo hosts the plugin manifest. Coolant is a git submodule under `plugins/coolant`. A GitHub Action (`.github/workflows/notify-marketplace.yml`) fires `repository_dispatch` on every push to main, triggering the marketplace repo to auto-update the submodule.
+- **Binaries:** `thermal-darwin-arm64` and `thermal-darwin-amd64` attached to GitHub Releases. Build both with: `GOARCH=arm64 go build -o bin/thermal-darwin-arm64 ./cmd/thermal/ && GOARCH=amd64 go build -o bin/thermal-darwin-amd64 ./cmd/thermal/` (from `thermal/`).
+- **Install script:** `install.sh` downloads the binary for the user's arch, asks where to put it, and optionally installs the braille statusline to `~/.claude/` with settings.json patching.
 
 ## Conventions
 
