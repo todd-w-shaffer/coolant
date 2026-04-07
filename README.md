@@ -20,7 +20,7 @@ claude plugin marketplace add todd-w-shaffer/marketplace
 claude plugin install coolant@todd-w-shaffer
 
 # Install the dashboard (macOS only)
-curl -fsSL https://github.com/todd-w-shaffer/coolant/releases/latest/download/thermal-darwin-$(uname -m) -o /usr/local/bin/thermal && chmod +x /usr/local/bin/thermal
+curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install.sh | bash
 
 # See it in action
 thermal --demo
