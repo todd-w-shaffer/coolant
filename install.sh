@@ -2,11 +2,24 @@
 set -euo pipefail
 
 # coolant installer
-# Downloads the thermal dashboard binary and statusline.
+# Downloads the thermo dashboard binary and statusline.
 
 REPO="todd-w-shaffer/coolant"
 BINARY="thermo"
 RAW="https://raw.githubusercontent.com/${REPO}/main"
+
+# Colors
+DIM='\033[2m'
+CYAN='\033[36m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# Braille progress: sparse → mid → dense
+BAR1="⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂"
+BAR2="⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒"
+BAR3="⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿"
 
 cat <<'BANNER'
 
@@ -35,7 +48,7 @@ esac
 OS="$(uname -s)"
 if [ "$OS" != "Darwin" ]; then
   echo "  error: unsupported OS: $OS"
-  echo "  the thermal dashboard is macOS only."
+  echo "  the thermo dashboard is macOS only."
   exit 1
 fi
 
@@ -43,15 +56,20 @@ ASSET="${BINARY}-darwin-${ARCH}"
 URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 
 echo "  detected: macOS $ARCH"
+
+# ── step 1 · dashboard ──────────────────────────────────
+echo ""
+printf "  ${CYAN}${BAR1}${RESET}\n"
+printf "  ${BOLD}1/3${RESET} ${DIM}dashboard${RESET}\n"
 echo ""
 
-# Figure out install directory
 DEFAULT_DIR="$HOME/.local/bin"
 if [ -w "/usr/local/bin" ]; then
   DEFAULT_DIR="/usr/local/bin"
 fi
 
-printf "  install to [%s]: " "$DEFAULT_DIR"
+echo "  where should thermo live?"
+printf "  press Enter for %s (recommended), or type a path: " "$DEFAULT_DIR"
 read -r INSTALL_DIR < /dev/tty
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_DIR}"
 
@@ -76,21 +94,57 @@ if ! curl -fsSL "$URL" -o "$DEST"; then
 fi
 chmod +x "$DEST"
 
-echo "  installed to $DEST"
+printf "  ${GREEN}✓${RESET} installed to $DEST\n"
 
-# Check PATH
+# ── step 2 · path ───────────────────────────────────────
+ON_PATH=true
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
+  ON_PATH=false
+
   echo ""
-  echo "  note: $INSTALL_DIR is not on your PATH."
-  echo "  add this to your shell profile (~/.zshrc or ~/.bashrc):"
+  printf "  ${YELLOW}${BAR2}${RESET}\n"
+  printf "  ${BOLD}2/3${RESET} ${DIM}path${RESET}\n"
   echo ""
-  echo "    export PATH=\"$INSTALL_DIR:\$PATH\""
-  echo ""
+
+  # Detect shell profile
+  SHELL_NAME="$(basename "$SHELL")"
+  case "$SHELL_NAME" in
+    zsh)  PROFILE="$HOME/.zshrc" ;;
+    bash) PROFILE="$HOME/.bashrc" ;;
+    *)    PROFILE="$HOME/.profile" ;;
+  esac
+
+  EXPORT_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+
+  echo "  want to run thermo from anywhere in your terminal?"
+  printf "  (adds %s to PATH in %s) [Y/n]: " "$INSTALL_DIR" "$PROFILE"
+  read -r ADD_PATH < /dev/tty
+  ADD_PATH="${ADD_PATH:-Y}"
+
+  if [[ "$ADD_PATH" =~ ^[Yy]$ ]]; then
+    echo "" >> "$PROFILE"
+    echo "# coolant" >> "$PROFILE"
+    echo "$EXPORT_LINE" >> "$PROFILE"
+    export PATH="$INSTALL_DIR:$PATH"
+    ON_PATH=true
+    printf "  ${GREEN}✓${RESET} added to %s and activated for this session.\n" "$PROFILE"
+  else
+    echo ""
+    echo "  no worries. to add it later, run:"
+    echo ""
+    echo "    echo '$EXPORT_LINE' >> $PROFILE && source $PROFILE"
+  fi
 fi
 
-# Statusline
+# ── step 3 · statusline ─────────────────────────────────
 echo ""
-printf "  install the braille statusline for Claude Code? [Y/n]: "
+printf "  ${GREEN}${BAR3}${RESET}\n"
+printf "  ${BOLD}3/3${RESET} ${DIM}statusline${RESET}\n"
+echo ""
+
+echo "  coolant includes a statusline for Claude Code — context usage,"
+echo "  session usage, weekly quota, plan refresh timer, and git branch."
+printf "  install it? [Y/n]: "
 read -r INSTALL_SL < /dev/tty
 INSTALL_SL="${INSTALL_SL:-Y}"
 
@@ -100,30 +154,27 @@ if [[ "$INSTALL_SL" =~ ^[Yy]$ ]]; then
   SETTINGS="${CLAUDE_DIR}/settings.json"
 
   mkdir -p "$CLAUDE_DIR"
-  echo "  downloading statusline.sh..."
+  echo "  downloading statusline..."
   curl -fsSL "${RAW}/claude-statusline/statusline.sh" -o "$SL_DEST"
 
   if [ -f "$SETTINGS" ]; then
     if grep -q '"statusLine"' "$SETTINGS"; then
-      echo "  statusLine already configured in settings.json, skipping."
+      printf "  ${GREEN}✓${RESET} statusline already configured, skipping.\n"
     else
-      printf "  add statusLine to %s? [Y/n]: " "$SETTINGS"
-      read -r PATCH_SETTINGS < /dev/tty
-      PATCH_SETTINGS="${PATCH_SETTINGS:-Y}"
-      if [[ "$PATCH_SETTINGS" =~ ^[Yy]$ ]]; then
-        if command -v jq &>/dev/null; then
-          tmp=$(mktemp)
-          jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline.sh"}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
-          echo "  statusLine added to settings.json."
-        else
-          echo "  jq not found. add this to $SETTINGS manually:"
-          echo ""
-          echo '    "statusLine": {'
-          echo '      "type": "command",'
-          echo '      "command": "bash ~/.claude/statusline.sh"'
-          echo '    }'
-          echo ""
-        fi
+      if command -v jq &>/dev/null; then
+        tmp=$(mktemp)
+        jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline.sh"}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+        printf "  ${GREEN}✓${RESET} statusline added to Claude Code settings.\n"
+      else
+        echo ""
+        echo "  almost there — jq isn't installed, so you'll need to add this"
+        echo "  to $SETTINGS by hand. open the file and add:"
+        echo ""
+        echo '    "statusLine": {'
+        echo '      "type": "command",'
+        echo '      "command": "bash ~/.claude/statusline.sh"'
+        echo '    }'
+        echo ""
       fi
     fi
   else
@@ -135,17 +186,24 @@ if [[ "$INSTALL_SL" =~ ^[Yy]$ ]]; then
   }
 }
 SETTINGS_EOF
-    echo "  created settings.json with statusLine."
+    printf "  ${GREEN}✓${RESET} statusline configured.\n"
   fi
 
-  echo "  statusline installed. restart Claude Code to activate."
+  echo "  restart Claude Code to see it."
 fi
 
-cat <<'DONE'
+# Final output — use full path if not on PATH
+if [ "$ON_PATH" = true ]; then
+  RUN="thermo"
+else
+  RUN="$DEST"
+fi
 
-    ✓ coolant installed
-
-    thermo --demo      see the dashboard
-    thermo             monitor your system
-
-DONE
+echo ""
+printf "  ${GREEN}${BAR3}${RESET}\n"
+echo ""
+printf "    ${GREEN}${BOLD}✓ coolant installed${RESET}\n"
+echo ""
+echo "    $RUN --demo      see the dashboard"
+echo "    $RUN             monitor your system"
+echo ""
