@@ -12,11 +12,12 @@ import (
 const (
 	EventGateSuppress       = "gate.suppress"
 	EventGateCap            = "gate.cap"
-	EventGateDebounce       = "gate.debounce"
 	EventAgentStart         = "agent.start"
 	EventAgentStop          = "agent.stop"
 	EventParallelEngaged    = "parallel.engaged"
 	EventParallelDisengaged = "parallel.disengaged"
+	EventCounterReset       = "counter.reset"
+	EventPreflightWarn      = "preflight.warn"
 )
 
 // GateEvent represents a parsed JSONL event from the coolant event log.

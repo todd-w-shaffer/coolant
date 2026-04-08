@@ -53,7 +53,7 @@ The gate applies adaptive concurrency: `cap = floor((cores - 2) / agents)`, mini
 
 ## Skills
 
-`/coolant:parallel` -- Toggle parallel mode to suppress per-edit typecheck hooks. Commands: `on`, `off`, `status`.
+`/coolant` -- Toggle build suppression for multi-agent work. Commands: `on` (default), `off`, `status`.
 
 ## Requirements
 
@@ -69,7 +69,7 @@ Hooks work on any platform with bash. The thermal dashboard is macOS-only.
 hooks/          # bash hook definitions
 scripts/        # hook implementations + shared config
 thermal/        # Go thermal dashboard (bubbletea)
-skills/         # /coolant:parallel skill
+skills/         # /coolant skill
 tests/          # bats test suite
 ```
 

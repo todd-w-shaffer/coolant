@@ -40,14 +40,14 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 claude-statusline/           # braille statusline for Claude Code (context/session/weekly bars)
 install.sh                   # interactive installer (binary + statusline + settings.json patching)
 hooks/hooks.json             # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
-scripts/common.sh            # shared config, paths, log + JSONL event functions
-scripts/toggle.sh            # manual parallel mode on/off/status
+scripts/common.sh            # shared config, paths, log + JSONL event functions + _reconcile_counter
+scripts/toggle.sh            # manual parallel mode on/off/status (reconciled)
 scripts/preflight.sh         # SessionStart hook: warn about missing worktree exclusions
-scripts/gate.sh              # PreToolUse hook: cap test runners, suppress build tools
-scripts/agent-start.sh       # SubagentStart hook: increment counter, emit JSONL events
-scripts/agent-stop.sh        # SubagentStop hook: decrement counter, emit JSONL events
+scripts/gate.sh              # PreToolUse hook: cap test runners (reconciled), suppress build tools
+scripts/agent-start.sh       # SubagentStart hook: increment counter, warn at threshold
+scripts/agent-stop.sh        # SubagentStop hook: decrement counter, auto-disengage at zero
 thermal/                     # Go thermal dashboard binary (see below)
-skills/parallel/SKILL.md     # /coolant:parallel skill definition
+skills/coolant/SKILL.md      # /coolant skill (opt-in build suppression)
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
 tests/*.bats                 # bats test files, one per script
 assets/                      # VHS tape files, demo GIFs, marketing screenshots
@@ -132,7 +132,7 @@ Plugin and dashboard ship separately. The plugin installs via Claude Code's mark
 - JSON field extraction from hook stdin uses `_json_field` (top-level) and `_nested_command` (tool_input.command) — no jq dependency.
 - Values interpolated into JSONL must pass through `_json_escape` to handle backslashes and quotes.
 - State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log. No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks.
-- **Gate system**: `gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always capped with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are suppressed during parallel mode. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
+- **Gate system**: `gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always capped with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are suppressed when user opts in via `/coolant`. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao`, `ioreg` for sensors. No third-party tools.
 
 ### Go (API gotchas)

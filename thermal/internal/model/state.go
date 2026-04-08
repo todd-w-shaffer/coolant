@@ -250,12 +250,6 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 			Message: "gate: " + ev.Command + " capped → " + ev.Rewritten,
 			Level:   ThreatWarm,
 		})
-	case collector.EventGateDebounce:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "gate: " + ev.Command + " debounced",
-			Level:   ThreatCool,
-		})
 	case collector.EventAgentStart:
 		s.addAlert(AlertEntry{
 			Time:    ev.Timestamp,

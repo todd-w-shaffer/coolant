@@ -8,6 +8,10 @@ source "${SCRIPT_DIR}/common.sh"
 
 # Read hook stdin for cwd
 input=$(cat)
+
+# Reset agent counter epoch — new session starts fresh
+coolant_event '"event":"counter.reset"'
+
 cwd=$(echo "$input" | _json_field cwd)
 if [ -z "$cwd" ]; then
   exit 0

@@ -111,3 +111,90 @@ load test_helper
 
   [ "$result" = "tsc --noEmit" ]
 }
+
+# ── _reconcile_counter ─────────────────────────────────────
+
+@test "reconcile corrects counter when JSONL shows fewer agents" {
+  echo "5" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","event":"agent.stop","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:04Z","event":"agent.stop","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
+}
+
+@test "reconcile skips when no JSONL file exists" {
+  echo "3" > "$COOLANT_COUNTER"
+  rm -f "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  local result
+  result=$(_reconcile_counter)
+  [ "$result" = "3" ]
+}
+
+@test "reconcile floors at zero" {
+  echo "2" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.stop","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "0" ]
+}
+
+@test "reconcile leaves counter alone when it matches JSONL" {
+  echo "2" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  local result
+  result=$(_reconcile_counter)
+  [ "$result" = "2" ]
+  # Counter file unchanged — no reconciliation log
+  ! grep -q "reconciled" "$COOLANT_LOG"
+}
+
+@test "reconcile ignores non-agent events in JSONL" {
+  echo "5" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"gate.suppress","command":"tsc"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","event":"parallel.engaged"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
+}
+
+@test "reconcile counts only events after last counter.reset" {
+  echo "5" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
+}
+
+@test "reconcile uses last of multiple counter.reset markers" {
+  echo "5" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:04Z","event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
+}
+
+@test "reconcile returns zero when counter.reset is last line" {
+  echo "3" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  local result
+  result=$(_reconcile_counter)
+  [ "$result" = "0" ]
+  [ "$(cat "$COOLANT_COUNTER")" = "0" ]
+}

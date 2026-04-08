@@ -1,6 +1,6 @@
 # Built binaries
 bin/
-coolant
+/coolant
 thermal/thermal
 
 # macOS
