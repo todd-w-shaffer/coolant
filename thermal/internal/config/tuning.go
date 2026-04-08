@@ -5,15 +5,16 @@ import "time"
 // ── Collector timing ───────────────────────────────────────
 
 const (
-	FastInterval    = 150 * time.Millisecond // CPU/MEM/procs sample rate
-	SlowInterval    = 1 * time.Second        // network reachability check
-	NetDialTimeout  = 2 * time.Second        // TCP dial to api.anthropic.com
-	NetCheckTimeout = 3 * time.Second        // context deadline for network check
-	SysExecTimeout  = 2 * time.Second        // per-subprocess timeout (sysctl, vm_stat)
-	SysInitTimeout  = 5 * time.Second        // one-shot static sysctl init
-	ProcTimeout     = 3 * time.Second        // ps process tree collection
-	CollectTimeout  = 5 * time.Second        // overall fast-loop context deadline
-	EventInterval   = 500 * time.Millisecond // JSONL event log poll rate
+	FastInterval       = 150 * time.Millisecond // CPU/MEM/procs sample rate
+	SlowInterval       = 1 * time.Second        // network reachability check
+	NetDialTimeout     = 2 * time.Second        // TCP dial to api.anthropic.com
+	NetCheckTimeout    = 3 * time.Second        // context deadline for network check
+	SysExecTimeout     = 2 * time.Second        // per-subprocess timeout (sysctl, vm_stat)
+	SysInitTimeout     = 5 * time.Second        // one-shot static sysctl init
+	ProcTimeout        = 3 * time.Second        // ps process tree collection
+	CollectTimeout     = 5 * time.Second        // overall fast-loop context deadline
+	EventInterval      = 500 * time.Millisecond // JSONL event log poll rate
+	StaleDataThreshold = 5 * time.Second        // SlowAge above which stale-data alert fires
 )
 
 // DefaultPageSize is the fallback macOS page size when hw.pagesize is unavailable.

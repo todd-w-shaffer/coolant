@@ -76,7 +76,8 @@ type Snapshot struct {
 	DesktopRunning    bool          // Claude Desktop (Electron) main process detected
 	ChromeHostRunning bool          // chrome-native-host (browser extension bridge) detected
 	Timestamp         time.Time
-	CollectErrs       []string // non-nil when collection partially failed
+	SlowAge           time.Duration // time since last successful slow-loop collection
+	CollectErrs       []string      // non-nil when collection partially failed
 }
 
 // TotalProcs returns the total number of Claude descendant processes.
