@@ -32,7 +32,7 @@ func (t ThreatLevel) String() string {
 }
 
 // Classify determines threat level from a snapshot and spawn rate.
-func Classify(snap collector.Snapshot, spawnRate float64) ThreatLevel {
+func Classify(snap *collector.Snapshot, spawnRate float64) ThreatLevel {
 	mem := snap.System.MemPercent()
 	cpu := snap.System.CPUPercent
 	swapUsed := snap.System.SwapUsedBytes

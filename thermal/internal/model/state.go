@@ -69,7 +69,9 @@ func NewAppState() *AppState {
 		recentSpawns:   NewRingBuffer[int](config.RateWindowSize),
 		recentDeaths:   NewRingBuffer[int](config.RateWindowSize),
 		TypeCounts:     make(map[string]int),
+		SmoothedCounts: make(map[string]float64),
 		CategoryCounts: make(map[string]int),
+		SmoothedCats:   make(map[string]float64),
 		scratchPIDs:    make(map[int]bool),
 		activeAgents:   make(map[string]time.Time),
 	}
@@ -96,9 +98,6 @@ func (s *AppState) updateTypeCounts(snap *collector.Snapshot) {
 	for _, p := range snap.AllProcs {
 		s.TypeCounts[p.TypeCode]++
 	}
-	if s.SmoothedCounts == nil {
-		s.SmoothedCounts = make(map[string]float64)
-	}
 	smoothEMA(s.TypeCounts, s.SmoothedCounts, countAlpha)
 }
 
@@ -111,9 +110,6 @@ func (s *AppState) updateCategoryCounts() {
 			cat = "shell"
 		}
 		s.CategoryCounts[cat] += count
-	}
-	if s.SmoothedCats == nil {
-		s.SmoothedCats = make(map[string]float64)
 	}
 	smoothEMA(s.CategoryCounts, s.SmoothedCats, catAlpha)
 }
@@ -138,7 +134,7 @@ func (s *AppState) updateNetworkState(snap *collector.Snapshot) {
 // alerts on threat transitions and headroom threshold crossings.
 func (s *AppState) updateThreatAndAlerts(snap *collector.Snapshot) {
 	s.PrevThreat = s.ThreatLevel
-	s.ThreatLevel = Classify(*snap, s.SpawnRate)
+	s.ThreatLevel = Classify(snap, s.SpawnRate)
 
 	if s.stableQuip == "" {
 		s.stableQuip = ThreatQuip(s.ThreatLevel)
@@ -192,7 +188,6 @@ func (s *AppState) updateIdleTicker() {
 
 // computePIDDeltas calculates spawn/death counts using pre-allocated maps.
 func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
-	// Build current PID set in scratch map (clear + reuse)
 	clear(s.scratchPIDs)
 	for _, p := range snap.AllProcs {
 		s.scratchPIDs[p.PID] = true

@@ -8,7 +8,7 @@ import (
 
 func TestClassifyAllZero(t *testing.T) {
 	snap := testSnap(t)
-	if got := Classify(snap, 0); got != ThreatCool {
+	if got := Classify(&snap, 0); got != ThreatCool {
 		t.Errorf("all-zero snapshot: got %v, want ThreatCool", got)
 	}
 }
@@ -27,7 +27,7 @@ func TestClassifyHighMemoryAlone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			snap := testSnap(t, withMem(pctToBytes(tc.memPct), testMemTotal))
-			got := Classify(snap, tc.spawnRate)
+			got := Classify(&snap, tc.spawnRate)
 			if got < tc.wantMin {
 				t.Errorf("mem %.0f%%: got %v, want at least %v", tc.memPct, got, tc.wantMin)
 			}
@@ -47,7 +47,7 @@ func TestClassifyHighCPUAlone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			snap := testSnap(t, withCPU(tc.cpu))
-			got := Classify(snap, 0)
+			got := Classify(&snap, 0)
 			if got < tc.wantMin {
 				t.Errorf("CPU %.0f%%: got %v, want at least %v", tc.cpu, got, tc.wantMin)
 			}
@@ -68,7 +68,7 @@ func TestClassifyHighSwapAlone(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			snap := testSnap(t, withSwap(tc.swap))
-			got := Classify(snap, 0)
+			got := Classify(&snap, 0)
 			if got < tc.wantMin {
 				t.Errorf("swap %d: got %v, want at least %v", tc.swap, got, tc.wantMin)
 			}
@@ -84,7 +84,7 @@ func TestClassifyMultipleModerateSignalsCombine(t *testing.T) {
 		withMem(memUsed, testMemTotal),
 		withSwap(int64(config.SwapWarmBytes)+1),
 	)
-	got := Classify(snap, 0)
+	got := Classify(&snap, 0)
 	if got != ThreatHot {
 		t.Errorf("three moderate signals: got %v, want ThreatHot (score=3)", got)
 	}
@@ -94,7 +94,7 @@ func TestClassifyBoundaryAtWarm(t *testing.T) {
 	// Exactly at MemWarmPct should NOT trigger (uses >)
 	memUsed := pctToBytes(config.MemWarmPct)
 	snap := testSnap(t, withMem(memUsed, testMemTotal))
-	got := Classify(snap, 0)
+	got := Classify(&snap, 0)
 	if got != ThreatCool {
 		t.Errorf("exactly at MemWarmPct: got %v, want ThreatCool", got)
 	}
@@ -105,8 +105,8 @@ func TestClassifySpawnRateAddsToScore(t *testing.T) {
 	memUsed := pctToBytes(config.MemWarmPct + 1)
 	snap := testSnap(t, withCPU(config.CPUWarmPct+1), withMem(memUsed, testMemTotal))
 
-	withoutSpawn := Classify(snap, 0)
-	withSpawnRate := Classify(snap, config.SpawnRateEscalation+1)
+	withoutSpawn := Classify(&snap, 0)
+	withSpawnRate := Classify(&snap, config.SpawnRateEscalation+1)
 
 	if withSpawnRate <= withoutSpawn {
 		t.Errorf("spawn rate should escalate: without=%v, with=%v", withoutSpawn, withSpawnRate)
@@ -117,7 +117,7 @@ func TestClassifyMeltdown(t *testing.T) {
 	// crit mem (3) + crit CPU (2) = 5 → meltdown
 	memUsed := pctToBytes(config.MemCritPct + 1)
 	snap := testSnap(t, withCPU(config.CPUCritPct+1), withMem(memUsed, testMemTotal))
-	got := Classify(snap, 0)
+	got := Classify(&snap, 0)
 	if got != ThreatMeltdown {
 		t.Errorf("crit mem + crit CPU: got %v, want ThreatMeltdown", got)
 	}
