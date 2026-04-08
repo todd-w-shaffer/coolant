@@ -73,6 +73,12 @@ Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runne
 
 Hooks work on any platform with bash. The thermal dashboard is macOS-only.
 
+## Recommendations
+
+- [Ghostty](https://ghostty.org) -- looks great full-width
+- [Catppuccin Frappé](https://github.com/catppuccin/catppuccin) -- the color palette the dashboard was designed against
+- [FiraCode Nerd Font Mono](https://www.nerdfonts.com) -- braille characters and glyphs render cleanly
+
 ## Project structure
 
 ```
