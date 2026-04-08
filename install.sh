@@ -52,7 +52,7 @@ if [ -w "/usr/local/bin" ]; then
 fi
 
 printf "  install to [%s]: " "$DEFAULT_DIR"
-read -r INSTALL_DIR
+read -r INSTALL_DIR < /dev/tty
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_DIR}"
 
 # Expand ~ and $HOME if someone types them
@@ -91,7 +91,7 @@ fi
 # Statusline
 echo ""
 printf "  install the braille statusline for Claude Code? [Y/n]: "
-read -r INSTALL_SL
+read -r INSTALL_SL < /dev/tty
 INSTALL_SL="${INSTALL_SL:-Y}"
 
 if [[ "$INSTALL_SL" =~ ^[Yy]$ ]]; then
@@ -108,7 +108,7 @@ if [[ "$INSTALL_SL" =~ ^[Yy]$ ]]; then
       echo "  statusLine already configured in settings.json, skipping."
     else
       printf "  add statusLine to %s? [Y/n]: " "$SETTINGS"
-      read -r PATCH_SETTINGS
+      read -r PATCH_SETTINGS < /dev/tty
       PATCH_SETTINGS="${PATCH_SETTINGS:-Y}"
       if [[ "$PATCH_SETTINGS" =~ ^[Yy]$ ]]; then
         if command -v jq &>/dev/null; then
