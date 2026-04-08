@@ -432,6 +432,48 @@ func TestHandleEventGateSuppress(t *testing.T) {
 	}
 }
 
+func TestHandleEventCounterReset(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventCounterReset,
+	}
+	s.HandleEvent(ev)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	alert := s.Alerts.At(0)
+	if alert.Message != "session reset" {
+		t.Errorf("alert message = %q, want %q", alert.Message, "session reset")
+	}
+	if alert.Level != ThreatCool {
+		t.Errorf("alert level = %v, want ThreatCool", alert.Level)
+	}
+}
+
+func TestHandleEventPreflightWarn(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventPreflightWarn,
+		Reason:    "missing worktree exclusion",
+	}
+	s.HandleEvent(ev)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	alert := s.Alerts.At(0)
+	wantMsg := "preflight: missing worktree exclusion"
+	if alert.Message != wantMsg {
+		t.Errorf("alert message = %q, want %q", alert.Message, wantMsg)
+	}
+	if alert.Level != ThreatWarm {
+		t.Errorf("alert level = %v, want ThreatWarm", alert.Level)
+	}
+}
+
 func TestShortID(t *testing.T) {
 	cases := []struct {
 		input string
