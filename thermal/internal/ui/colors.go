@@ -1,3 +1,5 @@
+// Package ui defines shared colors, glyphs, and text helpers used
+// across all dashboard widgets.
 package ui
 
 import (

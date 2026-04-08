@@ -1,3 +1,4 @@
+// Package layout composes widgets into screen layouts for the thermal dashboard.
 package layout
 
 import (

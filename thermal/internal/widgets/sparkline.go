@@ -1,3 +1,5 @@
+// Package widgets provides the individual UI components for the thermal
+// dashboard: sparklines, gauges, headline bar, rates, alerts, and animations.
 package widgets
 
 import (
@@ -186,7 +188,7 @@ var (
 )
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
-// Allocate once via NewSparkBufs and pass to RenderSparklineWithMaskBuf.
+// Allocate once via NewSparkBufs and pass to RenderSparkline.
 type SparkBufs struct {
 	interpData []float64 // reused by prepareSparkDataBuf
 	interpMask []bool    // reused by prepareSparkMaskBuf
@@ -299,10 +301,10 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 	return interp
 }
 
-// RenderSparklineWithMaskBuf renders a 2-row sparkline where offline ticks become
+// RenderSparkline renders a 2-row sparkline where offline ticks become
 // rainbow dots, reusing pre-allocated interpolation buffers to avoid per-frame
 // allocations. Two samples per character, two stacked characters per column.
-func RenderSparklineWithMaskBuf(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
+func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
 	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf)
 }
 

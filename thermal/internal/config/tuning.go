@@ -1,3 +1,5 @@
+// Package config holds named constants for timing, thresholds, EMA
+// smoothing, animation parameters, and category heat levels.
 package config
 
 import "time"

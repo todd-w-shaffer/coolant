@@ -1,3 +1,5 @@
+// Package model holds the dashboard's application state, threat
+// classification, memory projection, and personality text.
 package model
 
 import (

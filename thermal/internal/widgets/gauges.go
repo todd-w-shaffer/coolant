@@ -190,7 +190,7 @@ func (g *Gauges) View() string {
 		}
 
 		// Render 2-row sparkline with online/offline mask (buffer-pooled)
-		pair := RenderSparklineWithMaskBuf(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i])
+		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i])
 
 		// Overlay braille text label on leading empty positions
 		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, ui.GaugeDots[ga.dotIdx].ANSI)

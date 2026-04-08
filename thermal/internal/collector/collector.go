@@ -1,3 +1,5 @@
+// Package collector gathers system stats and Claude process trees
+// via cgo, subprocess calls, and JSONL event tailing.
 package collector
 
 import (
