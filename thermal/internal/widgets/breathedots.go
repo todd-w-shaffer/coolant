@@ -17,6 +17,7 @@ type breatheDot struct {
 	vel   float64
 	phase float64 // breathing phase accumulator (radians)
 	dying bool
+	stale bool // orphaned agent — breathes slower and dimmer
 }
 
 // BreatheDots manages a set of spring-animated breathing dots that track
@@ -25,6 +26,7 @@ type BreatheDots struct {
 	spring    harmonica.Spring
 	dots      []breatheDot
 	nextPhase float64
+	lastStale int // dirty check for SetStaleCount
 }
 
 func NewBreatheDots() *BreatheDots {
@@ -69,7 +71,11 @@ func (b *BreatheDots) AnimTick() {
 			b.dots[i].alive, b.dots[i].vel, target,
 		)
 		if !b.dots[i].dying {
-			b.dots[i].phase += config.BreathePhaseStep
+			if b.dots[i].stale {
+				b.dots[i].phase += config.BreathePhaseStep * config.BreatheStaleRate
+			} else {
+				b.dots[i].phase += config.BreathePhaseStep
+			}
 		}
 	}
 
@@ -105,6 +111,9 @@ func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, ma
 	for i, d := range dots {
 		breathT := 0.5 + 0.5*math.Sin(d.phase)
 		brightness := d.alive * (config.BreatheMinBright + (config.BreatheMaxBright-config.BreatheMinBright)*breathT)
+		if d.stale {
+			brightness *= config.BreatheStaleDim
+		}
 		if brightness < 0 {
 			brightness = 0
 		}
@@ -142,6 +151,26 @@ func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, ma
 	}
 
 	return buf.String(), visWidth
+}
+
+// SetStaleCount marks the last n non-dying dots as stale (orphaned).
+// Stale dots breathe slower and render dimmer.
+func (b *BreatheDots) SetStaleCount(n int) {
+	if n == b.lastStale {
+		return
+	}
+	b.lastStale = n
+	// Clear all stale flags then re-mark
+	for i := range b.dots {
+		b.dots[i].stale = false
+	}
+	marked := 0
+	for i := len(b.dots) - 1; i >= 0 && marked < n; i-- {
+		if !b.dots[i].dying {
+			b.dots[i].stale = true
+			marked++
+		}
+	}
 }
 
 // Len returns the current number of dots (including dying).

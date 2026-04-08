@@ -162,8 +162,8 @@ func (h *Horizontal) helpView() []string {
 			ui.DimText(ui.AgentGlyphHollow), ui.DimText(ui.AgentGlyphFilled),
 			ct(d, "subagents — hexagons breathe hollow/filled, count matches headline"),
 			ui.DimText("categories track process types in the headline bar")),
-		fmt.Sprintf(" %s  %s  %s",
-			ui.DimText("[h] close"), ui.DimText("[c] collapse"), ui.DimText("[q] quit")),
+		fmt.Sprintf(" %s  %s  %s  %s",
+			ui.DimText("[h] close"), ui.DimText("[c] collapse"), ui.DimText("[x] purge ghosts"), ui.DimText("[q] quit")),
 	}
 }
 

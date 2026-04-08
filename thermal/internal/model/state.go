@@ -47,7 +47,7 @@ type AppState struct {
 	scratchPIDs map[int]bool
 
 	// Agent tracking (from JSONL events, not process discovery)
-	activeAgents map[string]bool
+	activeAgents map[string]time.Time // agent_id → start timestamp
 
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
@@ -69,7 +69,7 @@ func NewAppState() *AppState {
 		TypeCounts:     make(map[string]int),
 		CategoryCounts: make(map[string]int),
 		scratchPIDs:    make(map[int]bool),
-		activeAgents:   make(map[string]bool),
+		activeAgents:   make(map[string]time.Time),
 	}
 }
 
@@ -263,7 +263,7 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 			Level:   ThreatCool,
 		})
 		s.PluginActive = true
-		s.activeAgents[ev.AgentID] = true
+		s.activeAgents[ev.AgentID] = ev.Timestamp
 	case collector.EventAgentStop:
 		s.addAlert(AlertEntry{
 			Time:    ev.Timestamp,
@@ -301,9 +301,44 @@ func (s *AppState) StableQuip() string {
 	return s.stableQuip
 }
 
-// AgentCount returns the number of live subagents (tracked via JSONL events).
+// AgentCount returns the total number of tracked subagents (fresh + stale).
 func (s *AppState) AgentCount() int {
 	return len(s.activeAgents)
+}
+
+// FreshAgentCount returns agents started within the staleness threshold.
+func (s *AppState) FreshAgentCount() int {
+	fresh, _ := s.agentCountSplit()
+	return fresh
+}
+
+// StaleAgentCount returns agents active longer than the staleness threshold.
+func (s *AppState) StaleAgentCount() int {
+	_, stale := s.agentCountSplit()
+	return stale
+}
+
+// agentCountSplit does a single pass over activeAgents with one time.Now() call.
+func (s *AppState) agentCountSplit() (fresh, stale int) {
+	cutoff := time.Now().Add(-config.AgentStaleThreshold)
+	for _, started := range s.activeAgents {
+		if started.After(cutoff) {
+			fresh++
+		} else {
+			stale++
+		}
+	}
+	return
+}
+
+// PurgeStaleAgents removes all agents that have exceeded the staleness threshold.
+func (s *AppState) PurgeStaleAgents() {
+	cutoff := time.Now().Add(-config.AgentStaleThreshold)
+	for id, started := range s.activeAgents {
+		if !started.After(cutoff) {
+			delete(s.activeAgents, id)
+		}
+	}
 }
 
 // IsIdle returns true when no Claude sessions are detected.

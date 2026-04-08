@@ -111,6 +111,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout.ToggleHelp()
 		case "c":
 			m.layout.ToggleCollapse()
+		case "x":
+			m.layout.State().PurgeStaleAgents()
 		}
 
 	case tea.WindowSizeMsg:
