@@ -78,14 +78,20 @@ func NewAppState() *AppState {
 // Update processes a new snapshot and recomputes all derived state.
 func (s *AppState) Update(snap collector.Snapshot) {
 	s.Current = &snap
-
-	// Append to history — O(1) ring buffer push, no allocation
 	s.History.Push(snap)
-
-	// Compute spawn/death deltas using pre-allocated PID map
 	s.computePIDDeltas(&snap)
+	s.updateTypeCounts(&snap)
+	s.updateCategoryCounts()
+	s.SessionCount = len(snap.Sessions)
+	s.updateNetworkState(&snap)
+	s.Headroom = EstimateHeadroom(s.TypeCounts, snap.System.MemUsedBytes, snap.System.MemTotalBytes)
+	s.updateThreatAndAlerts(&snap)
+	s.updateIdleTicker()
+}
 
-	// Type counts — clear and repopulate in place
+// updateTypeCounts clears and repopulates type counts from the snapshot,
+// then applies EMA smoothing for calm display.
+func (s *AppState) updateTypeCounts(snap *collector.Snapshot) {
 	clear(s.TypeCounts)
 	for _, p := range snap.AllProcs {
 		s.TypeCounts[p.TypeCode]++
@@ -94,8 +100,10 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		s.SmoothedCounts = make(map[string]float64)
 	}
 	smoothEMA(s.TypeCounts, s.SmoothedCounts, countAlpha)
+}
 
-	// Category counts — clear and repopulate in place
+// updateCategoryCounts rolls up type counts into categories and applies EMA.
+func (s *AppState) updateCategoryCounts() {
 	clear(s.CategoryCounts)
 	for typeCode, count := range s.TypeCounts {
 		cat, ok := collector.TypeToCategory[typeCode]
@@ -108,43 +116,34 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		s.SmoothedCats = make(map[string]float64)
 	}
 	smoothEMA(s.CategoryCounts, s.SmoothedCats, catAlpha)
+}
 
-	s.SessionCount = len(snap.Sessions)
-
-	// Network state
+// updateNetworkState tracks online/offline transitions and duration.
+func (s *AppState) updateNetworkState(snap *collector.Snapshot) {
 	if snap.Online {
 		s.Online = true
 		s.OfflineSince = time.Time{}
 		s.OfflineDuration = 0
 	} else {
 		if s.Online || s.OfflineSince.IsZero() {
-			// Just went offline
 			s.OfflineSince = snap.Timestamp
 		}
 		s.Online = false
 		s.OfflineDuration = snap.Timestamp.Sub(s.OfflineSince)
 	}
-
-	// Track online/offline per tick — O(1) ring buffer push
 	s.OnlineLog.Push(snap.Online)
+}
 
-	// Headroom projection
-	s.Headroom = EstimateHeadroom(
-		s.TypeCounts,
-		snap.System.MemUsedBytes,
-		snap.System.MemTotalBytes,
-	)
-
-	// Threat level
+// updateThreatAndAlerts classifies threat level, rotates quips, and fires
+// alerts on threat transitions and headroom threshold crossings.
+func (s *AppState) updateThreatAndAlerts(snap *collector.Snapshot) {
 	s.PrevThreat = s.ThreatLevel
-	s.ThreatLevel = Classify(snap, s.SpawnRate)
+	s.ThreatLevel = Classify(*snap, s.SpawnRate)
 
-	// Seed quip on first tick, then rotate on transitions
 	if s.stableQuip == "" {
 		s.stableQuip = ThreatQuip(s.ThreatLevel)
 	}
 
-	// Alert on threat transitions — pick a new random quip each time
 	if s.ThreatLevel != s.PrevThreat {
 		s.stableQuip = ThreatQuip(s.ThreatLevel)
 		if s.PrevThreat != 0 {
@@ -164,9 +163,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 		}
 	}
 
-	// Headroom alerts
 	if s.Headroom.HeadroomBytes < config.HeadroomCritBytes && s.Headroom.Warning != "" {
-		// Only alert once per threshold crossing (check last alert)
 		lastMsg := ""
 		if s.Alerts.Len() > 0 {
 			lastMsg = s.Alerts.Peek().Message
@@ -179,8 +176,10 @@ func (s *AppState) Update(snap collector.Snapshot) {
 			})
 		}
 	}
+}
 
-	// Idle cycling (advances when no Claude sessions)
+// updateIdleTicker advances the idle cycle counter when no sessions are active.
+func (s *AppState) updateIdleTicker() {
 	if s.SessionCount == 0 {
 		s.idleTicker++
 		if s.idleTicker%config.IdleTickerModulo == 0 {
