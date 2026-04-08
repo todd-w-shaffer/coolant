@@ -2,10 +2,9 @@ package collector
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // fakeFast returns a fixed snapshot with the given CPU%.
@@ -169,48 +168,62 @@ func TestRunWith_SlowLoopRunsConcurrently(t *testing.T) {
 	snapCh := make(chan Snapshot, 16)
 	done := make(chan struct{})
 
-	slowDelay := 200 * time.Millisecond
+	// Track peak concurrency: both collectors increment inflight on entry,
+	// decrement on exit. If they run concurrently, peak reaches 2.
+	var inflight atomic.Int32
+	var peak atomic.Int32
+	gate := make(chan struct{}) // blocks both collectors until both are inflight
 
 	cfg := RunConfig{
 		FastCollect: fakeFast(1.0),
 		SlowCollect: func(ctx context.Context) SystemStats {
-			time.Sleep(slowDelay)
+			cur := inflight.Add(1)
+			for cur > peak.Load() {
+				peak.Store(cur)
+			}
+			<-gate // wait for signal
+			inflight.Add(-1)
 			return SystemStats{MemUsedBytes: 999}
 		},
 		NetCheck: func(ctx context.Context) bool {
-			time.Sleep(slowDelay)
+			cur := inflight.Add(1)
+			for cur > peak.Load() {
+				peak.Store(cur)
+			}
+			<-gate // wait for signal
+			inflight.Add(-1)
 			return true
 		},
 	}
 
 	go RunWith(snapCh, 10*time.Millisecond, done, cfg)
 
-	// Wait for slow stats to merge (online=true AND mem=999)
-	start := time.Now()
-	timeout := time.After(3 * time.Second)
-	var found bool
-	for !found {
+	// Wait until both collectors are inflight (peak == 2), then release them.
+	timeout := time.After(5 * time.Second)
+	for peak.Load() < 2 {
+		select {
+		case <-timeout:
+			t.Fatalf("timed out waiting for concurrent execution, peak inflight = %d", peak.Load())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	close(gate)
+
+	// Drain until we see merged results
+	for {
 		select {
 		case s, ok := <-snapCh:
 			if !ok {
 				t.Fatal("snapCh closed before slow stats merged")
 			}
 			if s.System.MemUsedBytes == 999 && s.Online {
-				found = true
+				close(done)
+				return
 			}
 		case <-timeout:
-			t.Fatal("timed out waiting for concurrent slow stats")
+			t.Fatal("timed out waiting for merged slow stats")
 		}
-	}
-	elapsed := time.Since(start)
-	close(done)
-
-	// The slow loop fires on config.SlowInterval (1s) ticker, then runs both
-	// collectors concurrently. If sequential, total >= SlowInterval + 2*slowDelay.
-	// If concurrent, total ~= SlowInterval + 1*slowDelay.
-	seqMinimum := time.Duration(config.SlowInterval) + 2*slowDelay
-	if elapsed >= seqMinimum {
-		t.Errorf("slow loop took %v (>= %v), suggesting sequential execution (want concurrent)", elapsed, seqMinimum)
 	}
 }
 

@@ -91,7 +91,10 @@ thermal/
 │   │   ├── headline.go       # thermal bar: overall temp + dynamic process categories
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
-│   │   └── alerts.go         # scrolling alert log
+│   │   ├── alerts.go         # scrolling alert log
+│   │   ├── breathedots.go    # spring-animated breathing hexagon agent indicators
+│   │   ├── braillefont.go    # 4×8 bitmap font for gauge labels (CPU/MEM/SWAP)
+│   │   └── thermal.go        # category heat-level gradient (5 levels, cold→critical)
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
 │   ├── config/
