@@ -474,6 +474,93 @@ func TestHandleEventPreflightWarn(t *testing.T) {
 	}
 }
 
+func TestHandleEventGateCap(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventGateCap,
+		Command:   "vitest --pool=threads",
+		Rewritten: "vitest --pool=threads --maxWorkers=2",
+	}
+	s.HandleEvent(ev)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	alert := s.Alerts.At(0)
+	if !strings.Contains(alert.Message, "capped") {
+		t.Errorf("alert message = %q, want 'capped' substring", alert.Message)
+	}
+	if alert.Level != ThreatWarm {
+		t.Errorf("alert level = %v, want ThreatWarm", alert.Level)
+	}
+}
+
+func TestHandleEventAgentStopAlert(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStop,
+		AgentID:   "agent-9876543210",
+		AgentType: "researcher",
+	}
+	s.HandleEvent(ev)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	alert := s.Alerts.At(0)
+	if !strings.Contains(alert.Message, "stopped") {
+		t.Errorf("alert message = %q, want 'stopped' substring", alert.Message)
+	}
+	if !strings.Contains(alert.Message, "agent-98") {
+		t.Errorf("alert message = %q, want truncated agent ID", alert.Message)
+	}
+	if alert.Level != ThreatCool {
+		t.Errorf("alert level = %v, want ThreatCool", alert.Level)
+	}
+}
+
+func TestHandleEventParallelEngaged(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventParallelEngaged,
+	}
+	s.HandleEvent(ev)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	alert := s.Alerts.At(0)
+	if alert.Message != "parallel mode engaged" {
+		t.Errorf("alert message = %q, want %q", alert.Message, "parallel mode engaged")
+	}
+	if alert.Level != ThreatHot {
+		t.Errorf("alert level = %v, want ThreatHot", alert.Level)
+	}
+}
+
+func TestHandleEventParallelDisengaged(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventParallelDisengaged,
+	}
+	s.HandleEvent(ev)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	alert := s.Alerts.At(0)
+	if alert.Message != "parallel mode disengaged" {
+		t.Errorf("alert message = %q, want %q", alert.Message, "parallel mode disengaged")
+	}
+	if alert.Level != ThreatCool {
+		t.Errorf("alert level = %v, want ThreatCool", alert.Level)
+	}
+}
+
 func TestShortID(t *testing.T) {
 	cases := []struct {
 		input string

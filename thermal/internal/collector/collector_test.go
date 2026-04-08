@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // fakeFast returns a fixed snapshot with the given CPU%.
@@ -161,6 +163,55 @@ func TestRunWith_TracksSlowAge(t *testing.T) {
 		}
 	}
 	close(done)
+}
+
+func TestRunWith_SlowLoopRunsConcurrently(t *testing.T) {
+	snapCh := make(chan Snapshot, 16)
+	done := make(chan struct{})
+
+	slowDelay := 200 * time.Millisecond
+
+	cfg := RunConfig{
+		FastCollect: fakeFast(1.0),
+		SlowCollect: func(ctx context.Context) SystemStats {
+			time.Sleep(slowDelay)
+			return SystemStats{MemUsedBytes: 999}
+		},
+		NetCheck: func(ctx context.Context) bool {
+			time.Sleep(slowDelay)
+			return true
+		},
+	}
+
+	go RunWith(snapCh, 10*time.Millisecond, done, cfg)
+
+	// Wait for slow stats to merge (online=true AND mem=999)
+	start := time.Now()
+	timeout := time.After(3 * time.Second)
+	var found bool
+	for !found {
+		select {
+		case s, ok := <-snapCh:
+			if !ok {
+				t.Fatal("snapCh closed before slow stats merged")
+			}
+			if s.System.MemUsedBytes == 999 && s.Online {
+				found = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for concurrent slow stats")
+		}
+	}
+	elapsed := time.Since(start)
+	close(done)
+
+	// The slow loop fires on config.SlowInterval (1s) ticker, then runs both
+	// collectors concurrently. If sequential, total >= SlowInterval + 2*slowDelay.
+	// If concurrent, total ~= SlowInterval + 1*slowDelay.
+	seqMinimum := time.Duration(config.SlowInterval) + 2*slowDelay
+	if elapsed >= seqMinimum {
+		t.Errorf("slow loop took %v (>= %v), suggesting sequential execution (want concurrent)", elapsed, seqMinimum)
+	}
 }
 
 func TestRunWith_ClosesChannelOnDone(t *testing.T) {

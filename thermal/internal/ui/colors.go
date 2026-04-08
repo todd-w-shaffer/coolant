@@ -85,16 +85,10 @@ var CategoryColor = map[string]color.Color{
 	"swift":  lipgloss.Color("166"), // deep orange — Swift compilation
 }
 
-// SessionGlyph is the diamond icon for session markers in the rates row.
-const SessionGlyph = "◆"
-
 // AgentGlyphHollow and AgentGlyphFilled are the hexagon pair for breathing
 // agent indicators. The dot alternates between hollow and filled as it breathes.
 const AgentGlyphHollow = "⬡"
 const AgentGlyphFilled = "⬢"
-
-// AgentGlyphWidth is the cell width of each agent glyph (single-cell text).
-const AgentGlyphWidth = 1
 
 // CategoryGlyph maps activity categories to distinct single-cell unicode glyphs.
 // Visual weight mirrors resource weight: heavy categories get solid shapes.
@@ -107,9 +101,6 @@ var CategoryGlyph = map[string]string{
 	"rust":   "◇", // hollow diamond — Rust
 	"swift":  "⬡", // hexagon — Swift
 }
-
-// CategoryGlyphDefault is used when category is unknown.
-const CategoryGlyphDefault = "·"
 
 // CategoryGlyphFormatted holds pre-rendered ANSI-colored glyph strings,
 // eliminating per-frame lipgloss.NewStyle() allocations in hot render paths.
@@ -125,16 +116,6 @@ func init() {
 		CategoryGlyphFormatted[name] = ColorText(clr, glyph)
 	}
 }
-
-// Threshold defaults.
-const (
-	SpawnWarn = 10
-	SpawnCrit = 20
-	NetWarn   = 5
-	NetCrit   = 15
-	TotalWarn = 50
-	TotalCrit = 100
-)
 
 // ThreatColor maps threat levels to lipgloss colors — canonical source.
 var ThreatColor = map[model.ThreatLevel]color.Color{

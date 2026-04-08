@@ -183,8 +183,8 @@ func (h *Horizontal) idleView() string {
 	// System stats while idle
 	if h.state.Current != nil && h.height >= 4 {
 		snap := h.state.Current
-		memGB := snap.System.MemUsedBytes / int64(model.GB)
-		totalGB := snap.System.MemTotalBytes / int64(model.GB)
+		memGB := snap.System.MemUsedBytes / model.GB
+		totalGB := snap.System.MemTotalBytes / model.GB
 		stats := ui.DimText(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(snap.System.CPUPercent), memGB, totalGB))
 		lines = append(lines, stats)
 	}

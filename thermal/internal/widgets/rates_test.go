@@ -162,24 +162,3 @@ func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 		}
 	}
 }
-
-// ── formatFixedCount ─────────────────────────────────────────
-
-func TestFormatFixedCountTwoDigit(t *testing.T) {
-	tests := []struct {
-		n    int
-		want string
-	}{
-		{0, "00"},
-		{5, "05"},
-		{42, "42"},
-		{99, "99"},
-		{100, "++"},
-	}
-	for _, tt := range tests {
-		got := formatFixedCount(tt.n)
-		if got != tt.want {
-			t.Errorf("formatFixedCount(%d) = %q, want %q", tt.n, got, tt.want)
-		}
-	}
-}

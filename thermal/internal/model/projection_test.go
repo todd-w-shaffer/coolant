@@ -57,8 +57,8 @@ func TestEstimateHeadroomTight(t *testing.T) {
 		"V": 1, // 1GB committed
 	}
 	memTotal := testMemTotal
-	// Set memUsed so available - committed is between HeadroomCrit*GB and HeadroomWarn*GB
-	wantHeadroom := int64(config.HeadroomCritBytes*GB + GB/2) // 2.5GB — above crit, below warn
+	// Set memUsed so available - committed is between HeadroomCritBytes and HeadroomWarnBytes
+	wantHeadroom := int64(config.HeadroomCritBytes + GB/2) // 2.5GB — above crit, below warn
 	memUsed := memTotal - (wantHeadroom + WeightClass["V"])
 
 	info := EstimateHeadroom(typeCounts, memUsed, memTotal)

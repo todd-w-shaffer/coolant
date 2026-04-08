@@ -31,13 +31,6 @@ func (t ThreatLevel) String() string {
 	}
 }
 
-// Swap thresholds aliased from config for readability.
-const (
-	swapWarm = config.SwapWarmBytes
-	swapHot  = config.SwapHotBytes
-	swapCrit = config.SwapCritBytes
-)
-
 // Classify determines threat level from a snapshot and spawn rate.
 func Classify(snap collector.Snapshot, spawnRate float64) ThreatLevel {
 	mem := snap.System.MemPercent()
@@ -67,11 +60,11 @@ func Classify(snap collector.Snapshot, spawnRate float64) ThreatLevel {
 
 	// Swap — macOS uses some swap normally, only worry when it's significant
 	switch {
-	case swapUsed > int64(swapCrit):
+	case swapUsed > config.SwapCritBytes:
 		score += 3
-	case swapUsed > int64(swapHot):
+	case swapUsed > config.SwapHotBytes:
 		score += 2
-	case swapUsed > int64(swapWarm):
+	case swapUsed > config.SwapWarmBytes:
 		score += 1
 	}
 

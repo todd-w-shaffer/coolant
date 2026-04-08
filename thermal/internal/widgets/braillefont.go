@@ -9,6 +9,7 @@ import "strings"
 // Each string is one row: '#' = on, '.' = off.
 type letterBitmap [8]string
 
+// brailleFont maps uppercase letters to 4×8 pixel bitmaps.
 var brailleFont = map[rune]letterBitmap{
 	'C': {
 		".##.",
@@ -109,6 +110,8 @@ var brailleFont = map[rune]letterBitmap{
 //	0x02  0x10   (row 1)
 //	0x04  0x20   (row 2)
 //	0x40  0x80   (row 3, bottom)
+//
+// fontLeftBits and fontRightBits are braille dot bit positions per row within a character.
 var fontLeftBits = [4]rune{0x01, 0x02, 0x04, 0x40}
 var fontRightBits = [4]rune{0x08, 0x10, 0x20, 0x80}
 
