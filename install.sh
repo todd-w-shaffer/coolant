@@ -21,19 +21,21 @@ BAR1="⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂⠂�
 BAR2="⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒⠒"
 BAR3="⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿"
 
-cat <<'BANNER'
-
+echo ""
+printf "${GREEN}"
+cat <<'ART'
      ___  ___  ___  _    ___  _  _  _____
     / __|/ _ \/ _ \| |  /   \| \| ||_   _|
    | (__| (_)| (_) | |__| - ||    |  | |
     \___|\___/\___/|____|_|_||_|\_|  |_|
-
-    thermal management for claude code
-
-    built with Go + Bubbletea · looks great full-width in Ghostty
-    pairs well with Catppuccin Frappé and FiraCode Nerd Font Mono
-
-BANNER
+ART
+printf "${RESET}\n"
+echo ""
+echo "    thermal management for claude code"
+echo ""
+printf "    ${DIM}built with Go + Bubbletea · looks great full-width in Ghostty${RESET}\n"
+printf "    ${DIM}pairs well with Catppuccin Frappé and FiraCode Nerd Font Mono${RESET}\n"
+echo ""
 
 # Detect architecture
 ARCH="$(uname -m)"
