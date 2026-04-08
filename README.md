@@ -42,6 +42,12 @@ Keyboard shortcuts: `h` help overlay, `q` quit.
 
 ## Hooks
 
+Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes fighting for the same cores. Coolant's hooks prevent that automatically:
+
+- **Test runners are always capped.** Each agent gets a fair share of your CPU — one agent runs freely, five agents each get throttled proportionally. No configuration needed.
+- **Build tools are suppressed on demand.** Run `/coolant` and type checkers, linters, and compilers are blocked during parallel work, then restored when agents finish.
+- **Agent lifecycles are tracked.** Hooks fire on spawn and death, feeding the dashboard and keeping concurrency limits accurate. Stale counters from crashed agents are reconciled automatically.
+
 | Hook | Script | What it does |
 |------|--------|--------------|
 | SessionStart | `preflight.sh` | Warns about missing worktree exclusions |
@@ -49,7 +55,11 @@ Keyboard shortcuts: `h` help overlay, `q` quit.
 | SubagentStart | `agent-start.sh` | Increments agent counter, emits JSONL event |
 | SubagentStop | `agent-stop.sh` | Decrements counter, auto-disengages parallel mode when agents finish |
 
-The gate applies adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. One agent gets generous parallelism; five agents each get a fair share. Test runners (vitest, jest, cargo test, go test, pytest) are always capped. Build tools, type checkers, and linters (tsc, eslint, cargo build, go vet, mypy, etc.) are suppressed entirely during parallel mode. Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes.
+<details>
+<summary>How the gate works</summary>
+
+Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runners (vitest, jest, cargo test, go test, pytest) are always capped. Build tools, type checkers, and linters (tsc, eslint, cargo build, go vet, mypy, etc.) are suppressed entirely during parallel mode. Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes. Agent counts are reconciled against the JSONL event log to prevent stale counters from orphaned agents.
+</details>
 
 ## Skills
 
