@@ -68,7 +68,7 @@ func (r *Rates) View() string {
 	// System stats — fixed width
 	cpuPct := int(snap.System.CPUPercent)
 	memUsedGB := float64(snap.System.MemUsedBytes) / float64(model.GB)
-	memTotalGB := snap.System.MemTotalBytes / int64(model.GB)
+	memTotalGB := snap.System.MemTotalBytes / model.GB
 	memPct := snap.System.MemPercent()
 	swapGB := float64(snap.System.SwapUsedBytes) / float64(model.GB)
 	gpuPct := int(snap.System.GPUPercent)
@@ -146,6 +146,9 @@ const numCategories = 7
 var catIndex map[string]int
 
 func init() {
+	if numCategories != len(collector.Categories) {
+		panic("numCategories drift: update const to match collector.Categories")
+	}
 	catIndex = make(map[string]int, numCategories)
 	for i, cat := range collector.Categories {
 		catIndex[cat.Name] = i
@@ -178,14 +181,6 @@ func sessionGroupCounts(sessions []collector.SessionTree) []sessionGroup {
 		}
 	}
 	return groups
-}
-
-// formatFixedCount returns a 2-digit fixed-width count, or "++" for >= 100.
-func formatFixedCount(n int) string {
-	if n >= 100 {
-		return "++"
-	}
-	return fmt.Sprintf("%02d", n)
 }
 
 // Phase colors for session escalation — allocated once.

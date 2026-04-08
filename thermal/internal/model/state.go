@@ -91,7 +91,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	if s.SmoothedCounts == nil {
 		s.SmoothedCounts = make(map[string]float64)
 	}
-	smoothMap(s.TypeCounts, s.SmoothedCounts, config.CountSmoothAlpha)
+	smoothEMA(s.TypeCounts, s.SmoothedCounts, countAlpha)
 
 	// Category counts — clear and repopulate in place
 	clear(s.CategoryCounts)
@@ -105,7 +105,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	if s.SmoothedCats == nil {
 		s.SmoothedCats = make(map[string]float64)
 	}
-	smoothMapPerKey(s.CategoryCounts, s.SmoothedCats)
+	smoothEMA(s.CategoryCounts, s.SmoothedCats, catAlpha)
 
 	s.SessionCount = len(snap.Sessions)
 
@@ -163,7 +163,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	}
 
 	// Headroom alerts
-	if s.Headroom.HeadroomBytes < config.HeadroomCritBytes*GB && s.Headroom.Warning != "" {
+	if s.Headroom.HeadroomBytes < config.HeadroomCritBytes && s.Headroom.Warning != "" {
 		// Only alert once per threshold crossing (check last alert)
 		lastMsg := ""
 		if s.Alerts.Len() > 0 {
@@ -372,30 +372,7 @@ func (s *AppState) addAlert(a AlertEntry) {
 	s.Alerts.Push(a)
 }
 
-// smoothMapPerKey applies EMA smoothing with per-category alpha:
-// fixed categories (build, shell) use CountSmoothAlpha for snappy response,
-// dynamic runtimes use RuntimeSmoothAlpha for slower decay so they linger visibly.
-func smoothMapPerKey(raw map[string]int, smoothed map[string]float64) {
-	for key, count := range raw {
-		alpha := catAlpha(key)
-		if prev, ok := smoothed[key]; ok {
-			smoothed[key] = alpha*float64(count) + (1-alpha)*prev
-		} else {
-			smoothed[key] = float64(count)
-		}
-	}
-	for key, prev := range smoothed {
-		if _, ok := raw[key]; !ok {
-			alpha := catAlpha(key)
-			decayed := (1 - alpha) * prev
-			if decayed < 0.5 {
-				delete(smoothed, key)
-			} else {
-				smoothed[key] = decayed
-			}
-		}
-	}
-}
+func countAlpha(string) float64 { return config.CountSmoothAlpha }
 
 func catAlpha(name string) float64 {
 	if collector.FixedCategories[name] {
@@ -404,10 +381,12 @@ func catAlpha(name string) float64 {
 	return config.RuntimeSmoothAlpha
 }
 
-// smoothMap applies EMA smoothing: moves existing keys toward current raw counts,
+// smoothEMA applies EMA smoothing: moves existing keys toward current raw counts,
 // seeds new keys at their raw value, and decays disappeared keys toward zero.
-func smoothMap(raw map[string]int, smoothed map[string]float64, alpha float64) {
+// alphaFn returns the per-key alpha (use a constant func for uniform smoothing).
+func smoothEMA(raw map[string]int, smoothed map[string]float64, alphaFn func(string) float64) {
 	for key, count := range raw {
+		alpha := alphaFn(key)
 		if prev, ok := smoothed[key]; ok {
 			smoothed[key] = alpha*float64(count) + (1-alpha)*prev
 		} else {
@@ -416,6 +395,7 @@ func smoothMap(raw map[string]int, smoothed map[string]float64, alpha float64) {
 	}
 	for key, prev := range smoothed {
 		if _, ok := raw[key]; !ok {
+			alpha := alphaFn(key)
 			decayed := (1 - alpha) * prev
 			if decayed < 0.5 {
 				delete(smoothed, key)

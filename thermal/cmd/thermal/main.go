@@ -154,8 +154,6 @@ func (m model) View() tea.View {
 
 func main() {
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
-	_ = flag.Bool("horizontal", false, "Horizontal strip layout (accepted for backward compat, now default)")
-	_ = flag.Bool("vertical", false, "Vertical panel layout (WIP)")
 	flag.Parse()
 
 	m := newModel(*demoMode)

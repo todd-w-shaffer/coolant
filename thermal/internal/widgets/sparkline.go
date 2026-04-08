@@ -170,76 +170,6 @@ func valueToLevel(v, peak float64) int {
 	return level
 }
 
-// interpolateData inserts linear midpoints between consecutive samples,
-// doubling resolution. Turns step-function transitions into visible ramps.
-// Result length: 2*len(data) - 1 (or original for len < 2).
-func interpolateData(data []float64) []float64 {
-	if len(data) < 2 {
-		return data
-	}
-	out := make([]float64, 2*len(data)-1)
-	for i, v := range data {
-		out[i*2] = v
-		if i > 0 {
-			out[i*2-1] = (data[i-1] + v) / 2
-		}
-	}
-	return out
-}
-
-// interpolateMask expands each bool to 2 entries (real + midpoint copy).
-// Midpoints inherit the state of the left (older) neighbor.
-func interpolateMask(mask []bool) []bool {
-	if len(mask) < 2 {
-		return mask
-	}
-	out := make([]bool, 2*len(mask)-1)
-	for i, v := range mask {
-		out[i*2] = v
-		if i > 0 {
-			out[i*2-1] = mask[i-1]
-		}
-	}
-	return out
-}
-
-// prepareSparkData pads raw data to fill the sparkline width, interpolates
-// midpoints for smooth ramps, and returns the visible window of width*2 samples.
-func prepareSparkData(data []float64, width int) []float64 {
-	minRaw := width + 1
-	if len(data) < minRaw {
-		padded := make([]float64, minRaw)
-		copy(padded[minRaw-len(data):], data)
-		data = padded
-	}
-	interp := interpolateData(data)
-	need := width * 2
-	if len(interp) > need {
-		interp = interp[len(interp)-need:]
-	}
-	return interp
-}
-
-// prepareSparkMask pads and interpolates an online/offline mask in lockstep
-// with prepareSparkData. Padding entries are marked online (zero-value empty braille).
-func prepareSparkMask(mask []bool, width int) []bool {
-	minRaw := width + 1
-	if len(mask) < minRaw {
-		padded := make([]bool, minRaw)
-		for i := 0; i < minRaw-len(mask); i++ {
-			padded[i] = true
-		}
-		copy(padded[minRaw-len(mask):], mask)
-		mask = padded
-	}
-	interp := interpolateMask(mask)
-	need := width * 2
-	if len(interp) > need {
-		interp = interp[len(interp)-need:]
-	}
-	return interp
-}
-
 // SparkPair holds the top and bottom rows of a 2-row stacked sparkline.
 type SparkPair struct {
 	Top    string
@@ -369,12 +299,6 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 	return interp
 }
 
-// RenderSparkline renders a 2-row braille sparkline without masking or buffers.
-// Retained for callers outside the hot path (e.g. debug tools).
-func RenderSparkline(data []float64, width int, maxOverride float64, thresh *SparkThresholds) SparkPair {
-	return renderSparklineCore(data, nil, width, maxOverride, thresh, 0, nil)
-}
-
 // RenderSparklineWithMaskBuf renders a 2-row sparkline where offline ticks become
 // rainbow dots, reusing pre-allocated interpolation buffers to avoid per-frame
 // allocations. Two samples per character, two stacked characters per column.
@@ -382,9 +306,9 @@ func RenderSparklineWithMaskBuf(data []float64, online []bool, width int, maxOve
 	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf)
 }
 
-// renderSparklineCore is the shared implementation for all sparkline rendering.
+// renderSparklineCore is the implementation for sparkline rendering.
 // When mask is nil, all samples are treated as online (no rainbow/offline logic).
-// When buf is non-nil, interpolation buffers are reused to avoid allocations.
+// buf must be non-nil — callers allocate once via NewSparkBufs and reuse.
 func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
 	if width <= 0 {
 		return SparkPair{}
@@ -410,18 +334,10 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 	}
 
 	// Prepare visible data (and mask) via pad+interpolate+window
-	var visibleData []float64
+	visibleData := prepareSparkDataBuf(alignedData, width, buf)
 	var visibleMask []bool
-	if buf != nil {
-		visibleData = prepareSparkDataBuf(alignedData, width, buf)
-		if hasMask {
-			visibleMask = prepareSparkMaskBuf(alignedMask, width, buf)
-		}
-	} else {
-		visibleData = prepareSparkData(alignedData, width)
-		if hasMask {
-			visibleMask = prepareSparkMask(alignedMask, width)
-		}
+	if hasMask {
+		visibleMask = prepareSparkMaskBuf(alignedMask, width, buf)
 	}
 
 	// Find peak for auto-scaling

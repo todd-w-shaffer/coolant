@@ -1,7 +1,6 @@
 package widgets
 
 import (
-	"math"
 	"strings"
 	"testing"
 )
@@ -175,108 +174,7 @@ func TestLevelSplit(t *testing.T) {
 	}
 }
 
-// ── interpolateData ───────────────────────────────────────────
-
-func TestInterpolateDataEmpty(t *testing.T) {
-	got := interpolateData(nil)
-	if len(got) != 0 {
-		t.Errorf("interpolateData(nil) len = %d, want 0", len(got))
-	}
-}
-
-func TestInterpolateDataSingle(t *testing.T) {
-	got := interpolateData([]float64{42})
-	if len(got) != 1 || got[0] != 42 {
-		t.Errorf("interpolateData([42]) = %v, want [42]", got)
-	}
-}
-
-func TestInterpolateDataLength(t *testing.T) {
-	data := []float64{10, 20, 30}
-	got := interpolateData(data)
-	// 2*3 - 1 = 5
-	if len(got) != 5 {
-		t.Errorf("interpolateData len = %d, want 5", len(got))
-	}
-}
-
-func TestInterpolateDataMidpoints(t *testing.T) {
-	data := []float64{0, 100}
-	got := interpolateData(data)
-	// Expect [0, 50, 100]
-	want := []float64{0, 50, 100}
-	if len(got) != len(want) {
-		t.Fatalf("interpolateData len = %d, want %d", len(got), len(want))
-	}
-	for i := range got {
-		if math.Abs(got[i]-want[i]) > 0.001 {
-			t.Errorf("interpolateData[%d] = %f, want %f", i, got[i], want[i])
-		}
-	}
-}
-
-func TestInterpolateDataOriginalValues(t *testing.T) {
-	data := []float64{10, 30, 50}
-	got := interpolateData(data)
-	// Original values at even indices
-	if got[0] != 10 || got[2] != 30 || got[4] != 50 {
-		t.Errorf("original values not preserved: got[0]=%f, got[2]=%f, got[4]=%f",
-			got[0], got[2], got[4])
-	}
-	// Midpoints at odd indices
-	if math.Abs(got[1]-20) > 0.001 || math.Abs(got[3]-40) > 0.001 {
-		t.Errorf("midpoints wrong: got[1]=%f (want 20), got[3]=%f (want 40)",
-			got[1], got[3])
-	}
-}
-
-// ── prepareSparkData ──────────────────────────────────────────
-
-func TestPrepareSparkDataPadsShort(t *testing.T) {
-	// With width=5, we need width+1=6 raw samples. Provide only 3.
-	data := []float64{10, 20, 30}
-	got := prepareSparkData(data, 5)
-	// After padding to 6, interpolate to 11, window to 10.
-	if len(got) != 10 {
-		t.Errorf("prepareSparkData len = %d, want 10", len(got))
-	}
-	// Last values should reflect our input (right-aligned in padding).
-	// The rightmost original value (30) appears at padded[5], interpolated to got[10] → windowed.
-	// Just verify the last element is 30 (the most recent value).
-	if got[len(got)-1] != 30 {
-		t.Errorf("last visible sample = %f, want 30", got[len(got)-1])
-	}
-}
-
-func TestPrepareSparkDataWindowsLong(t *testing.T) {
-	// Provide more data than needed; result should be exactly width*2.
-	data := make([]float64, 50)
-	for i := range data {
-		data[i] = float64(i)
-	}
-	got := prepareSparkData(data, 10)
-	if len(got) != 20 {
-		t.Errorf("prepareSparkData len = %d, want 20", len(got))
-	}
-}
-
 // ── prepareSparkDataBuf ───────────────────────────────────────
-
-func TestPrepareSparkDataBufMatchesUnbuffered(t *testing.T) {
-	data := []float64{5, 10, 15, 20, 25}
-	width := 4
-	want := prepareSparkData(data, width)
-	buf := NewSparkBufs(width)
-	got := prepareSparkDataBuf(data, width, buf)
-	if len(got) != len(want) {
-		t.Fatalf("prepareSparkDataBuf len = %d, want %d", len(got), len(want))
-	}
-	for i := range got {
-		if math.Abs(got[i]-want[i]) > 0.001 {
-			t.Errorf("[%d] = %f, want %f", i, got[i], want[i])
-		}
-	}
-}
 
 func TestPrepareSparkDataBufPadsShort(t *testing.T) {
 	data := []float64{42}
@@ -391,31 +289,6 @@ func TestSparkBufsMaskWidthGrowthNoPanic(t *testing.T) {
 	if len(got) != largeWidth*2 {
 		t.Errorf("len = %d, want %d", len(got), largeWidth*2)
 	}
-}
-
-// ── RenderSparkline ───────────────────────────────────────────
-
-func TestRenderSparklineNonEmpty(t *testing.T) {
-	data := []float64{10, 20, 30, 40, 50, 60, 70, 80}
-	pair := RenderSparkline(data, 10, 100, nil)
-	if len(pair.Bottom) == 0 {
-		t.Error("RenderSparkline Bottom is empty for non-empty data")
-	}
-}
-
-func TestRenderSparklineZeroWidth(t *testing.T) {
-	data := []float64{10, 20, 30}
-	pair := RenderSparkline(data, 0, 100, nil)
-	if pair.Top != "" || pair.Bottom != "" {
-		t.Errorf("RenderSparkline with width=0: Top=%q, Bottom=%q, want empty", pair.Top, pair.Bottom)
-	}
-}
-
-func TestRenderSparklineEmptyData(t *testing.T) {
-	// Empty data with nonzero width should not panic.
-	pair := RenderSparkline(nil, 10, 100, nil)
-	// With nil data, prepareSparkData pads to all zeros → empty braille.
-	_ = pair // no panic is the assertion
 }
 
 // ── RenderSparklineWithMaskBuf ────────────────────────────────

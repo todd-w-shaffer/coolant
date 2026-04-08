@@ -23,15 +23,6 @@ func (s SystemStats) MemPercent() float64 {
 	return float64(s.MemUsedBytes) / float64(s.MemTotalBytes) * 100
 }
 
-// SwapPercent returns swap as a percentage of physical RAM (not swap partition).
-// 85GB swap on 16GB RAM = 531%. Tells you how far past physical memory you are.
-func (s SystemStats) SwapPercent() float64 {
-	if s.MemTotalBytes == 0 {
-		return 0
-	}
-	return float64(s.SwapUsedBytes) / float64(s.MemTotalBytes) * 100
-}
-
 // ProcessInfo holds a single process from the Claude descendant tree.
 type ProcessInfo struct {
 	PID      int
@@ -49,24 +40,6 @@ type SessionTree struct {
 	Descendants []ProcessInfo
 }
 
-// TotalRSS returns the sum of RSS across all descendants.
-func (s SessionTree) TotalRSS() int64 {
-	var total int64
-	for _, p := range s.Descendants {
-		total += p.RSSBytes
-	}
-	return total
-}
-
-// TotalCPU returns the sum of CPU% across all descendants.
-func (s SessionTree) TotalCPU() float64 {
-	var total float64
-	for _, p := range s.Descendants {
-		total += p.CPUPct
-	}
-	return total
-}
-
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {
 	System            SystemStats
@@ -78,11 +51,6 @@ type Snapshot struct {
 	Timestamp         time.Time
 	SlowAge           time.Duration // time since last successful slow-loop collection
 	CollectErrs       []string      // non-nil when collection partially failed
-}
-
-// TotalProcs returns the total number of Claude descendant processes.
-func (s Snapshot) TotalProcs() int {
-	return len(s.AllProcs)
 }
 
 // Category represents a process-based grouping visible in the dashboard.
