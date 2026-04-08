@@ -62,6 +62,37 @@ _read_counter() {
   fi
 }
 
+# Reconcile counter file against JSONL event log ground truth.
+# If JSONL exists and derived count differs, fix the counter.
+# Returns the reconciled count on stdout.
+_reconcile_counter() {
+  if [ ! -f "$COOLANT_EVENTS" ]; then
+    _read_counter
+    return
+  fi
+  local starts stops jsonl_count file_count events
+  # Scope to events after last counter.reset (if any)
+  local reset_line
+  reset_line=$(grep -n '"event":"counter.reset"' "$COOLANT_EVENTS" 2>/dev/null | tail -1 | cut -d: -f1) || true
+  if [ -n "$reset_line" ]; then
+    events=$(tail -n +"$((reset_line + 1))" "$COOLANT_EVENTS")
+  else
+    events=$(cat "$COOLANT_EVENTS")
+  fi
+  starts=$(printf '%s\n' "$events" | grep -c '"event":"agent.start"' 2>/dev/null) || starts=0
+  stops=$(printf '%s\n' "$events" | grep -c '"event":"agent.stop"' 2>/dev/null) || stops=0
+  jsonl_count=$((starts - stops))
+  if [ "$jsonl_count" -lt 0 ]; then
+    jsonl_count=0
+  fi
+  file_count=$(_read_counter)
+  if [ "$jsonl_count" -ne "$file_count" ]; then
+    echo "$jsonl_count" > "$COOLANT_COUNTER"
+    coolant_log "reconciled counter: file=$file_count jsonl=$jsonl_count"
+  fi
+  printf '%s' "$jsonl_count"
+}
+
 # Extract session_id, agent_id, agent_type from hook JSON.
 # Inline regex + parameter expansion — zero forks.
 # Sets: _agent_session_id, _agent_id, _agent_type

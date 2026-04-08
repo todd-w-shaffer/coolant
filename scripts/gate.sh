@@ -58,7 +58,7 @@ fi
 # Compute concurrency cap: floor((cores - 2) / agents), min 1
 compute_cap() {
   local agents
-  agents=$(_read_counter)
+  agents=$(_reconcile_counter)
   # Zero agents means no contention — default to 1 for the division
   if [ "$agents" -lt 1 ]; then
     agents=1
@@ -119,7 +119,7 @@ emit_cap() {
   local safe_orig safe_rewritten
   safe_orig=$(_json_escape "$orig")
   safe_rewritten=$(_json_escape "$rewritten")
-  coolant_event '"event":"gate.cap","tool":"Bash","command":"'"$safe_orig"'","original":"'"$safe_orig"'","rewritten":"'"$safe_rewritten"'"'
+  coolant_event '"event":"gate.cap","tool":"Bash","command":"'"$safe_orig"'","rewritten":"'"$safe_rewritten"'"'
   coolant_log "capped: $orig -> $rewritten"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"%s"}}}\n' "$safe_rewritten"
 }

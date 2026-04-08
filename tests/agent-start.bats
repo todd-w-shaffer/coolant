@@ -19,11 +19,11 @@ load test_helper
   grep -q "agent started" "$COOLANT_LOG"
 }
 
-@test "agent-start auto-engages at threshold" {
+@test "agent-start does NOT create lockfile at threshold" {
   echo "2" > "$COOLANT_COUNTER"
   export COOLANT_THRESHOLD=3
   run bash "$PROJECT_ROOT/scripts/agent-start.sh"
-  [ -f "$COOLANT_LOCKFILE" ]
+  [ ! -f "$COOLANT_LOCKFILE" ]
 }
 
 @test "agent-start does not engage below threshold" {
@@ -33,13 +33,12 @@ load test_helper
   [ ! -f "$COOLANT_LOCKFILE" ]
 }
 
-@test "agent-start skips auto-engage if already engaged" {
+@test "agent-start does not warn when already engaged" {
   echo "2" > "$COOLANT_COUNTER"
   touch "$COOLANT_LOCKFILE"
   export COOLANT_THRESHOLD=3
   run bash "$PROJECT_ROOT/scripts/agent-start.sh"
-  # Should not emit systemMessage if lockfile already existed
-  [[ "${output}" != *"auto-engaged"* ]]
+  [[ "${output}" != *"systemMessage"* ]]
 }
 
 @test "agent-start emits JSONL agent.start event" {
@@ -55,10 +54,34 @@ load test_helper
   grep -q '"session_id":"s1"' "$COOLANT_EVENTS"
 }
 
-@test "agent-start emits parallel.engaged JSONL on auto-engage" {
+@test "agent-start does NOT emit parallel.engaged at threshold" {
   echo "2" > "$COOLANT_COUNTER"
   export COOLANT_THRESHOLD=3
   echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
     bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
-  grep -q '"event":"parallel.engaged"' "$COOLANT_EVENTS"
+  ! grep -q '"event":"parallel.engaged"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start emits warning systemMessage at threshold" {
+  echo "2" > "$COOLANT_COUNTER"
+  export COOLANT_THRESHOLD=3
+  run bash "$PROJECT_ROOT/scripts/agent-start.sh"
+  [[ "${output}" == *"systemMessage"* ]]
+  [[ "${output}" == *"/coolant"* ]]
+  [[ "${output}" != *"auto-engaged"* ]]
+}
+
+@test "agent-start warning includes agent count" {
+  echo "2" > "$COOLANT_COUNTER"
+  export COOLANT_THRESHOLD=3
+  run bash "$PROJECT_ROOT/scripts/agent-start.sh"
+  [[ "${output}" == *"3 agents"* ]]
+}
+
+@test "agent-start warns again for each spawn above threshold" {
+  echo "3" > "$COOLANT_COUNTER"
+  export COOLANT_THRESHOLD=3
+  run bash "$PROJECT_ROOT/scripts/agent-start.sh"
+  [[ "${output}" == *"systemMessage"* ]]
+  [[ "${output}" == *"4 agents"* ]]
 }

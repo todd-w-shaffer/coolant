@@ -51,3 +51,32 @@ load test_helper
   [ "$status" -eq 1 ]
   [[ "${output}" == *"Usage:"* ]]
 }
+
+@test "toggle status uses reconciled count" {
+  touch "$COOLANT_LOCKFILE"
+  echo "5" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  run bash "$PROJECT_ROOT/scripts/toggle.sh" status
+  [[ "${output}" == *"2 agents tracked"* ]]
+}
+
+@test "toggle off emits counter.reset event" {
+  touch "$COOLANT_LOCKFILE"
+  echo "3" > "$COOLANT_COUNTER"
+  run bash "$PROJECT_ROOT/scripts/toggle.sh" off
+  grep -q '"event":"counter.reset"' "$COOLANT_EVENTS"
+}
+
+@test "toggle off then on then status shows zero agents" {
+  # Simulate prior activity
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  echo "2" > "$COOLANT_COUNTER"
+  touch "$COOLANT_LOCKFILE"
+  # Off resets, on re-engages, status should show 0 (not stale 2)
+  bash "$PROJECT_ROOT/scripts/toggle.sh" off > /dev/null
+  bash "$PROJECT_ROOT/scripts/toggle.sh" on > /dev/null
+  run bash "$PROJECT_ROOT/scripts/toggle.sh" status
+  [[ "${output}" == *"0 agents tracked"* ]]
+}

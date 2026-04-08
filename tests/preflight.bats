@@ -94,6 +94,12 @@ EOF
   [[ "$out" == *"jest"* ]]
 }
 
+@test "preflight emits counter.reset at session start" {
+  mkdir -p "$TEST_TMPDIR/project"
+  run_preflight "$TEST_TMPDIR/project" > /dev/null
+  grep -q '"event":"counter.reset"' "$COOLANT_EVENTS"
+}
+
 @test "preflight emits JSONL preflight.warn event" {
   mkdir -p "$TEST_TMPDIR/project"
   cat > "$TEST_TMPDIR/project/vitest.config.ts" <<'EOF'
