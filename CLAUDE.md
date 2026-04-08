@@ -69,7 +69,11 @@ Thermal dashboard rendered via bubbletea. Runs as a bottom tmux strip or standal
 
 ```
 thermal/
-├── cmd/thermal/main.go      # bubbletea app, flag parsing
+├── cmd/thermal/
+│   ├── main.go              # bubbletea app, flag parsing
+│   ├── parent_darwin.go     # kqueue EVFILT_PROC watcher — exits when parent dies
+│   └── parent_other.go      # no-op stub for non-darwin platforms
+├── cmd/brailletext/main.go  # standalone braille font debug tool
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
@@ -77,13 +81,14 @@ thermal/
 │   │   ├── system.go         # MEM/SWAP/decompressions via sysctl/vm_stat
 │   │   ├── procs.go          # Claude process discovery + descendant trees
 │   │   ├── network.go        # API connectivity check (TCP to api.anthropic.com)
-│   │   ├── collector.go      # decoupled fast (150ms) + slow (1s network) loops
+│   │   ├── collector.go      # decoupled fast (150ms) + slow (1s network/swap/GPU) loops
 │   │   └── events.go         # JSONL event tailer (polls $TMPDIR/coolant-$USER.events.jsonl)
 │   ├── model/
 │   │   ├── state.go          # AppState: rolling history, smoothed counts
 │   │   ├── threat.go         # ThreatLevel: COOL/WARM/HOT/MELTDOWN
 │   │   ├── projection.go     # memory weight classes, headroom estimation
 │   │   ├── personality.go    # idle messages, threat quips (loaded from CSV)
+│   │   ├── ring.go           # generic RingBuffer[T] — O(1) push, used by history/alerts/rates
 │   │   └── data/
 │   │       └── messages.csv  # embedded status bar messages per threat level
 │   ├── widgets/
@@ -143,7 +148,7 @@ Plugin and dashboard ship separately. The plugin installs via Claude Code's mark
 - **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
 - **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
-- **Collector** runs three loops: fast (150ms) for CPU/MEM/GPU/procs, slow (1s) for network, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
+- **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
 - Type colors, `ThreatColor`, and `GaugeDots` defined once in `internal/ui/colors.go`, shared across all widgets. Severity gradient coloring uses `severityColor()` in `sparkline.go` (green→yellow→red via go-colorful HCL blending). All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
 - Braille rendering done natively in Go (no awk, no subshells).
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
