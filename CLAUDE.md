@@ -152,7 +152,7 @@ Uses [bats-core](https://github.com/bats-core/bats-core) (`brew install bats-cor
 ```bash
 bats tests/                        # full suite
 bats tests/toggle.bats             # single file
-bats tests/ -f "auto-engage"       # name pattern
+bats tests/ -f "reconcile"         # name pattern
 ```
 
 - Each script gets a corresponding `tests/<name>.bats` file.
