@@ -23,7 +23,7 @@ claude plugin install coolant@todd-w-shaffer
 curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install.sh | bash
 
 # See it in action
-thermal --demo
+thermo --demo
 ```
 
 ![thermal dashboard demo](assets/thermal-demo.gif)

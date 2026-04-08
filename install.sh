@@ -5,7 +5,7 @@ set -euo pipefail
 # Downloads the thermal dashboard binary and statusline.
 
 REPO="todd-w-shaffer/coolant"
-BINARY="thermal"
+BINARY="thermo"
 RAW="https://raw.githubusercontent.com/${REPO}/main"
 
 cat <<'BANNER'
@@ -55,8 +55,9 @@ printf "  install to [%s]: " "$DEFAULT_DIR"
 read -r INSTALL_DIR
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_DIR}"
 
-# Expand ~ if someone types it
+# Expand ~ and $HOME if someone types them
 INSTALL_DIR="${INSTALL_DIR/#\~/$HOME}"
+INSTALL_DIR="${INSTALL_DIR//\$HOME/$HOME}"
 
 # Create directory if needed
 if [ ! -d "$INSTALL_DIR" ]; then
@@ -144,7 +145,7 @@ cat <<'DONE'
 
     ✓ coolant installed
 
-    thermal --demo     see the dashboard
-    thermal            monitor your system
+    thermo --demo      see the dashboard
+    thermo             monitor your system
 
 DONE

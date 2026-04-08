@@ -7,7 +7,7 @@ Set Height 150
 Set Padding 0
 
 Hide
-Type "cd /Users/toddwshaffer/Desktop/apps/coolant && ./bin/thermal --demo"
+Type "cd /Users/toddwshaffer/Desktop/apps/coolant && ./bin/thermo --demo"
 Enter
 Sleep 1s
 Type "c"

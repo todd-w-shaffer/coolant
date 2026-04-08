@@ -106,18 +106,18 @@ thermal/
 
 **Dependencies:** Go 1.25+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
 
-**Build:** `cd thermal && go build -o ../bin/thermal ./cmd/thermal/`
+**Build:** `cd thermal && go build -o ../bin/thermo ./cmd/thermal/`
 
 **Run:**
-- `./bin/thermal --demo` (thermal dashboard, synthetic data)
-- `./bin/thermal` (thermal dashboard, live system data)
+- `./bin/thermo --demo` (thermal dashboard, synthetic data)
+- `./bin/thermo` (thermal dashboard, live system data)
 
 ## Distribution
 
 Plugin and dashboard ship separately. The plugin installs via Claude Code's marketplace system; the dashboard is a prebuilt binary on GitHub Releases.
 
 - **Marketplace:** `todd-w-shaffer/marketplace` repo hosts the plugin manifest. Coolant is a git submodule under `plugins/coolant`. A GitHub Action (`.github/workflows/notify-marketplace.yml`) fires `repository_dispatch` on every push to main, triggering the marketplace repo to auto-update the submodule.
-- **Binaries:** `thermal-darwin-arm64` and `thermal-darwin-amd64` attached to GitHub Releases. Build both with: `GOARCH=arm64 go build -o bin/thermal-darwin-arm64 ./cmd/thermal/ && GOARCH=amd64 go build -o bin/thermal-darwin-amd64 ./cmd/thermal/` (from `thermal/`).
+- **Binaries:** `thermo-darwin-arm64` and `thermo-darwin-amd64` attached to GitHub Releases. Build both with: `GOARCH=arm64 go build -o bin/thermo-darwin-arm64 ./cmd/thermal/ && GOARCH=amd64 go build -o bin/thermo-darwin-amd64 ./cmd/thermal/` (from `thermal/`).
 - **Install script:** `install.sh` downloads the binary for the user's arch, asks where to put it, and optionally installs the braille statusline to `~/.claude/` with settings.json patching.
 
 ## Conventions
