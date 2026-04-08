@@ -4,9 +4,20 @@ set -euo pipefail
 # coolant installer
 # Downloads the thermo dashboard binary and statusline.
 
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  echo "Usage: bash install.sh"
+  echo ""
+  echo "Installs the thermo dashboard binary and optional Claude Code statusline."
+  echo "Run via: curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install.sh | bash"
+  exit 0
+fi
+
 REPO="todd-w-shaffer/coolant"
 BINARY="thermo"
 RAW="https://raw.githubusercontent.com/${REPO}/main"
+
+# Read from terminal even when piped via curl | bash
+prompt() { read -r "$1" < /dev/tty; }
 
 # Colors
 DIM='\033[2m'
@@ -73,7 +84,7 @@ fi
 
 echo "  where should thermo live?"
 printf "  press Enter for %s (recommended), or type a path: " "$DEFAULT_DIR"
-read -r INSTALL_DIR < /dev/tty
+prompt INSTALL_DIR
 INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_DIR}"
 
 # Expand ~ and $HOME if someone types them
@@ -121,7 +132,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
 
   echo "  want to run thermo from anywhere in your terminal?"
   printf "  (adds %s to PATH in %s) [Y/n]: " "$INSTALL_DIR" "$PROFILE"
-  read -r ADD_PATH < /dev/tty
+  prompt ADD_PATH
   ADD_PATH="${ADD_PATH:-Y}"
 
   if [[ "$ADD_PATH" =~ ^[Yy]$ ]]; then
@@ -148,7 +159,7 @@ echo ""
 echo "  coolant includes a statusline for Claude Code — context usage,"
 echo "  session usage, weekly quota, plan refresh timer, and git branch."
 printf "  install it? [Y/n]: "
-read -r INSTALL_SL < /dev/tty
+prompt INSTALL_SL
 INSTALL_SL="${INSTALL_SL:-Y}"
 
 if [[ "$INSTALL_SL" =~ ^[Yy]$ ]]; then
