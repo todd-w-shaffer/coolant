@@ -84,55 +84,38 @@ func (h *Horizontal) View() string {
 	if h.width == 0 || h.height == 0 {
 		return ""
 	}
-
-	// Idle state
 	if h.state.IsIdle() {
 		return h.idleView()
 	}
+	return h.activeView()
+}
 
+func (h *Horizontal) activeView() string {
 	var lines []string
 
-	// Line 1: Notification bar (collapses away with [c], hidden when empty)
 	if !h.collapsed && h.height >= 3 {
 		if bar := h.notificationBar(); bar != "" {
 			lines = append(lines, bar)
 		}
 	}
 
-	// Line 1-2: Thermal bar (overall + categories)
 	if h.height >= 1 {
 		lines = append(lines, h.headline.View())
 	}
 
-	// Lines 3-8: 2-row sparklines (6 lines) or help overlay
 	if h.helpMode && h.height >= 5 {
 		lines = append(lines, h.helpView()...)
 	} else if h.height >= 3 {
-		gaugeLines := strings.Split(h.gauges.View(), "\n")
-		if h.height >= 7 {
-			lines = append(lines, gaugeLines...)
-		} else if h.height >= 5 && len(gaugeLines) >= 4 {
-			lines = append(lines, gaugeLines[0], gaugeLines[1])
-			lines = append(lines, gaugeLines[2], gaugeLines[3])
-		} else if len(gaugeLines) >= 2 {
-			lines = append(lines, gaugeLines[0], gaugeLines[1])
+		if gv := h.gauges.ViewForHeight(h.height); gv != "" {
+			lines = append(lines, strings.Split(gv, "\n")...)
 		}
 	}
 
-	// Stats line: CPU/MEM/SWAP/GPU + warm/cool/net + static indicators
 	if h.height >= 8 {
 		lines = append(lines, h.rates.View())
 	}
 
-	// Pad to fill height
-	for len(lines) < h.height {
-		lines = append(lines, "")
-	}
-	if len(lines) > h.height {
-		lines = lines[:h.height]
-	}
-
-	return strings.Join(lines, "\n")
+	return h.padToHeight(lines)
 }
 
 func (h *Horizontal) helpView() []string {
@@ -181,7 +164,6 @@ func (h *Horizontal) idleView() string {
 
 	lines = append(lines, " "+ui.ColorText(ui.CyanColor, "◉")+" "+ui.DimText("coolant")+"  "+quip)
 
-	// System stats while idle
 	if h.state.Current != nil && h.height >= 4 {
 		snap := h.state.Current
 		memGB := snap.System.MemUsedBytes / model.GB
@@ -190,13 +172,17 @@ func (h *Horizontal) idleView() string {
 		lines = append(lines, stats)
 	}
 
+	return h.padToHeight(lines)
+}
+
+// padToHeight pads or truncates lines to exactly h.height, then joins.
+func (h *Horizontal) padToHeight(lines []string) string {
 	for len(lines) < h.height {
 		lines = append(lines, "")
 	}
 	if len(lines) > h.height {
 		lines = lines[:h.height]
 	}
-
 	return strings.Join(lines, "\n")
 }
 
