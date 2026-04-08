@@ -135,29 +135,29 @@ func (g *Gauges) AnimTick() {
 	}
 }
 
-// ViewForHeight returns sparkline output trimmed to fit the given number of
-// available lines. Full output is 6 lines (3 gauges × 2 rows each).
-// With fewer lines, lower-priority gauges are dropped: ≥5 keeps CPU+MEM,
-// ≥3 keeps CPU only, <3 returns empty.
-func (g *Gauges) ViewForHeight(avail int) string {
+// ViewLines returns sparkline output as a slice of lines, trimmed to fit
+// the given number of available lines. Full output is 6 lines (3 gauges
+// × 2 rows each). With fewer lines, lower-priority gauges are dropped:
+// ≥6 keeps all, ≥5 keeps CPU+MEM, ≥3 keeps CPU only, <3 returns nil.
+func (g *Gauges) ViewLines(avail int) []string {
 	if avail < 3 {
-		return ""
+		return nil
 	}
 	full := g.View()
 	if full == "" {
-		return full
+		return nil
 	}
 	lines := strings.Split(full, "\n")
 	switch {
-	case avail >= 7 || len(lines) <= avail:
-		return full
+	case avail >= 6 || len(lines) <= avail:
+		return lines
 	case avail >= 5 && len(lines) >= 4:
-		return strings.Join(lines[:4], "\n")
+		return lines[:4]
 	default:
 		if len(lines) >= 2 {
-			return strings.Join(lines[:2], "\n")
+			return lines[:2]
 		}
-		return full
+		return lines
 	}
 }
 

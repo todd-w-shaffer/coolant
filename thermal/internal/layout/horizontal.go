@@ -106,9 +106,7 @@ func (h *Horizontal) activeView() string {
 	if h.helpMode && h.height >= 5 {
 		lines = append(lines, h.helpView()...)
 	} else if h.height >= 3 {
-		if gv := h.gauges.ViewForHeight(h.height); gv != "" {
-			lines = append(lines, strings.Split(gv, "\n")...)
-		}
+		lines = append(lines, h.gauges.ViewLines(h.height)...)
 	}
 
 	if h.height >= 8 {
@@ -175,7 +173,6 @@ func (h *Horizontal) idleView() string {
 	return h.padToHeight(lines)
 }
 
-// padToHeight pads or truncates lines to exactly h.height, then joins.
 func (h *Horizontal) padToHeight(lines []string) string {
 	for len(lines) < h.height {
 		lines = append(lines, "")
