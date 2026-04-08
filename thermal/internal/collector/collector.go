@@ -8,6 +8,33 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
+// ── Dependency injection for testability ───────────────────
+
+// FastCollector gathers CPU + process trees (no subprocesses for CPU).
+type FastCollector func(pc *ProcCollector) Snapshot
+
+// SlowCollector gathers swap/vm_stat/GPU via subprocesses.
+type SlowCollector func(ctx context.Context) SystemStats
+
+// NetChecker probes API reachability.
+type NetChecker func(ctx context.Context) bool
+
+// RunConfig holds injectable dependencies for the collector loops.
+type RunConfig struct {
+	FastCollect FastCollector
+	SlowCollect SlowCollector
+	NetCheck    NetChecker
+}
+
+// DefaultRunConfig returns production dependencies.
+func DefaultRunConfig() RunConfig {
+	return RunConfig{
+		FastCollect: collectFast,
+		SlowCollect: CollectSlowStats,
+		NetCheck:    CheckOnline,
+	}
+}
+
 // Run starts two decoupled collector loops:
 //   - Fast loop (interval): CPU (cgo, no subprocess) + procs — drives sparklines.
 //   - Slow loop (1s): network reachability + swap/vm_stat/GPU (subprocess-heavy
@@ -16,12 +43,18 @@ import (
 // Both loops send Snapshots to ch. The fast loop carries last-known slow stats
 // and online state so every snapshot is complete.
 func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
+	RunWith(ch, interval, done, DefaultRunConfig())
+}
+
+// RunWith is the testable core of Run — same behavior, injectable dependencies.
+func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, cfg RunConfig) {
 	defer close(ch)
 
 	var (
-		mu     sync.Mutex
-		online bool        // last-known network state
-		slow   SystemStats // last-known subprocess-heavy stats
+		mu              sync.Mutex
+		online          bool        // last-known network state
+		slow            SystemStats // last-known subprocess-heavy stats
+		lastSlowSuccess time.Time   // zero until first slow loop completes
 	)
 
 	// Slow loop: network + swap/vm_stat/GPU at 1s
@@ -44,12 +77,12 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 				go func() {
 					defer wg.Done()
 					netCtx, netCancel := context.WithTimeout(ctx, config.NetCheckTimeout)
-					netResult = CheckOnline(netCtx)
+					netResult = cfg.NetCheck(netCtx)
 					netCancel()
 				}()
 				go func() {
 					defer wg.Done()
-					statsResult = CollectSlowStats(ctx)
+					statsResult = cfg.SlowCollect(ctx)
 				}()
 				wg.Wait()
 				cancel()
@@ -57,6 +90,7 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 				mu.Lock()
 				online = netResult
 				slow = statsResult
+				lastSlowSuccess = time.Now()
 				mu.Unlock()
 			}
 		}
@@ -77,7 +111,7 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 		case <-done:
 			return
 		case <-fastTicker.C:
-			snap := collectFast(procCollector)
+			snap := cfg.FastCollect(procCollector)
 			mu.Lock()
 			snap.Online = online
 			snap.System.MemUsedBytes = slow.MemUsedBytes
@@ -85,6 +119,9 @@ func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
 			snap.System.SwapTotalBytes = slow.SwapTotalBytes
 			snap.System.Decompressions = slow.Decompressions
 			snap.System.GPUPercent = slow.GPUPercent
+			if !lastSlowSuccess.IsZero() {
+				snap.SlowAge = time.Since(lastSlowSuccess)
+			}
 			mu.Unlock()
 			select {
 			case ch <- snap:
