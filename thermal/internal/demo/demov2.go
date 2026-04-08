@@ -1,3 +1,5 @@
+// Package demo generates synthetic snapshots for the --demo flag,
+// simulating realistic multi-session escalation cycles.
 package demo
 
 import (
