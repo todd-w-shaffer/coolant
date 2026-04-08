@@ -106,6 +106,8 @@ thermal/
 
 **Dependencies:** Go 1.25+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
 
+**Note:** The source directory is `thermal/` but the binary is named `thermo` (to avoid colliding with macOS `/usr/bin/thermal`).
+
 **Build:** `cd thermal && go build -o ../bin/thermo ./cmd/thermal/`
 
 **Run:**
