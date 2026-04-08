@@ -277,6 +277,18 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 			Message: "parallel mode disengaged",
 			Level:   ThreatCool,
 		})
+	case collector.EventCounterReset:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "session reset",
+			Level:   ThreatCool,
+		})
+	case collector.EventPreflightWarn:
+		s.addAlert(AlertEntry{
+			Time:    ev.Timestamp,
+			Message: "preflight: " + ev.Reason,
+			Level:   ThreatWarm,
+		})
 	}
 }
 
