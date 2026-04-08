@@ -5,10 +5,78 @@ set -euo pipefail
 # Downloads the thermo dashboard binary and statusline.
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: bash install.sh"
+  echo "Usage: bash install.sh [--uninstall]"
   echo ""
   echo "Installs the thermo dashboard binary and optional Claude Code statusline."
   echo "Run via: curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install.sh | bash"
+  echo ""
+  echo "  --uninstall    remove thermo binary, statusline, and PATH entry"
+  exit 0
+fi
+
+if [ "${1:-}" = "--uninstall" ]; then
+  BINARY="thermo"
+
+  # Colors
+  RED='\033[31m'
+  GREEN='\033[32m'
+  DIM='\033[2m'
+  BOLD='\033[1m'
+  RESET='\033[0m'
+
+  echo ""
+  printf "  ${BOLD}uninstalling coolant${RESET}\n"
+  echo ""
+
+  # Find and remove binary
+  FOUND_BIN="$(command -v "$BINARY" 2>/dev/null || true)"
+  if [ -n "$FOUND_BIN" ]; then
+    rm "$FOUND_BIN"
+    printf "  ${GREEN}✓${RESET} removed %s\n" "$FOUND_BIN"
+  else
+    printf "  ${DIM}–${RESET} thermo binary not found on PATH, skipping\n"
+  fi
+
+  # Remove statusline
+  SL="$HOME/.claude/statusline.sh"
+  if [ -f "$SL" ]; then
+    rm "$SL"
+    printf "  ${GREEN}✓${RESET} removed %s\n" "$SL"
+  else
+    printf "  ${DIM}–${RESET} statusline not found, skipping\n"
+  fi
+
+  # Remove statusLine from settings.json
+  SETTINGS="$HOME/.claude/settings.json"
+  if [ -f "$SETTINGS" ] && grep -q '"statusLine"' "$SETTINGS"; then
+    if command -v jq &>/dev/null; then
+      tmp=$(mktemp)
+      jq 'del(.statusLine)' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+      printf "  ${GREEN}✓${RESET} removed statusLine from settings.json\n"
+    else
+      printf "  ${RED}!${RESET} statusLine entry in settings.json needs manual removal (jq not installed)\n"
+    fi
+  fi
+
+  # Remove PATH entry from shell profile
+  SHELL_NAME="$(basename "$SHELL")"
+  case "$SHELL_NAME" in
+    zsh)  PROFILE="$HOME/.zshrc" ;;
+    bash) PROFILE="$HOME/.bashrc" ;;
+    *)    PROFILE="$HOME/.profile" ;;
+  esac
+
+  if [ -f "$PROFILE" ] && grep -q '# coolant' "$PROFILE"; then
+    # Remove the comment and the export line that follows it
+    sed -i '' '/^# coolant$/,+1d' "$PROFILE"
+    # Remove any blank line left behind
+    sed -i '' '/^$/N;/^\n$/d' "$PROFILE"
+    printf "  ${GREEN}✓${RESET} removed PATH entry from %s\n" "$PROFILE"
+  fi
+
+  echo ""
+  printf "  ${BOLD}✓ coolant uninstalled${RESET}\n"
+  echo ""
   exit 0
 fi
 
