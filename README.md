@@ -63,7 +63,7 @@ Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runne
 
 ## Skills
 
-`/coolant` -- Toggle build suppression for multi-agent work. Commands: `on` (default), `off`, `status`.
+`/coolant` -- Toggle build suppression for multi-agent work. Commands: `on` (default), `off`, `status`. When enough agents are active to trigger the threshold, you'll get a nudge suggesting you engage `/coolant` to suppress builds — it's opt-in, never automatic.
 
 ## Requirements
 
