@@ -30,6 +30,9 @@ cat <<'BANNER'
 
     thermal management for claude code
 
+    built with Go + Bubbletea · looks great full-width in Ghostty
+    pairs well with Catppuccin Frappé and FiraCode Nerd Font Mono
+
 BANNER
 
 # Detect architecture
