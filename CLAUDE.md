@@ -6,6 +6,16 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 **NEVER delete files or directories without explicit permission.** No exceptions. No "cleanup." No "safe to delete." ASK FIRST. Always. Even if the file looks stale, orphaned, or unnecessary. Even if you created it. Even if it's untracked. The user runs with permissive settings — that trust must not be abused for destructive operations.
 
+## Quick reference
+
+```bash
+cd thermal && go test ./...              # Go tests
+bats tests/                              # bash tests
+cd thermal && go build -o ../bin/thermo ./cmd/thermal/  # build
+./bin/thermo --demo                      # run with synthetic data
+./bin/thermo                             # run with live data
+```
+
 ## Workflow rules
 
 ### Commit style
@@ -132,6 +142,10 @@ Plugin and dashboard ship separately. The plugin installs via Claude Code's mark
 
 ## Conventions
 
+### JSONL event bus (the bash↔Go seam)
+
+Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. This is the *only* runtime data path between the two layers — there are zero direct calls. The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
+
 ### Bash (hooks, plumbing)
 
 - All scripts must be bash 3.2 compatible (macOS system bash). No `mapfile`, no associative arrays, no `|&`.
@@ -167,3 +181,8 @@ bats tests/ -f "reconcile"         # name pattern
 - `tests/test_helper.bash` provides `setup`/`teardown` — isolates all state to a temp directory so tests never touch real `/tmp/coolant-*` files.
 - Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir. Scripts respect these via the defaults in `common.sh`.
 - New scripts must have tests before merge. New behavior on existing scripts must have a failing test first (red-green-refactor).
+
+## graphify
+
+Knowledge graph at `graphify-out/`. Post-commit hook keeps it current automatically.
+Read `graphify-out/GRAPH_REPORT.md` for god nodes and community structure before deep codebase questions.
