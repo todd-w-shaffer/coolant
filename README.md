@@ -8,7 +8,7 @@ A resource management layer for Claude Code -- prevents machines from melting wh
 
 Run five Claude Code agents in parallel and your machine will try to compile, test, and lint everything at once. CPU pins, memory fills, the compressor spikes, and your whole system locks up. Coolant stops that.
 
-The **dashboard** gives you a real-time read on system pressure. Each Claude Code session gets its own indicator, color-coded by what it's doing: idle, compiling, building, or in a full shell explosion. Agent spawns and deaths pulse through the display in real time. You see the state of your machine at a glance, not after the freeze. The **hooks** handle the rest automatically: capping concurrent test runners, suppressing build tools during parallel work, and tracking agent lifecycles. You get the throughput of parallel agents without the meltdown.
+The **dashboard** gives you a real-time read on system pressure. Each Claude Code session gets its own diamond, color-coded by escalation phase: idle (gray), language runtime spinning up (yellow), build tools running (orange), or full shell explosion (red, 30+ processes). Active subagents show as breathing hexagons on the headline bar. Spawn and death rates scroll through the display so you can see churn, not just snapshots. You see the state of your machine at a glance, not after the freeze. The **hooks** handle the rest: always capping concurrent test runners, and — when you opt in with `/coolant` — suppressing build tools entirely during parallel work. You get the throughput of parallel agents without the meltdown.
 
 ## Quick start
 
