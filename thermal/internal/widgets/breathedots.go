@@ -49,6 +49,7 @@ func (b *BreatheDots) SetTarget(count int) {
 			b.nextPhase += 0.7
 			b.dots = append(b.dots, breatheDot{phase: b.nextPhase})
 		}
+		b.lastStale = -1 // invalidate dirty check
 	} else if count < aliveCount {
 		toKill := aliveCount - count
 		for i := len(b.dots) - 1; i >= 0 && toKill > 0; i-- {
@@ -57,6 +58,7 @@ func (b *BreatheDots) SetTarget(count int) {
 				toKill--
 			}
 		}
+		b.lastStale = -1 // invalidate dirty check
 	}
 }
 
