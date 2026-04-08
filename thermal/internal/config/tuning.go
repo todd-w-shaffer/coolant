@@ -20,6 +20,14 @@ const (
 // DefaultPageSize is the fallback macOS page size when hw.pagesize is unavailable.
 const DefaultPageSize int64 = 16384
 
+// ── Agent staleness ───────────────────────────────────────
+
+// AgentStaleThreshold is how long after start an agent is considered
+// "likely orphaned" if no stop event has arrived. Team agents that
+// terminate via shutdown protocol don't fire SubagentStop hooks,
+// so their dots dim after this duration.
+const AgentStaleThreshold = 3 * time.Minute
+
 // ── Animation ──────────────────────────────────────────────
 
 const (
@@ -44,6 +52,8 @@ const (
 	BreatheBaseG     = 115.0 //
 	BreatheBaseB     = 74.0  //
 	BreatheFadeEps   = 0.01  // spring position below which a dying icon is removed
+	BreatheStaleRate = 0.3   // phase advance multiplier for stale (orphaned) dots
+	BreatheStaleDim  = 0.35  // brightness multiplier for stale dots
 )
 
 // ── History / buffer sizes ─────────────────────────────────

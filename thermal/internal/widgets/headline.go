@@ -45,6 +45,7 @@ func (h *Headline) Update(state *model.AppState) {
 		return
 	}
 	h.agents.SetTarget(state.AgentCount())
+	h.agents.SetStaleCount(state.StaleAgentCount())
 }
 
 // AnimTick advances agent icon springs and breathing phases.

@@ -314,6 +314,105 @@ func TestHandleEventAgentStart(t *testing.T) {
 	}
 }
 
+func TestAgentCountSplitsFreshAndStale(t *testing.T) {
+	s := NewAppState()
+
+	// Start two agents at different times
+	old := collector.GateEvent{
+		Timestamp: time.Now().Add(-10 * time.Minute),
+		Event:     collector.EventAgentStart,
+		AgentID:   "old-agent-0001",
+		AgentType: "researcher",
+	}
+	fresh := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStart,
+		AgentID:   "fresh-agent-0002",
+		AgentType: "coder",
+	}
+	s.HandleEvent(old)
+	s.HandleEvent(fresh)
+
+	if s.AgentCount() != 2 {
+		t.Fatalf("AgentCount = %d, want 2", s.AgentCount())
+	}
+	if s.FreshAgentCount() != 1 {
+		t.Errorf("FreshAgentCount = %d, want 1", s.FreshAgentCount())
+	}
+	if s.StaleAgentCount() != 1 {
+		t.Errorf("StaleAgentCount = %d, want 1", s.StaleAgentCount())
+	}
+}
+
+func TestAgentStopClearsStaleAgent(t *testing.T) {
+	s := NewAppState()
+
+	// Start a stale agent
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now().Add(-10 * time.Minute),
+		Event:     collector.EventAgentStart,
+		AgentID:   "stale-0001",
+		AgentType: "researcher",
+	})
+	if s.StaleAgentCount() != 1 {
+		t.Fatalf("StaleAgentCount = %d, want 1", s.StaleAgentCount())
+	}
+
+	// Stop it — should clear completely
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStop,
+		AgentID:   "stale-0001",
+		AgentType: "researcher",
+	})
+	if s.AgentCount() != 0 {
+		t.Errorf("AgentCount = %d, want 0 after stop", s.AgentCount())
+	}
+	if s.StaleAgentCount() != 0 {
+		t.Errorf("StaleAgentCount = %d, want 0 after stop", s.StaleAgentCount())
+	}
+}
+
+func TestPurgeStaleAgents(t *testing.T) {
+	s := NewAppState()
+
+	// Two stale, one fresh
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now().Add(-10 * time.Minute),
+		Event:     collector.EventAgentStart,
+		AgentID:   "stale-001",
+		AgentType: "researcher",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now().Add(-10 * time.Minute),
+		Event:     collector.EventAgentStart,
+		AgentID:   "stale-002",
+		AgentType: "reviewer",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStart,
+		AgentID:   "fresh-001",
+		AgentType: "coder",
+	})
+
+	if s.StaleAgentCount() != 2 {
+		t.Fatalf("StaleAgentCount = %d, want 2", s.StaleAgentCount())
+	}
+
+	s.PurgeStaleAgents()
+
+	if s.AgentCount() != 1 {
+		t.Errorf("AgentCount after purge = %d, want 1", s.AgentCount())
+	}
+	if s.StaleAgentCount() != 0 {
+		t.Errorf("StaleAgentCount after purge = %d, want 0", s.StaleAgentCount())
+	}
+	if s.FreshAgentCount() != 1 {
+		t.Errorf("FreshAgentCount after purge = %d, want 1", s.FreshAgentCount())
+	}
+}
+
 func TestHandleEventGateSuppress(t *testing.T) {
 	s := NewAppState()
 	ev := collector.GateEvent{

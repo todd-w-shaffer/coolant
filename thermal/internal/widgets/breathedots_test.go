@@ -119,6 +119,54 @@ func TestBreatheDotAnimTickFreezesPhaseDying(t *testing.T) {
 	}
 }
 
+func TestBreatheDotStaleDimsBrightness(t *testing.T) {
+	b := NewBreatheDots()
+	b.SetTarget(2)
+	// Advance so dots are fully visible
+	for i := 0; i < 60; i++ {
+		b.AnimTick()
+	}
+	// Mark one dot as stale
+	b.SetStaleCount(1)
+
+	staleCount := 0
+	for _, d := range b.dots {
+		if d.stale {
+			staleCount++
+		}
+	}
+	if staleCount != 1 {
+		t.Errorf("stale count = %d, want 1", staleCount)
+	}
+
+	// Stale dot should still be alive (not dying), just dimmed
+	staleDot := b.dots[len(b.dots)-1]
+	if staleDot.dying {
+		t.Error("stale dot should not be dying")
+	}
+	if !staleDot.stale {
+		t.Error("last dot should be stale")
+	}
+}
+
+func TestBreatheDotStalePhaseSlower(t *testing.T) {
+	b := NewBreatheDots()
+	b.SetTarget(2)
+	b.SetStaleCount(1)
+
+	freshPhase := b.dots[0].phase
+	stalePhase := b.dots[1].phase
+
+	b.AnimTick()
+
+	freshAdvance := b.dots[0].phase - freshPhase
+	staleAdvance := b.dots[1].phase - stalePhase
+
+	if staleAdvance >= freshAdvance {
+		t.Errorf("stale phase advance (%f) should be less than fresh (%f)", staleAdvance, freshAdvance)
+	}
+}
+
 func TestBreatheDotRenderEmpty(t *testing.T) {
 	b := NewBreatheDots()
 	str, w := b.Render("⬡", "⬢", nil, 0)
