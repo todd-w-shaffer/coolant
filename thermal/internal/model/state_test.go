@@ -561,6 +561,49 @@ func TestHandleEventParallelDisengaged(t *testing.T) {
 	}
 }
 
+func TestOfflineSinceStableAcrossConsecutiveOfflineTicks(t *testing.T) {
+	s := NewAppState()
+	now := time.Now()
+
+	s.Update(testSnap(t, withTime(now), withOnline(true)))
+	s.Update(testSnap(t, withTime(now.Add(1*time.Second)), withOnline(false)))
+	firstOfflineSince := s.OfflineSince
+
+	s.Update(testSnap(t, withTime(now.Add(2*time.Second)), withOnline(false)))
+	if !s.OfflineSince.Equal(firstOfflineSince) {
+		t.Errorf("OfflineSince changed on consecutive offline tick: %v → %v", firstOfflineSince, s.OfflineSince)
+	}
+
+	s.Update(testSnap(t, withTime(now.Add(5*time.Second)), withOnline(false)))
+	if s.OfflineDuration < 4*time.Second {
+		t.Errorf("OfflineDuration = %v, want >= 4s after 3 offline ticks", s.OfflineDuration)
+	}
+	if !s.OfflineSince.Equal(firstOfflineSince) {
+		t.Errorf("OfflineSince changed after third offline tick")
+	}
+}
+
+func TestSmoothedCountsDecayAndPrune(t *testing.T) {
+	s := NewAppState()
+	now := time.Now()
+
+	// Tick 1: V processes exist → SmoothedCounts["V"] seeded
+	procs := []collector.ProcessInfo{{PID: 1, TypeCode: "V"}}
+	s.Update(testSnap(t, withTime(now), withProcs(procs)))
+	if _, ok := s.SmoothedCounts["V"]; !ok {
+		t.Fatal("SmoothedCounts[V] should be seeded after first tick with V procs")
+	}
+
+	// Subsequent ticks with no V procs → SmoothedCounts["V"] should decay toward zero
+	for i := 1; i <= 100; i++ {
+		s.Update(testSnap(t, withTime(now.Add(time.Duration(i)*time.Second))))
+	}
+
+	if _, ok := s.SmoothedCounts["V"]; ok {
+		t.Errorf("SmoothedCounts[V] = %f, want pruned (deleted) after 100 ticks with no V procs", s.SmoothedCounts["V"])
+	}
+}
+
 func TestShortID(t *testing.T) {
 	cases := []struct {
 		input string

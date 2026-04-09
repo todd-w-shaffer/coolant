@@ -6,6 +6,9 @@ thermal/thermal
 # macOS
 .DS_Store
 
+# graphify knowledge graph (rebuilt by post-commit hook)
+graphify-out/
+
 # Archived artifacts — historical, not in use
 docs/archive/
 scripts/archive/
