@@ -230,61 +230,41 @@ func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
 	}
 }
 
+// eventAlertSpec defines the message format and threat level for a JSONL event.
+type eventAlertSpec struct {
+	msg   func(collector.GateEvent) string
+	level ThreatLevel
+}
+
+var eventAlerts = map[string]eventAlertSpec{
+	collector.EventGateSuppress: {func(ev collector.GateEvent) string { return "gate: " + ev.Command + " suppressed (" + ev.Reason + ")" }, ThreatWarm},
+	collector.EventGateCap:      {func(ev collector.GateEvent) string { return "gate: " + ev.Command + " capped → " + ev.Rewritten }, ThreatWarm},
+	collector.EventAgentStart: {func(ev collector.GateEvent) string {
+		return "agent " + ev.AgentType + " started (" + shortID(ev.AgentID) + ")"
+	}, ThreatCool},
+	collector.EventAgentStop: {func(ev collector.GateEvent) string {
+		return "agent " + ev.AgentType + " stopped (" + shortID(ev.AgentID) + ")"
+	}, ThreatCool},
+	collector.EventParallelEngaged:    {func(ev collector.GateEvent) string { return "parallel mode engaged" }, ThreatHot},
+	collector.EventParallelDisengaged: {func(ev collector.GateEvent) string { return "parallel mode disengaged" }, ThreatCool},
+	collector.EventCounterReset:       {func(ev collector.GateEvent) string { return "session reset" }, ThreatCool},
+	collector.EventPreflightWarn:      {func(ev collector.GateEvent) string { return "preflight: " + ev.Reason }, ThreatWarm},
+}
+
 // HandleEvent processes an external event from the JSONL event log
 // and generates appropriate alerts.
 func (s *AppState) HandleEvent(ev collector.GateEvent) {
+	if spec, ok := eventAlerts[ev.Event]; ok {
+		s.addAlert(AlertEntry{Time: ev.Timestamp, Message: spec.msg(ev), Level: spec.level})
+	}
+
+	// Side effects beyond alerting
 	switch ev.Event {
-	case collector.EventGateSuppress:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "gate: " + ev.Command + " suppressed (" + ev.Reason + ")",
-			Level:   ThreatWarm,
-		})
-	case collector.EventGateCap:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "gate: " + ev.Command + " capped → " + ev.Rewritten,
-			Level:   ThreatWarm,
-		})
 	case collector.EventAgentStart:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "agent " + ev.AgentType + " started (" + shortID(ev.AgentID) + ")",
-			Level:   ThreatCool,
-		})
 		s.PluginActive = true
 		s.activeAgents[ev.AgentID] = ev.Timestamp
 	case collector.EventAgentStop:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "agent " + ev.AgentType + " stopped (" + shortID(ev.AgentID) + ")",
-			Level:   ThreatCool,
-		})
 		delete(s.activeAgents, ev.AgentID)
-	case collector.EventParallelEngaged:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "parallel mode engaged",
-			Level:   ThreatHot,
-		})
-	case collector.EventParallelDisengaged:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "parallel mode disengaged",
-			Level:   ThreatCool,
-		})
-	case collector.EventCounterReset:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "session reset",
-			Level:   ThreatCool,
-		})
-	case collector.EventPreflightWarn:
-		s.addAlert(AlertEntry{
-			Time:    ev.Timestamp,
-			Message: "preflight: " + ev.Reason,
-			Level:   ThreatWarm,
-		})
 	}
 }
 
