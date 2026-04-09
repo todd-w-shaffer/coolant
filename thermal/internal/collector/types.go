@@ -16,7 +16,7 @@ type SystemStats struct {
 }
 
 // MemPercent returns memory utilization as 0-100.
-func (s SystemStats) MemPercent() float64 {
+func (s *SystemStats) MemPercent() float64 {
 	if s.MemTotalBytes == 0 {
 		return 0
 	}
