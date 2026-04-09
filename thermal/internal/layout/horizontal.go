@@ -119,33 +119,23 @@ func (h *Horizontal) activeView() string {
 func (h *Horizontal) helpView() []string {
 	d := lipgloss.Color("250")
 	ct := ui.ColorText
+	dim := ui.DimText
 
-	// Phase diamond samples
-	idle := ct(lipgloss.Color("245"), "⌬")
-	green := ct(lipgloss.Color("2"), "⌬")
-	yellow := ct(lipgloss.Color("3"), "⌬")
-	orange := ct(lipgloss.Color("208"), "⌬")
-	red := ct(lipgloss.Color("196"), "⌬")
+	diamond := func(c string) string { return ct(lipgloss.Color(c), "⌬") }
 
 	return []string{
-		fmt.Sprintf(" %s %s  %s  %s  %s %s %s  %s %s",
-			ui.DimText("sparklines"), ct(d, "CPU cores"),
-			ct(d, "MEM app memory"),
-			ct(d, "SWAP compressor pressure — spikes before lockup"),
-			ui.DimText("|"), ui.DimText("⊞"), ct(d, "Desktop"), ui.DimText("⊙"), ct(d, "Chrome")),
-		fmt.Sprintf(" %s %s  %s %s  %s %s  %s %s  %s %s  %s",
-			ui.DimText("sessions"), idle, ct(d, "idle"),
-			green, ct(d, "active"),
-			yellow, ct(d, "language"),
-			orange, ct(d, "build"),
-			red, ct(d, "shells (30+)")),
-		fmt.Sprintf(" %s %s%s %s  %s",
-			ui.DimText("agents"),
-			ui.DimText(ui.AgentGlyphHollow), ui.DimText(ui.AgentGlyphFilled),
-			ct(d, "subagents — hexagons breathe hollow/filled, count matches headline"),
-			ui.DimText("categories track process types in the headline bar")),
-		fmt.Sprintf(" %s  %s  %s  %s",
-			ui.DimText("[h] close"), ui.DimText("[c] collapse"), ui.DimText("[x] purge ghosts"), ui.DimText("[q] quit")),
+		" " + dim("sparklines") + " " + ct(d, "CPU cores") + "  " + ct(d, "MEM app memory") + "  " +
+			ct(d, "SWAP compressor pressure — spikes before lockup") + "  " +
+			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
+		" " + dim("sessions") + " " + diamond("245") + "  " + ct(d, "idle") + " " +
+			diamond("2") + " " + ct(d, "active") + "  " +
+			diamond("3") + " " + ct(d, "language") + "  " +
+			diamond("208") + " " + ct(d, "build") + "  " +
+			diamond("196") + " " + ct(d, "shells (30+)"),
+		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphFilled) + " " +
+			ct(d, "subagents — hexagons breathe hollow/filled, count matches headline") + "  " +
+			dim("categories track process types in the headline bar"),
+		" " + dim("[h] close") + "  " + dim("[c] collapse") + "  " + dim("[x] purge ghosts") + "  " + dim("[q] quit"),
 	}
 }
 
