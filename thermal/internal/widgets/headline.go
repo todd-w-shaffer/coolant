@@ -9,17 +9,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
-
-// Overall thermal gradient — same 5-level scheme as category boxes.
-var overallGradient = []thermalLevel{
-	{lipgloss.Color("236"), lipgloss.Color("233")}, // cold
-	{lipgloss.Color("2"), lipgloss.Color("233")},   // cool: green text
-	{lipgloss.Color("3"), lipgloss.Color("234")},   // warm: yellow text
-	{lipgloss.Color("208"), lipgloss.Color("235")}, // hot: orange text
-	{lipgloss.Color("196"), lipgloss.Color("52")},  // critical: red on dark red
-}
 
 // Headline renders the unified thermal bar:
 // [ Claude's humming along  ◆ ◆ ◆ | test:004 | build:008 | run:018 | search:005 | shell:004 ]
@@ -27,11 +19,13 @@ type Headline struct {
 	width  int
 	state  *model.AppState
 	agents *BreatheDots
+	theme  *theme.Theme
 }
 
-func NewHeadline() *Headline {
+func NewHeadline(th *theme.Theme) *Headline {
 	return &Headline{
-		agents: NewBreatheDots(),
+		agents: NewBreatheDots(th),
+		theme:  th,
 	}
 }
 
@@ -71,11 +65,11 @@ func visibleCategories(smoothed map[string]float64) []collector.Category {
 
 // renderCatCell renders a single category box at the given width.
 // Fixed categories show "name:NNN", dynamic runtimes show just "name".
-func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidth int) string {
+func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidth int, th *theme.Theme) string {
 	s := smoothed[cat.Name]
 	count := int(math.Round(s))
 	level := thermalLevelFor(cat.Name, count)
-	thermal := thermalGradient[level]
+	thermal := th.CategoryGradient[level]
 
 	var content string
 	if collector.FixedCategories[cat.Name] {
@@ -96,8 +90,8 @@ func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidt
 
 	padded := strings.Repeat(" ", padLeft) + content + strings.Repeat(" ", padRight)
 	return lipgloss.NewStyle().
-		Foreground(thermal.fg).
-		Background(thermal.bg).
+		Foreground(thermal.Fg).
+		Background(thermal.Bg).
 		Render(padded)
 }
 
@@ -137,10 +131,10 @@ func (h *Headline) View() string {
 	// Render agent icons
 	var iconBg color.Color
 	if !h.state.Online {
-		iconBg = lipgloss.Color("67")
+		iconBg = h.theme.OfflineBg
 	} else {
 		overallLevel := threatToThermal(h.state.ThreatLevel)
-		iconBg = overallGradient[overallLevel].bg
+		iconBg = h.theme.OverallGradient[overallLevel].Bg
 	}
 	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyphHollow, ui.AgentGlyphFilled, iconBg, 0)
 
@@ -149,32 +143,30 @@ func (h *Headline) View() string {
 	if h.state.Current != nil {
 		sessions = h.state.Current.Sessions
 	}
-	sessionStr, sessionVisWidth := renderSessionDiamonds(sessions, iconBg)
+	sessionStr, sessionVisWidth := renderSessionDiamonds(sessions, iconBg, h.theme)
 
 	// Build overall cell
 	var overallCell string
 	if !h.state.Online {
 		quip := model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
-		bg := lipgloss.Color("67")
-		fg := lipgloss.Color("#000000")
-		overallCell = h.buildOverallCell(quip, fg, bg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
+		overallCell = h.buildOverallCell(quip, h.theme.OfflineFg, h.theme.OfflineBg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
 	} else {
 		overallLevel := threatToThermal(h.state.ThreatLevel)
-		overallThermal := overallGradient[overallLevel]
+		overallThermal := h.theme.OverallGradient[overallLevel]
 		quip := h.state.StableQuip()
-		overallCell = h.buildOverallCell(quip, overallThermal.fg, overallThermal.bg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
+		overallCell = h.buildOverallCell(quip, overallThermal.Fg, overallThermal.Bg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
 	}
 
 	// Render dynamic cells (left of fixed, grow leftward)
 	var dynamicCells []string
 	for _, cat := range dynamic {
-		dynamicCells = append(dynamicCells, renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth))
+		dynamicCells = append(dynamicCells, renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth, h.theme))
 	}
 
 	// Render fixed cells (right-anchored, compact)
 	var fixedCells []string
 	for _, cat := range fixed {
-		fixedCells = append(fixedCells, renderCatCell(cat, h.state.SmoothedCats, fixedCellWidth))
+		fixedCells = append(fixedCells, renderCatCell(cat, h.state.SmoothedCats, fixedCellWidth, h.theme))
 	}
 
 	return overallCell + strings.Join(dynamicCells, "") + strings.Join(fixedCells, "")
@@ -232,7 +224,7 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr str
 
 // renderSessionDiamonds renders phase-colored ⌬ icons for each session,
 // placed on the given background. Returns the rendered string and its visual width.
-func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color) (string, int) {
+func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color, th *theme.Theme) (string, int) {
 	if len(sessions) == 0 {
 		return "", 0
 	}
@@ -249,9 +241,9 @@ func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color) (st
 		}
 		var c color.Color
 		if g.total() == 0 {
-			c = phaseIdle
+			c = th.SessionPhase.Idle
 		} else {
-			c = sessionPhaseColor(&g)
+			c = sessionPhaseColor(&g, th)
 		}
 		sb.WriteString(lipgloss.NewStyle().Foreground(c).Background(bg).Render("⌬"))
 		visWidth++

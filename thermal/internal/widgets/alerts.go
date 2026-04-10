@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
@@ -13,10 +14,11 @@ type Alerts struct {
 	width  int
 	height int
 	state  *model.AppState
+	theme  *theme.Theme
 }
 
-func NewAlerts() *Alerts {
-	return &Alerts{}
+func NewAlerts(th *theme.Theme) *Alerts {
+	return &Alerts{theme: th}
 }
 
 func (a *Alerts) SetSize(w, h int) {
@@ -42,7 +44,7 @@ func (a *Alerts) View() string {
 	var lines []string
 	for _, alert := range recent {
 		ts := ui.DimText(alert.Time.Format("15:04:05"))
-		color := ui.ThreatColor[alert.Level]
+		color := a.theme.ThreatColors[alert.Level]
 		msg := ui.ColorText(color, alert.Message)
 		lines = append(lines, fmt.Sprintf(" %s  %s", ts, msg))
 	}

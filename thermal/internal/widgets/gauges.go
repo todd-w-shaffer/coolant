@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/harmonica"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
-	"github.com/toddwshaffer/coolant/thermal/internal/ui"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
 // springState tracks harmonica spring position and velocity for one gauge.
@@ -41,11 +41,13 @@ type Gauges struct {
 	peaks         [3]float64     // decaying peak per gauge — snaps up, fades slowly
 	seeded        bool           // true after first snapshot (skip spring on init)
 	sparkBufs     [3]*SparkBufs  // reusable interpolation buffers, one per gauge
+	theme         *theme.Theme
 }
 
-func NewGauges() *Gauges {
+func NewGauges(th *theme.Theme) *Gauges {
 	return &Gauges{
 		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), config.SpringFreq, config.SpringDamping),
+		theme:  th,
 	}
 }
 
@@ -179,8 +181,8 @@ func (g *Gauges) View() string {
 		data    []float64
 		display float64 // spring-animated value (for numeric readout)
 		max     float64
-		thresh  SparkThresholds
-		dotIdx  int // index into ui.GaugeDots (used for label color)
+		thresh  theme.SparkThresholds
+		dotIdx  int // index into theme.GaugeDots (used for label color)
 		fmtVal  func(float64) string
 	}
 
@@ -216,17 +218,17 @@ func (g *Gauges) View() string {
 		}
 
 		// Render 2-row sparkline with online/offline mask (buffer-pooled)
-		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i])
+		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i], g.theme)
 
 		// Overlay braille text label on leading empty positions
-		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, ui.GaugeDots[ga.dotIdx].ANSI)
+		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, g.theme.GaugeDots[ga.dotIdx].ANSI)
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string
 		if !g.state.Online {
 			coloredVal = "\033[2;36m" + "----" + sparkReset
 		} else {
-			valColor := severityColor(ga.display, &ga.thresh)
+			valColor := g.theme.SeverityColor(ga.display, &ga.thresh)
 			coloredVal = valColor + ga.fmtVal(ga.display) + sparkReset
 		}
 

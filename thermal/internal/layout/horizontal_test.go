@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
+
+var testTheme = theme.Classic()
 
 func seedActive(h *Horizontal) {
 	h.SetSize(120, 10)
@@ -29,14 +32,14 @@ func seedActive(h *Horizontal) {
 }
 
 func TestViewEmptyWhenZeroSize(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	if got := h.View(); got != "" {
 		t.Errorf("View with zero size = %q, want empty", got)
 	}
 }
 
 func TestViewIdleWhenNoSessions(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	h.SetSize(120, 10)
 	snap := collector.Snapshot{
 		Online:    true,
@@ -52,7 +55,7 @@ func TestViewIdleWhenNoSessions(t *testing.T) {
 }
 
 func TestViewActiveWithSessions(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	seedActive(h)
 
 	got := h.View()
@@ -64,7 +67,7 @@ func TestViewActiveWithSessions(t *testing.T) {
 
 func TestViewLinecountMatchesHeight(t *testing.T) {
 	for _, height := range []int{1, 3, 5, 8, 10, 15} {
-		h := NewHorizontal()
+		h := NewHorizontal(testTheme)
 		h.SetSize(120, height)
 		snap := collector.Snapshot{
 			System:    collector.SystemStats{MemTotalBytes: 16 << 30, NCPUs: 8},
@@ -85,7 +88,7 @@ func TestViewLinecountMatchesHeight(t *testing.T) {
 }
 
 func TestToggleCollapse(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	if h.IsCollapsed() {
 		t.Error("should not be collapsed by default")
 	}
@@ -100,7 +103,7 @@ func TestToggleCollapse(t *testing.T) {
 }
 
 func TestToggleHelp(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	seedActive(h)
 
 	before := h.View()
@@ -113,7 +116,7 @@ func TestToggleHelp(t *testing.T) {
 }
 
 func TestNotificationBarHiddenWhenPluginActive(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	h.State().PluginActive = true
 	got := h.notificationBar()
 	if got != "" {
@@ -122,7 +125,7 @@ func TestNotificationBarHiddenWhenPluginActive(t *testing.T) {
 }
 
 func TestNotificationBarShowsInstallHint(t *testing.T) {
-	h := NewHorizontal()
+	h := NewHorizontal(testTheme)
 	h.State().PluginActive = false
 	got := h.notificationBar()
 	if !strings.Contains(got, "install") {
