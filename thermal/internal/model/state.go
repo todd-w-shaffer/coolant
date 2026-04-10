@@ -49,7 +49,8 @@ type AppState struct {
 	scratchPIDs map[int]bool
 
 	// Agent tracking (from JSONL events, not process discovery)
-	activeAgents map[string]time.Time // agent_id → start timestamp
+	activeAgents    map[string]time.Time // agent_id → start timestamp
+	completedAgents int                  // monotonic count of agents that received a stop event
 
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
@@ -264,6 +265,9 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 		s.PluginActive = true
 		s.activeAgents[ev.AgentID] = ev.Timestamp
 	case collector.EventAgentStop:
+		if _, tracked := s.activeAgents[ev.AgentID]; tracked {
+			s.completedAgents++
+		}
 		delete(s.activeAgents, ev.AgentID)
 	}
 }
@@ -298,6 +302,11 @@ func (s *AppState) FreshAgentCount() int {
 func (s *AppState) StaleAgentCount() int {
 	_, stale := s.agentCountSplit()
 	return stale
+}
+
+// CompletedAgentCount returns the monotonic count of agents that received a stop event.
+func (s *AppState) CompletedAgentCount() int {
+	return s.completedAgents
 }
 
 // agentCountSplit does a single pass over activeAgents with one time.Now() call.

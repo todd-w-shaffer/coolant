@@ -192,6 +192,87 @@ func TestBreatheDotRenderVisWidth(t *testing.T) {
 	}
 }
 
+func TestBreatheDotHighScoreRendersCompletedDots(t *testing.T) {
+	b := NewBreatheDots(testTheme)
+	b.SetHighScoreMode(true)
+	b.SetCompletedCount(3)
+	// No active dots — just 3 completed KITT dots
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	_, w := b.Render("⬡", "⏣", "⬢", nil, 0)
+	// 3 completed dots with spaces: vis width = 3 + 2 = 5
+	if w != 5 {
+		t.Errorf("highscore Render visWidth = %d, want 5", w)
+	}
+}
+
+func TestBreatheDotHighScoreWithActiveDots(t *testing.T) {
+	b := NewBreatheDots(testTheme)
+	b.SetHighScoreMode(true)
+	b.SetTarget(2)         // 2 active (tidal wave)
+	b.SetCompletedCount(3) // 3 completed (KITT)
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	_, w := b.Render("⬡", "⏣", "⬢", nil, 0)
+	// 2 active (2 dots + 1 space) + 3 completed (3 dots + 3 spaces between) = 9
+	if w != 9 {
+		t.Errorf("highscore Render with active+completed visWidth = %d, want 9", w)
+	}
+}
+
+func TestBreatheDotHighScoreStaleLosesKITT(t *testing.T) {
+	// In highscore mode, stale dots should NOT get KITT scanner —
+	// they should dim-breathe like regular dots, because KITT is reserved
+	// for completed agents.
+	b := NewBreatheDots(testTheme)
+	b.SetHighScoreMode(true)
+	b.SetTarget(2)
+	b.SetStaleCount(1)
+	for i := 0; i < 60; i++ {
+		b.AnimTick()
+	}
+	// The stale dot should not be in the KITT index
+	// (We can't easily test the visual output, but we can verify the
+	// stale dot is marked stale and the flag is set)
+	staleCount := 0
+	for _, d := range b.dots {
+		if d.stale {
+			staleCount++
+		}
+	}
+	if staleCount != 1 {
+		t.Errorf("stale count = %d, want 1", staleCount)
+	}
+	// The key behavioral test: render should still succeed
+	_, w := b.Render("⬡", "⏣", "⬢", nil, 0)
+	if w != 3 { // 2 dots + 1 space (no completed dots)
+		t.Errorf("highscore stale Render visWidth = %d, want 3", w)
+	}
+}
+
+func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
+	b := NewBreatheDots(testTheme)
+	b.SetHighScoreMode(true)
+
+	b.SetCompletedCount(1)
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	_, w1 := b.Render("⬡", "⏣", "⬢", nil, 0)
+
+	b.SetCompletedCount(3)
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	_, w2 := b.Render("⬡", "⏣", "⬢", nil, 0)
+
+	if w2 <= w1 {
+		t.Errorf("completed dot width didn't grow: %d → %d", w1, w2)
+	}
+}
+
 func TestBreatheDotRenderMaxDots(t *testing.T) {
 	b := NewBreatheDots(testTheme)
 	b.SetTarget(10)

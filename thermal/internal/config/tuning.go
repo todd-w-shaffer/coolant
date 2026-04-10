@@ -54,6 +54,25 @@ const (
 	BreatheStaleDim  = 0.35  // brightness multiplier for stale dots
 )
 
+// KITT scanner (stale ghost dots / highscore completed dots).
+const (
+	KITTSweepRate    = 0.04 // sweep position advance per AnimTick (~3s per full sweep)
+	KITTAmbient      = 0.15 // floor brightness at sweep edges
+	KITTPeak         = 0.85 // peak contribution above ambient
+	KITTSigmaSq      = 0.8  // gaussian width (sigma²) — tighter = sharper spotlight
+	KITTSingleBright = 0.8  // brightness multiplier when only one dot (no sweep)
+)
+
+// Tidal wave (active agent dots).
+const (
+	TidalPhaseStep    = 0.025 // phase advance per AnimTick (~8s per full wave)
+	TidalWaveMix      = 0.85  // tidal wave weight in brightness blend
+	TidalBreathMix    = 0.15  // individual breath weight in brightness blend
+	TidalBrightFloor  = 0.5   // minimum brightness for active dots
+	GlyphFilledThresh = 0.66  // wave value above which glyph shows ⬢ (filled)
+	GlyphMidThresh    = 0.33  // wave value above which glyph shows ⏣ (benzene)
+)
+
 // ── History / buffer sizes ─────────────────────────────────
 
 const (

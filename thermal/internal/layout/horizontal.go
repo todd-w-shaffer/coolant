@@ -57,6 +57,11 @@ func (h *Horizontal) SetSize(w, height int) {
 	h.alerts.SetSize(w, 2)
 }
 
+// SetHighScoreMode toggles KITT-as-highscore on the agent dot display.
+func (h *Horizontal) SetHighScoreMode(on bool) {
+	h.headline.SetHighScoreMode(on)
+}
+
 func (h *Horizontal) ToggleHelp() {
 	h.helpMode = !h.helpMode
 }
