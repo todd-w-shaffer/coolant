@@ -40,6 +40,12 @@ func (h *Headline) Update(state *model.AppState) {
 	}
 	h.agents.SetTarget(state.AgentCount())
 	h.agents.SetStaleCount(state.StaleAgentCount())
+	h.agents.SetCompletedCount(state.CompletedAgentCount())
+}
+
+// SetHighScoreMode toggles KITT-as-highscore on the agent dot display.
+func (h *Headline) SetHighScoreMode(on bool) {
+	h.agents.SetHighScoreMode(on)
 }
 
 // AnimTick advances agent icon springs and breathing phases.

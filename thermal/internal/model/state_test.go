@@ -541,6 +541,55 @@ func TestHandleEventParallelEngaged(t *testing.T) {
 	}
 }
 
+func TestCompletedAgentsIncrementsOnStop(t *testing.T) {
+	s := NewAppState()
+
+	// Start two agents
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStart,
+		AgentID: "a1", AgentType: "researcher",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStart,
+		AgentID: "a2", AgentType: "coder",
+	})
+
+	if s.CompletedAgentCount() != 0 {
+		t.Fatalf("CompletedAgents = %d before any stops, want 0", s.CompletedAgentCount())
+	}
+
+	// Stop one
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "a1", AgentType: "researcher",
+	})
+	if s.CompletedAgentCount() != 1 {
+		t.Errorf("CompletedAgents = %d after 1 stop, want 1", s.CompletedAgentCount())
+	}
+
+	// Stop the other
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "a2", AgentType: "coder",
+	})
+	if s.CompletedAgentCount() != 2 {
+		t.Errorf("CompletedAgents = %d after 2 stops, want 2", s.CompletedAgentCount())
+	}
+}
+
+func TestCompletedAgentsIgnoresUnknownStop(t *testing.T) {
+	s := NewAppState()
+
+	// Stop an agent that was never started — should not increment
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "phantom", AgentType: "ghost",
+	})
+	if s.CompletedAgentCount() != 0 {
+		t.Errorf("CompletedAgents = %d for unknown stop, want 0", s.CompletedAgentCount())
+	}
+}
+
 func TestHandleEventParallelDisengaged(t *testing.T) {
 	s := NewAppState()
 	ev := collector.GateEvent{

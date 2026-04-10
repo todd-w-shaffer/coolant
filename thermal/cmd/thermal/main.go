@@ -155,8 +155,9 @@ func (m model) View() tea.View {
 
 func main() {
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
-	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frost)")
+	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frappe)")
 	listThemes := flag.Bool("list-themes", false, "List available themes and exit")
+	kittHighScore := flag.Bool("kitt-highscore", false, "KITT scans completed agents instead of ghosts")
 	flag.Parse()
 
 	if *listThemes {
@@ -180,7 +181,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Resolve highscore mode: flag > env > off
+	highScore := *kittHighScore
+	if !highScore && os.Getenv("COOLANT_KITT_HIGHSCORE") == "1" {
+		highScore = true
+	}
+
 	m := newModel(*demoMode, th)
+	if highScore {
+		m.layout.SetHighScoreMode(true)
+	}
 
 	p := tea.NewProgram(m)
 

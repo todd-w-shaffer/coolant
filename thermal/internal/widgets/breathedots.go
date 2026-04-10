@@ -24,13 +24,15 @@ type breatheDot struct {
 // BreatheDots manages a set of spring-animated breathing dots that track
 // an integer count. Dots fade in on increase and fade out on decrease.
 type BreatheDots struct {
-	spring     harmonica.Spring
-	dots       []breatheDot
-	nextPhase  float64
-	lastStale  int     // dirty check for SetStaleCount
-	staleSweep float64 // KITT scanner position — continuous, bounces across stale dots
-	tidalPhase float64 // tidal wave phase for active dots — slow rolling swell
-	theme      *theme.Theme
+	spring         harmonica.Spring
+	dots           []breatheDot
+	nextPhase      float64
+	lastStale      int     // dirty check for SetStaleCount
+	staleSweep     float64 // KITT scanner position — continuous, bounces across stale/completed dots
+	tidalPhase     float64 // tidal wave phase for active dots — slow rolling swell
+	theme          *theme.Theme
+	highScore      bool // when true, KITT scans completed agents instead of stale ones
+	completedCount int  // number of completed agents (highscore KITT dots)
 }
 
 func NewBreatheDots(th *theme.Theme) *BreatheDots {
@@ -86,11 +88,8 @@ func (b *BreatheDots) AnimTick() {
 		}
 	}
 
-	// Advance KITT sweep for stale dots (~3s per full sweep)
-	b.staleSweep += 0.04
-
-	// Advance tidal wave for active dots (~8s per full wave — languid for 3-5 dots)
-	b.tidalPhase += 0.025
+	b.staleSweep += config.KITTSweepRate
+	b.tidalPhase += config.TidalPhaseStep
 
 	// Remove fully faded dots
 	n := 0
@@ -109,7 +108,7 @@ func (b *BreatheDots) AnimTick() {
 // bg is the cell background for transparency (nil = no background).
 // maxDots caps visible dots (0 = unlimited).
 func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color.Color, maxDots int) (string, int) {
-	if len(b.dots) == 0 {
+	if len(b.dots) == 0 && (!b.highScore || b.completedCount == 0) {
 		return "", 0
 	}
 
@@ -121,7 +120,7 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 	var buf strings.Builder
 	visWidth := 0
 
-	// Build index mappings for stale (KITT) and active (tidal) dots
+	// Build index mappings for stale and active dots
 	var staleIndices []int
 	var activeIndices []int
 	for i, d := range dots {
@@ -135,10 +134,14 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 		}
 	}
 
-	// KITT sweep position — triangle wave bouncing across stale dots
+	// KITT sweep — used for stale dots (default mode) or completed dots (highscore mode)
+	kittCount := len(staleIndices)
+	if b.highScore {
+		kittCount = b.completedCount
+	}
 	var sweepPos float64
-	if len(staleIndices) > 1 {
-		n := float64(len(staleIndices) - 1)
+	if kittCount > 1 {
+		n := float64(kittCount - 1)
 		raw := math.Mod(b.staleSweep*n, 2*n)
 		if raw > n {
 			sweepPos = 2*n - raw
@@ -149,10 +152,10 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 
 	for i, d := range dots {
 		var brightness float64
-		var wave float64 // tidal wave value for active dots (shared by brightness + glyph)
+		var wave float64
 
-		if d.stale && !d.dying && len(staleIndices) > 0 {
-			// KITT scanner: sharp gaussian sweep
+		if d.stale && !d.dying && !b.highScore && len(staleIndices) > 0 {
+			// Default mode: KITT scanner on stale/ghost dots
 			staleIdx := -1
 			for si, idx := range staleIndices {
 				if idx == i {
@@ -162,8 +165,11 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 			}
 			if staleIdx >= 0 {
 				dist := math.Abs(float64(staleIdx) - sweepPos)
-				brightness = d.alive * config.BreatheStaleDim * (0.15 + 0.85*math.Exp(-dist*dist/0.8))
+				brightness = d.alive * config.BreatheStaleDim * kittGaussian(dist)
 			}
+		} else if d.stale && !d.dying && b.highScore {
+			// Highscore mode: stale dots dim-breathe (no KITT)
+			brightness = d.alive * config.BreatheStaleDim * sinNorm(d.phase)
 		} else if !d.dying {
 			// Tidal wave: slow rolling swell tuned for 3-5 visible dots.
 			// Wide phase spread (1.5 rad/dot) so direction is clear even with 3.
@@ -176,10 +182,10 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 					break
 				}
 			}
-			wave = 0.5 + 0.5*math.Sin(b.tidalPhase-float64(activeIdx)*1.5)
-			individualBreath := 0.5 + 0.5*math.Sin(d.phase)
-			mixed := 0.85*wave + 0.15*individualBreath
-			brightness = d.alive * (0.5 + 0.5*mixed)
+			wave = sinNorm(b.tidalPhase - float64(activeIdx)*1.5)
+			individualBreath := sinNorm(d.phase)
+			mixed := config.TidalWaveMix*wave + config.TidalBreathMix*individualBreath
+			brightness = d.alive * (config.TidalBrightFloor + config.TidalBrightFloor*mixed)
 		}
 
 		if brightness < 0 {
@@ -195,37 +201,58 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 		glyph := glyphHollow
 		if !d.stale && !d.dying {
 			switch {
-			case wave > 0.66:
+			case wave > config.GlyphFilledThresh:
 				glyph = glyphFilled
-			case wave > 0.33:
+			case wave > config.GlyphMidThresh:
 				glyph = glyphMid
 			}
 		}
 
-		fg := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-			uint8(b.theme.AccentR*brightness),
-			uint8(b.theme.AccentG*brightness),
-			uint8(b.theme.AccentB*brightness),
-		))
+		b.writeDot(&buf, &visWidth, glyph, brightness, bg, i > 0)
+	}
 
-		if i > 0 {
-			visWidth++
-			if bg != nil {
-				buf.WriteString(lipgloss.NewStyle().Background(bg).Render(" "))
+	// Highscore mode: append completed agent KITT dots after active/stale dots
+	if b.highScore && b.completedCount > 0 {
+		hasPrior := len(dots) > 0
+		for ci := 0; ci < b.completedCount; ci++ {
+			var brightness float64
+			if b.completedCount == 1 {
+				brightness = config.BreatheStaleDim * config.KITTSingleBright
 			} else {
-				buf.WriteByte(' ')
+				dist := math.Abs(float64(ci) - sweepPos)
+				brightness = config.BreatheStaleDim * kittGaussian(dist)
 			}
-		}
 
-		style := lipgloss.NewStyle().Foreground(fg)
-		if bg != nil {
-			style = style.Background(bg)
+			needSep := hasPrior || ci > 0
+			b.writeDot(&buf, &visWidth, glyphFilled, brightness, bg, needSep)
 		}
-		buf.WriteString(style.Render(glyph))
-		visWidth++
 	}
 
 	return buf.String(), visWidth
+}
+
+// writeDot appends a single styled dot to the buffer and updates visWidth.
+func (b *BreatheDots) writeDot(buf *strings.Builder, visWidth *int, glyph string, brightness float64, bg color.Color, addSpace bool) {
+	if addSpace {
+		*visWidth++
+		if bg != nil {
+			buf.WriteString(lipgloss.NewStyle().Background(bg).Render(" "))
+		} else {
+			buf.WriteByte(' ')
+		}
+	}
+
+	fg := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
+		uint8(b.theme.AccentR*brightness),
+		uint8(b.theme.AccentG*brightness),
+		uint8(b.theme.AccentB*brightness),
+	))
+	style := lipgloss.NewStyle().Foreground(fg)
+	if bg != nil {
+		style = style.Background(bg)
+	}
+	buf.WriteString(style.Render(glyph))
+	*visWidth++
 }
 
 // SetStaleCount marks the last n non-dying dots as stale (orphaned).
@@ -246,6 +273,31 @@ func (b *BreatheDots) SetStaleCount(n int) {
 			marked++
 		}
 	}
+}
+
+// SetHighScoreMode toggles KITT scanner behavior.
+// When true, KITT scans completed agents (earned achievement); stale dots dim-breathe.
+// When false (default), KITT scans stale/ghost dots.
+func (b *BreatheDots) SetHighScoreMode(on bool) {
+	b.highScore = on
+}
+
+// SetCompletedCount sets the number of completed agents for highscore KITT scanning.
+func (b *BreatheDots) SetCompletedCount(n int) {
+	if n == b.completedCount {
+		return
+	}
+	b.completedCount = n
+}
+
+// kittGaussian returns the KITT scanner brightness at distance from sweep center.
+func kittGaussian(dist float64) float64 {
+	return config.KITTAmbient + config.KITTPeak*math.Exp(-dist*dist/config.KITTSigmaSq)
+}
+
+// sinNorm maps a sine wave to [0, 1].
+func sinNorm(x float64) float64 {
+	return 0.5 + 0.5*math.Sin(x)
 }
 
 // Len returns the current number of dots (including dying).
