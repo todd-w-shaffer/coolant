@@ -11,7 +11,7 @@ import (
 // seedGauges creates a Gauges with enough state to produce View output.
 func seedGauges(t *testing.T) *Gauges {
 	t.Helper()
-	g := NewGauges()
+	g := NewGauges(testTheme)
 	g.SetSize(120, 6)
 
 	state := model.NewAppState()
@@ -76,7 +76,7 @@ func TestViewLinesFullAtHeight10(t *testing.T) {
 }
 
 func TestViewLinesNilWhenNoState(t *testing.T) {
-	g := NewGauges()
+	g := NewGauges(testTheme)
 	g.SetSize(120, 6)
 	if got := g.ViewLines(10); got != nil {
 		t.Errorf("ViewLines with no state = %d lines, want nil", len(got))

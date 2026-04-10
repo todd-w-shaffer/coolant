@@ -12,6 +12,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/demo"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
 // ── Messages ────────────────────────────────────────────────
@@ -32,9 +33,9 @@ type model struct {
 	eventChan chan collector.GateEvent
 }
 
-func newModel(demoMode bool) model {
+func newModel(demoMode bool, th *theme.Theme) model {
 	return model{
-		layout:    layout.NewHorizontal(),
+		layout:    layout.NewHorizontal(th),
 		done:      make(chan struct{}),
 		demoMode:  demoMode,
 		snapChan:  make(chan collector.Snapshot, 16),
@@ -154,9 +155,32 @@ func (m model) View() tea.View {
 
 func main() {
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
+	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frost)")
+	listThemes := flag.Bool("list-themes", false, "List available themes and exit")
 	flag.Parse()
 
-	m := newModel(*demoMode)
+	if *listThemes {
+		for _, name := range theme.Names() {
+			fmt.Println(name)
+		}
+		os.Exit(0)
+	}
+
+	// Resolve theme: flag > env > default
+	name := *themeName
+	if name == "" {
+		name = os.Getenv("COOLANT_THEME")
+	}
+	if name == "" {
+		name = "classic"
+	}
+	th, err := theme.Get(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	m := newModel(*demoMode, th)
 
 	p := tea.NewProgram(m)
 

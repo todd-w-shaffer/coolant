@@ -3,10 +3,11 @@ package layout
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
-	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
 )
@@ -29,15 +30,17 @@ type Horizontal struct {
 	alerts    *widgets.Alerts
 	helpMode  bool
 	collapsed bool
+	theme     *theme.Theme
 }
 
-func NewHorizontal() *Horizontal {
+func NewHorizontal(th *theme.Theme) *Horizontal {
 	return &Horizontal{
 		state:    model.NewAppState(),
-		headline: widgets.NewHeadline(),
-		gauges:   widgets.NewGauges(),
-		rates:    widgets.NewRates(),
-		alerts:   widgets.NewAlerts(),
+		headline: widgets.NewHeadline(th),
+		gauges:   widgets.NewGauges(th),
+		rates:    widgets.NewRates(th),
+		alerts:   widgets.NewAlerts(th),
+		theme:    th,
 	}
 }
 
@@ -117,21 +120,22 @@ func (h *Horizontal) activeView() string {
 }
 
 func (h *Horizontal) helpView() []string {
-	d := lipgloss.Color("250")
+	d := h.theme.HelpColor
 	ct := ui.ColorText
 	dim := ui.DimText
+	sp := h.theme.SessionPhase
 
-	diamond := func(c string) string { return ct(lipgloss.Color(c), "⌬") }
+	diamond := func(c color.Color) string { return ct(c, "⌬") }
 
 	return []string{
 		" " + dim("sparklines") + " " + ct(d, "CPU cores") + "  " + ct(d, "MEM app memory") + "  " +
 			ct(d, "SWAP compressor pressure — spikes before lockup") + "  " +
 			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
-		" " + dim("sessions") + " " + diamond("245") + "  " + ct(d, "idle") + " " +
-			diamond("2") + " " + ct(d, "active") + "  " +
-			diamond("3") + " " + ct(d, "language") + "  " +
-			diamond("208") + " " + ct(d, "build") + "  " +
-			diamond("196") + " " + ct(d, "shells (30+)"),
+		" " + dim("sessions") + " " + diamond(sp.Idle) + "  " + ct(d, "idle") + " " +
+			diamond(sp.Active) + " " + ct(d, "active") + "  " +
+			diamond(sp.Language) + " " + ct(d, "language") + "  " +
+			diamond(sp.Build) + " " + ct(d, "build") + "  " +
+			diamond(sp.Explosion) + " " + ct(d, "shells (30+)"),
 		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphFilled) + " " +
 			ct(d, "subagents — hexagons breathe hollow/filled, count matches headline") + "  " +
 			dim("categories track process types in the headline bar"),
@@ -140,7 +144,7 @@ func (h *Horizontal) helpView() []string {
 }
 
 func (h *Horizontal) idleView() string {
-	quip := ui.ColorText(ui.CyanColor, h.state.StableQuip())
+	quip := ui.ColorText(h.theme.IdleColor, h.state.StableQuip())
 
 	var lines []string
 
@@ -150,7 +154,7 @@ func (h *Horizontal) idleView() string {
 		}
 	}
 
-	lines = append(lines, " "+ui.ColorText(ui.CyanColor, "◉")+" "+ui.DimText("coolant")+"  "+quip)
+	lines = append(lines, " "+ui.ColorText(h.theme.IdleColor, "◉")+" "+ui.DimText("coolant")+"  "+quip)
 
 	if h.state.Current != nil && h.height >= 4 {
 		snap := h.state.Current

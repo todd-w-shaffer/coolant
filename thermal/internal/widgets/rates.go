@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
@@ -26,10 +26,11 @@ var (
 type Rates struct {
 	width int
 	state *model.AppState
+	theme *theme.Theme
 }
 
-func NewRates() *Rates {
-	return &Rates{}
+func NewRates(th *theme.Theme) *Rates {
+	return &Rates{theme: th}
 }
 
 func (r *Rates) SetSize(w, h int) {
@@ -78,30 +79,30 @@ func (r *Rates) View() string {
 
 	// Gauge stats: " ●CPU:NNN% ●MEM:NN.N/NNGB ●SWAP:NN.NGB ●GPU:NNN%"
 	sb.WriteString(" ")
-	sb.WriteString(ui.GaugeDots[0].Formatted)
+	sb.WriteString(r.theme.GaugeDots[0].Formatted)
 	sb.WriteString("CPU:")
-	sb.WriteString(severityColor(snap.System.CPUPercent, ratesCPUThresh))
+	sb.WriteString(r.theme.SeverityColor(snap.System.CPUPercent, ratesCPUThresh))
 	sb.WriteString(fmt.Sprintf("%03d%%", cpuPct))
 	sb.WriteString(sparkReset)
 
 	sb.WriteString("  ")
-	sb.WriteString(ui.GaugeDots[1].Formatted)
+	sb.WriteString(r.theme.GaugeDots[1].Formatted)
 	sb.WriteString("MEM:")
-	sb.WriteString(severityColor(memPct, ratesMemThresh))
+	sb.WriteString(r.theme.SeverityColor(memPct, ratesMemThresh))
 	sb.WriteString(fmt.Sprintf("%04.1f/%02dGB", memUsedGB, memTotalGB))
 	sb.WriteString(sparkReset)
 
 	sb.WriteString("  ")
-	sb.WriteString(ui.GaugeDots[2].Formatted)
+	sb.WriteString(r.theme.GaugeDots[2].Formatted)
 	sb.WriteString("SWAP:")
-	sb.WriteString(severityColor(swapGB, ratesSwapThresh))
+	sb.WriteString(r.theme.SeverityColor(swapGB, ratesSwapThresh))
 	sb.WriteString(fmt.Sprintf("%04.1fGB", swapGB))
 	sb.WriteString(sparkReset)
 
 	sb.WriteString("  ")
-	sb.WriteString(ui.GaugeDots[3].Formatted)
+	sb.WriteString(r.theme.GaugeDots[3].Formatted)
 	sb.WriteString("GPU:")
-	sb.WriteString(severityColor(snap.System.GPUPercent, ratesGPUThresh))
+	sb.WriteString(r.theme.SeverityColor(snap.System.GPUPercent, ratesGPUThresh))
 	sb.WriteString(fmt.Sprintf("%03d%%", gpuPct))
 	sb.WriteString(sparkReset)
 
@@ -109,11 +110,11 @@ func (r *Rates) View() string {
 	sb.WriteString(ui.DimText("  |  "))
 
 	// Rates: warm/cool/net
-	sb.WriteString(ui.ColorText(lipgloss.Color("208"), spawnStr))
+	sb.WriteString(ui.ColorText(r.theme.SpawnColor, spawnStr))
 	sb.WriteString("  ")
-	sb.WriteString(ui.ColorText(ui.CyanColor, deathStr))
+	sb.WriteString(ui.ColorText(r.theme.DeathColor, deathStr))
 	sb.WriteString("  ")
-	sb.WriteString(ui.ColorText(lipgloss.Color("7"), netStr))
+	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {
@@ -183,42 +184,33 @@ func sessionGroupCounts(sessions []collector.SessionTree) []sessionGroup {
 	return groups
 }
 
-// Phase colors for session escalation — allocated once.
-var (
-	phaseRed    = lipgloss.Color("196")
-	phaseOrange = lipgloss.Color("208")
-	phaseYellow = lipgloss.Color("3")
-	phaseGreen  = lipgloss.Color("2")
-	phaseIdle   = lipgloss.Color("245")
-)
-
 // sessionPhaseColor determines the escalation phase for a session based on which
 // categories are active: idle → language (canary) → build → shell explosion.
-func sessionPhaseColor(g *sessionGroup) color.Color {
+func sessionPhaseColor(g *sessionGroup, th *theme.Theme) color.Color {
 	// Shell explosion: highest phase
 	shellIdx := catIndex["shell"]
 	if g.cats[shellIdx] >= config.ShellExplosionThreshold {
-		return phaseRed
+		return th.SessionPhase.Explosion
 	}
 
 	// Build phase
 	buildIdx := catIndex["build"]
 	if g.cats[buildIdx] > 0 {
-		return phaseOrange
+		return th.SessionPhase.Build
 	}
 
 	// Language phase (canary): any runtime category active
 	for _, name := range collector.RuntimeCategories {
 		if idx, ok := catIndex[name]; ok && g.cats[idx] > 0 {
-			return phaseYellow
+			return th.SessionPhase.Language
 		}
 	}
 
 	// Active but only shells (below explosion threshold)
 	if g.total() > 0 {
-		return phaseGreen
+		return th.SessionPhase.Active
 	}
 
 	// Idle — shouldn't reach here (caller checks total == 0)
-	return phaseIdle
+	return th.SessionPhase.Idle
 }

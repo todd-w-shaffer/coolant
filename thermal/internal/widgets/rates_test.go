@@ -90,40 +90,40 @@ func makeGroup(typeCodes ...string) *sessionGroup {
 
 func TestSessionPhaseIdleReturnsIdle(t *testing.T) {
 	g := &sessionGroup{}
-	got := sessionPhaseColor(g)
-	if got != phaseIdle {
-		t.Errorf("empty session should return phaseIdle")
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Idle {
+		t.Errorf("empty session should return testTheme.SessionPhase.Idle")
 	}
 }
 
 func TestSessionPhaseShellsOnlyReturnsGreen(t *testing.T) {
 	g := makeGroup("S", "S", "S")
-	got := sessionPhaseColor(g)
-	if got != phaseGreen {
-		t.Errorf("shells below threshold should return phaseGreen")
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Active {
+		t.Errorf("shells below threshold should return testTheme.SessionPhase.Active")
 	}
 }
 
 func TestSessionPhaseLanguageReturnsYellow(t *testing.T) {
 	g := makeGroup("N") // node = language
-	got := sessionPhaseColor(g)
-	if got != phaseYellow {
-		t.Errorf("language category should return phaseYellow")
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Language {
+		t.Errorf("language category should return testTheme.SessionPhase.Language")
 	}
 }
 
 func TestSessionPhaseBuildReturnsOrange(t *testing.T) {
 	g := makeGroup("T") // tsc = build
-	got := sessionPhaseColor(g)
-	if got != phaseOrange {
-		t.Errorf("build category should return phaseOrange")
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Build {
+		t.Errorf("build category should return testTheme.SessionPhase.Build")
 	}
 }
 
 func TestSessionPhaseBuildTrumpLanguage(t *testing.T) {
 	g := makeGroup("N", "T") // node + build
-	got := sessionPhaseColor(g)
-	if got != phaseOrange {
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Build {
 		t.Errorf("build should trump language, got %v", got)
 	}
 }
@@ -134,9 +134,9 @@ func TestSessionPhaseShellExplosionReturnsRed(t *testing.T) {
 		codes[i] = "S"
 	}
 	g := makeGroup(codes...)
-	got := sessionPhaseColor(g)
-	if got != phaseRed {
-		t.Errorf("shell explosion (%d shells) should return phaseRed", config.ShellExplosionThreshold)
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Explosion {
+		t.Errorf("shell explosion (%d shells) should return testTheme.SessionPhase.Explosion", config.ShellExplosionThreshold)
 	}
 }
 
@@ -147,8 +147,8 @@ func TestSessionPhaseShellExplosionTrumpsAll(t *testing.T) {
 	}
 	codes = append(codes, "N", "T") // add language + build
 	g := makeGroup(codes...)
-	got := sessionPhaseColor(g)
-	if got != phaseRed {
+	got := sessionPhaseColor(g, testTheme)
+	if got != testTheme.SessionPhase.Explosion {
 		t.Errorf("shell explosion should trump build and language")
 	}
 }
@@ -156,9 +156,9 @@ func TestSessionPhaseShellExplosionTrumpsAll(t *testing.T) {
 func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 	for _, tc := range []string{"N", "GO", "P", "RS", "SW"} {
 		g := makeGroup(tc)
-		got := sessionPhaseColor(g)
-		if got != phaseYellow {
-			t.Errorf("runtime type %q should return phaseYellow", tc)
+		got := sessionPhaseColor(g, testTheme)
+		if got != testTheme.SessionPhase.Language {
+			t.Errorf("runtime type %q should return testTheme.SessionPhase.Language", tc)
 		}
 	}
 }

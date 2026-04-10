@@ -1,27 +1,9 @@
 package widgets
 
 import (
-	"image/color"
-
-	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
-
-// thermalLevel pairs foreground and background colors for a heat level.
-type thermalLevel struct {
-	fg color.Color
-	bg color.Color
-}
-
-// thermalGradient: 5 levels from invisible to glowing.
-var thermalGradient = []thermalLevel{
-	{lipgloss.Color("236"), lipgloss.Color("233")}, // cold: nearly invisible (zero count)
-	{lipgloss.Color("180"), lipgloss.Color("234")}, // cool: dim amber — visible on appearance
-	{lipgloss.Color("214"), lipgloss.Color("235")}, // warm: orange, clearly active
-	{lipgloss.Color("208"), lipgloss.Color("236")}, // hot: bright orange
-	{lipgloss.Color("196"), lipgloss.Color("52")},  // critical: bright red on dark red
-}
 
 // thermalLevelFor returns 0-4 based on count vs category thresholds.
 func thermalLevelFor(catName string, count int) int {

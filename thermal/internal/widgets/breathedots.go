@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/harmonica"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
 // breatheDot tracks one dot's animation state.
@@ -27,11 +28,13 @@ type BreatheDots struct {
 	dots      []breatheDot
 	nextPhase float64
 	lastStale int // dirty check for SetStaleCount
+	theme     *theme.Theme
 }
 
-func NewBreatheDots() *BreatheDots {
+func NewBreatheDots(th *theme.Theme) *BreatheDots {
 	return &BreatheDots{
 		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), config.SpringFreq, config.SpringDamping),
+		theme:  th,
 	}
 }
 
@@ -130,9 +133,9 @@ func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, ma
 		}
 
 		fg := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-			uint8(config.BreatheBaseR*brightness),
-			uint8(config.BreatheBaseG*brightness),
-			uint8(config.BreatheBaseB*brightness),
+			uint8(b.theme.AccentR*brightness),
+			uint8(b.theme.AccentG*brightness),
+			uint8(b.theme.AccentB*brightness),
 		))
 
 		if i > 0 {

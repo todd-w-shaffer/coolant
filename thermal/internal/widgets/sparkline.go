@@ -3,56 +3,16 @@
 package widgets
 
 import (
-	"fmt"
 	"strings"
 
-	colorful "github.com/lucasb-eyer/go-colorful"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
-
-// SparkThresholds defines the warn/crit boundaries for per-dot coloring.
-type SparkThresholds struct {
-	Warn float64
-	Crit float64
-}
 
 // ANSI reset and dim (still needed for offline/special states).
 const (
 	sparkReset = "\033[0m"
 )
-
-// Gradient anchor colors for severity interpolation (HCL perceptual space).
-var (
-	gradGreen  = mustHex("#22c55e")
-	gradYellow = mustHex("#eab308")
-	gradRed    = mustHex("#ef4444")
-)
-
-// Pre-computed blend LUTs: 101 entries each for ratio 0.00–1.00 quantized to integers.
-// greenYellowColorLUT[i] = gradGreen.BlendHcl(gradYellow, i/100).Clamped()
-// yellowRedColorLUT[i]   = gradYellow.BlendHcl(gradRed, i/100).Clamped()
-// Corresponding ANSI escape strings cached alongside.
-var (
-	greenYellowANSILUT [101]string
-	yellowRedANSILUT   [101]string
-	gradGreenANSI      string
-	gradRedANSI        string
-)
-
-func init() {
-	for i := 0; i <= 100; i++ {
-		ratio := float64(i) / 100.0
-		greenYellowANSILUT[i] = truecolorFg(gradGreen.BlendHcl(gradYellow, ratio).Clamped())
-		yellowRedANSILUT[i] = truecolorFg(gradYellow.BlendHcl(gradRed, ratio).Clamped())
-	}
-	gradGreenANSI = truecolorFg(gradGreen)
-	gradRedANSI = truecolorFg(gradRed)
-}
-
-func mustHex(hex string) colorful.Color {
-	c, _ := colorful.Hex(hex)
-	return c
-}
 
 // renderBrailleChar writes one braille character with a pre-computed ANSI color,
 // or a space if the pattern is empty.
@@ -70,46 +30,6 @@ func renderBrailleChar(sb *strings.Builder, bits rune, ansiColor string) {
 type rainbowEntry struct {
 	ch    rune
 	color string
-}
-
-// blendIndex clamps a ratio to [0,1] and converts to a LUT index 0–100.
-func blendIndex(ratio float64) int {
-	if ratio <= 0 {
-		return 0
-	}
-	if ratio >= 1 {
-		return 100
-	}
-	return int(ratio * 100)
-}
-
-// severityColor returns a truecolor ANSI escape for a value relative to
-// thresholds. Interpolates green→yellow below warn, yellow→red between
-// warn and crit, solid red above crit. Uses pre-computed LUTs to avoid
-// per-call BlendHcl + fmt.Sprintf overhead.
-func severityColor(v float64, thresh *SparkThresholds) string {
-	if thresh == nil {
-		return gradGreenANSI
-	}
-	switch {
-	case v >= thresh.Crit:
-		return gradRedANSI
-	case v >= thresh.Warn:
-		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
-		return yellowRedANSILUT[blendIndex(ratio)]
-	default:
-		if thresh.Warn <= 0 {
-			return gradGreenANSI
-		}
-		ratio := v / thresh.Warn
-		return greenYellowANSILUT[blendIndex(ratio)]
-	}
-}
-
-// truecolorFg emits \033[38;2;R;G;Bm for 24-bit foreground color.
-func truecolorFg(c colorful.Color) string {
-	r, g, b := c.RGB255()
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r, g, b)
 }
 
 // Braille dot layout (2 columns × 4 rows):
@@ -180,11 +100,11 @@ type SparkPair struct {
 
 // Package-level gauge sparkline thresholds — allocated once, reused every frame.
 var (
-	CPUSparkThresh    = SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}
-	MemSparkThresh    = SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}
-	DecompSparkThresh = SparkThresholds{Warn: config.DecompSparkWarn, Crit: config.DecompSparkCrit}
-	SwapSparkThresh   = SparkThresholds{Warn: config.SwapSparkWarn, Crit: config.SwapSparkCrit}
-	GPUSparkThresh    = SparkThresholds{Warn: config.GPUSparkWarn, Crit: config.GPUSparkCrit}
+	CPUSparkThresh    = theme.SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}
+	MemSparkThresh    = theme.SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}
+	DecompSparkThresh = theme.SparkThresholds{Warn: config.DecompSparkWarn, Crit: config.DecompSparkCrit}
+	SwapSparkThresh   = theme.SparkThresholds{Warn: config.SwapSparkWarn, Crit: config.SwapSparkCrit}
+	GPUSparkThresh    = theme.SparkThresholds{Warn: config.GPUSparkWarn, Crit: config.GPUSparkCrit}
 )
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
@@ -304,14 +224,14 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 // RenderSparkline renders a 2-row sparkline where offline ticks become
 // rainbow dots, reusing pre-allocated interpolation buffers to avoid per-frame
 // allocations. Two samples per character, two stacked characters per column.
-func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
-	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf)
+func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme) SparkPair {
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th)
 }
 
 // renderSparklineCore is the implementation for sparkline rendering.
 // When mask is nil, all samples are treated as online (no rainbow/offline logic).
 // buf must be non-nil — callers allocate once via NewSparkBufs and reuse.
-func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *SparkThresholds, tick int, buf *SparkBufs) SparkPair {
+func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme) SparkPair {
 	if width <= 0 {
 		return SparkPair{}
 	}
@@ -384,7 +304,7 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 
 		// Both offline → rainbow character (bottom only, top blank)
 		if hasMask && !onL && (!hasRight || !onR) {
-			ch, color := rainbowChar(charIdx)
+			ch, color := rainbowChar(charIdx, th.OfflineSparkANSI)
 			bot.WriteString(color)
 			bot.WriteRune(ch)
 			bot.WriteString(sparkReset)
@@ -428,7 +348,7 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		realBotL, realTopL := levelSplit(levL)
 		realBotR, realTopR := levelSplit(levR)
 
-		ansi := severityColor(colorVal, thresh)
+		ansi := th.SeverityColor(colorVal, thresh)
 
 		topBits := leftBits[realTopL] | rightBits[realTopR]
 		botBits := leftBits[realBotL] | rightBits[realBotR] | offlineLBits | offlineRBits
@@ -438,16 +358,6 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 	}
 
 	return SparkPair{Top: top.String(), Bottom: bot.String()}
-}
-
-// Rainbow colors for offline mode sparklines.
-var rainbowColors = []string{
-	"\033[31m", // red
-	"\033[33m", // yellow
-	"\033[32m", // green
-	"\033[36m", // cyan
-	"\033[34m", // blue
-	"\033[35m", // magenta
 }
 
 // Random braille patterns for offline mode — irreverent dot positions.
@@ -471,8 +381,8 @@ var funBraille = []rune{
 
 // rainbowChar picks a random braille pattern and rainbow color for position i.
 // Deterministic per position — once generated, it stays put. No animation.
-func rainbowChar(i int) (rune, string) {
+func rainbowChar(i int, offlineColors []string) (rune, string) {
 	patIdx := (i*7 + i*i*3) % len(funBraille)
-	colorIdx := (i*3 + i*i) % len(rainbowColors)
-	return funBraille[patIdx], rainbowColors[colorIdx]
+	colorIdx := (i*3 + i*i) % len(offlineColors)
+	return funBraille[patIdx], offlineColors[colorIdx]
 }
