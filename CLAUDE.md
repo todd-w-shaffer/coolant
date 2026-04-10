@@ -85,6 +85,7 @@ thermal/
 │   ├── parent_darwin.go     # kqueue EVFILT_PROC watcher — exits when parent dies
 │   └── parent_other.go      # no-op stub for non-darwin platforms
 ├── cmd/brailletext/main.go  # standalone braille font debug tool
+├── cmd/swatch/main.go       # theme palette preview tool (print-and-exit, no bubbletea)
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
@@ -115,7 +116,7 @@ thermal/
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   ├── alerts.go         # scrolling alert log
-│   │   ├── breathedots.go    # agent indicators: tidal wave (active), KITT scanner (stale), 3-state glyphs (⬡⏣⬢)
+│   │   ├── breathedots.go    # agent indicators: tidal wave (active), KITT scanner (stale or highscore), 3-state glyphs (⬡⏣⬢)
 │   │   ├── braillefont.go    # 4×8 bitmap font for gauge labels (CPU/MEM/SWAP)
 │   │   ├── thermal.go        # category heat-level threshold logic (returns gradient index)
 │   │   ├── golden_test.go    # golden capture/match tests for render regression detection
@@ -174,7 +175,7 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
 - **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
 - **Theme system** (`internal/theme/`): All colors flow through a `*theme.Theme` struct passed to every widget constructor. `Theme.Init()` pre-computes HCL blend LUTs (101 entries each for severity gradients). `Theme.SeverityColor()` replaces the old package-level `severityColor()`. Built-in themes registered in `theme.Registry`; resolved via `--theme` flag > `COOLANT_THEME` env > `"classic"` default. To add a theme: copy `classic.go`, change colors, register in `registry.go`.
-- **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). Animation patterns are universal across themes; only accent color is themed.
+- **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). `--kitt-highscore` flag (or `COOLANT_KITT_HIGHSCORE=1`) repurposes the scanner to display completed agent count instead — stale dots dim-breathe, completed dots earn the KITT scan. Animation patterns are universal across themes; only accent color is themed.
 - `GaugeDotColor.ANSIOverride` lets Classic use 16-color ANSI escapes while other themes use truecolor. If set, `Init()` uses the override; otherwise derives truecolor from `Color`.
 - Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
 - Braille rendering done natively in Go (no awk, no subshells).
