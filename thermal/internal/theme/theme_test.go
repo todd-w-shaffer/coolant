@@ -237,11 +237,14 @@ func TestRegistryGet(t *testing.T) {
 
 func TestRegistryNames(t *testing.T) {
 	names := Names()
-	if len(names) != 1 {
-		t.Fatalf("Names() returned %d entries, want 1", len(names))
+	want := []string{"classic", "frappe", "iron", "mono"}
+	if len(names) != len(want) {
+		t.Fatalf("Names() returned %d entries, want %d: %v", len(names), len(want), names)
 	}
-	if names[0] != "classic" {
-		t.Errorf("Names()[0] = %q, want %q", names[0], "classic")
+	for i, name := range names {
+		if name != want[i] {
+			t.Errorf("Names()[%d] = %q, want %q", i, name, want[i])
+		}
 	}
 }
 

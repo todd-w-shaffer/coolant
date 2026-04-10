@@ -53,9 +53,10 @@ var CategoryColor = map[string]color.Color{
 	"swift":  lipgloss.Color("166"), // deep orange — Swift compilation
 }
 
-// AgentGlyphHollow and AgentGlyphFilled are the hexagon pair for breathing
-// agent indicators. The dot alternates between hollow and filled as it breathes.
+// Agent hexagon glyphs — three states for wave animation.
+// Hollow (trough) → benzene/mid (shoulder) → filled (peak).
 const AgentGlyphHollow = "⬡"
+const AgentGlyphMid = "⏣"
 const AgentGlyphFilled = "⬢"
 
 // CategoryGlyph maps activity categories to distinct single-cell unicode glyphs.
