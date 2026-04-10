@@ -57,6 +57,7 @@ scripts/gate.sh              # PreToolUse hook: cap test runners (reconciled), s
 scripts/agent-start.sh       # SubagentStart hook: increment counter, warn at threshold
 scripts/agent-stop.sh        # SubagentStop hook: decrement counter, auto-disengage at zero
 thermal/                     # Go thermal dashboard binary (see below)
+docs/theming/                # theme system planning: color audit, schema, palettes, migration mapping
 skills/coolant/SKILL.md      # /coolant skill (opt-in build suppression)
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
 tests/*.bats                 # bats test files, one per script
@@ -101,21 +102,30 @@ thermal/
 │   │   ├── ring.go           # generic RingBuffer[T] — O(1) push, used by history/alerts/rates
 │   │   └── data/
 │   │       └── messages.csv  # embedded status bar messages per threat level
+│   ├── theme/
+│   │   ├── theme.go          # Theme struct, SeverityColor, SparkThresholds, Init (LUT pre-compute)
+│   │   ├── classic.go        # Classic palette (backward-compat traffic-light)
+│   │   ├── iron.go           # Iron palette (FLIR blackbody: purple→magenta→amber)
+│   │   ├── mono.go           # Mono palette (single amber hue, brightness-only)
+│   │   ├── frappe.go         # Frappe palette (native catppuccin frappe hex colors)
+│   │   └── registry.go       # theme registry: Get(), Names(), --theme flag lookup
 │   ├── widgets/
-│   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char)
+│   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char), themed severity color
 │   │   ├── headline.go       # thermal bar: overall temp + dynamic process categories
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   ├── alerts.go         # scrolling alert log
-│   │   ├── breathedots.go    # spring-animated breathing hexagon agent indicators
+│   │   ├── breathedots.go    # agent indicators: tidal wave (active), KITT scanner (stale), 3-state glyphs (⬡⏣⬢)
 │   │   ├── braillefont.go    # 4×8 bitmap font for gauge labels (CPU/MEM/SWAP)
-│   │   └── thermal.go        # category heat-level gradient (5 levels, cold→critical)
+│   │   ├── thermal.go        # category heat-level threshold logic (returns gradient index)
+│   │   ├── golden_test.go    # golden capture/match tests for render regression detection
+│   │   └── testdata/*.golden # frozen render output for Classic theme backward-compat
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
 │   ├── config/
 │   │   └── tuning.go         # named constants: timing, thresholds, EMA, animation
 │   ├── ui/
-│   │   └── colors.go         # type colors, category colors, ThreatColor, GaugeDots
+│   │   └── colors.go         # type colors, category colors, agent glyphs, DimText/ColorText helpers
 │   └── demo/
 │       └── demov2.go         # synthetic Snapshots with system stats
 ├── go.mod
@@ -163,7 +173,10 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
 - **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
-- Type colors, `ThreatColor`, and `GaugeDots` defined once in `internal/ui/colors.go`, shared across all widgets. Severity gradient coloring uses `severityColor()` in `sparkline.go` (green→yellow→red via go-colorful HCL blending). All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
+- **Theme system** (`internal/theme/`): All colors flow through a `*theme.Theme` struct passed to every widget constructor. `Theme.Init()` pre-computes HCL blend LUTs (101 entries each for severity gradients). `Theme.SeverityColor()` replaces the old package-level `severityColor()`. Built-in themes registered in `theme.Registry`; resolved via `--theme` flag > `COOLANT_THEME` env > `"classic"` default. To add a theme: copy `classic.go`, change colors, register in `registry.go`.
+- **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). Animation patterns are universal across themes; only accent color is themed.
+- `GaugeDotColor.ANSIOverride` lets Classic use 16-color ANSI escapes while other themes use truecolor. If set, `Init()` uses the override; otherwise derives truecolor from `Color`.
+- Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
 - Braille rendering done natively in Go (no awk, no subshells).
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
 
