@@ -8,6 +8,9 @@ import (
 // Registry maps theme names to constructor functions.
 var Registry = map[string]func() *Theme{
 	"classic": Classic,
+	"iron":    Iron,
+	"mono":    Mono,
+	"frappe":  Frappe,
 }
 
 // Get returns a fully initialized Theme by name, or an error if not found.

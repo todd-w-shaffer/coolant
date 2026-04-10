@@ -136,7 +136,7 @@ func (h *Headline) View() string {
 		overallLevel := threatToThermal(h.state.ThreatLevel)
 		iconBg = h.theme.OverallGradient[overallLevel].Bg
 	}
-	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyphHollow, ui.AgentGlyphFilled, iconBg, 0)
+	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
 
 	// Render session phase diamonds
 	var sessions []collector.SessionTree

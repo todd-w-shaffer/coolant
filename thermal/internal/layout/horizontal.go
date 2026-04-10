@@ -136,8 +136,8 @@ func (h *Horizontal) helpView() []string {
 			diamond(sp.Language) + " " + ct(d, "language") + "  " +
 			diamond(sp.Build) + " " + ct(d, "build") + "  " +
 			diamond(sp.Explosion) + " " + ct(d, "shells (30+)"),
-		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphFilled) + " " +
-			ct(d, "subagents — hexagons breathe hollow/filled, count matches headline") + "  " +
+		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphMid) + dim(ui.AgentGlyphFilled) + " " +
+			ct(d, "subagents — tidal wave hollow/mid/filled, ghosts KITT-scan") + "  " +
 			dim("categories track process types in the headline bar"),
 		" " + dim("[h] close") + "  " + dim("[c] collapse") + "  " + dim("[x] purge ghosts") + "  " + dim("[q] quit"),
 	}

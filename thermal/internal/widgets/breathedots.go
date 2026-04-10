@@ -24,11 +24,13 @@ type breatheDot struct {
 // BreatheDots manages a set of spring-animated breathing dots that track
 // an integer count. Dots fade in on increase and fade out on decrease.
 type BreatheDots struct {
-	spring    harmonica.Spring
-	dots      []breatheDot
-	nextPhase float64
-	lastStale int // dirty check for SetStaleCount
-	theme     *theme.Theme
+	spring     harmonica.Spring
+	dots       []breatheDot
+	nextPhase  float64
+	lastStale  int     // dirty check for SetStaleCount
+	staleSweep float64 // KITT scanner position — continuous, bounces across stale dots
+	tidalPhase float64 // tidal wave phase for active dots — slow rolling swell
+	theme      *theme.Theme
 }
 
 func NewBreatheDots(th *theme.Theme) *BreatheDots {
@@ -84,6 +86,12 @@ func (b *BreatheDots) AnimTick() {
 		}
 	}
 
+	// Advance KITT sweep for stale dots (~3s per full sweep)
+	b.staleSweep += 0.04
+
+	// Advance tidal wave for active dots (~8s per full wave — languid for 3-5 dots)
+	b.tidalPhase += 0.025
+
 	// Remove fully faded dots
 	n := 0
 	for _, d := range b.dots {
@@ -100,7 +108,7 @@ func (b *BreatheDots) AnimTick() {
 // the dot "fills up" at peak brightness and "empties" at the trough.
 // bg is the cell background for transparency (nil = no background).
 // maxDots caps visible dots (0 = unlimited).
-func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, maxDots int) (string, int) {
+func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color.Color, maxDots int) (string, int) {
 	if len(b.dots) == 0 {
 		return "", 0
 	}
@@ -113,12 +121,67 @@ func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, ma
 	var buf strings.Builder
 	visWidth := 0
 
+	// Build index mappings for stale (KITT) and active (tidal) dots
+	var staleIndices []int
+	var activeIndices []int
 	for i, d := range dots {
-		breathT := 0.5 + 0.5*math.Sin(d.phase)
-		brightness := d.alive * (config.BreatheMinBright + (config.BreatheMaxBright-config.BreatheMinBright)*breathT)
-		if d.stale {
-			brightness *= config.BreatheStaleDim
+		if d.dying {
+			continue
 		}
+		if d.stale {
+			staleIndices = append(staleIndices, i)
+		} else {
+			activeIndices = append(activeIndices, i)
+		}
+	}
+
+	// KITT sweep position — triangle wave bouncing across stale dots
+	var sweepPos float64
+	if len(staleIndices) > 1 {
+		n := float64(len(staleIndices) - 1)
+		raw := math.Mod(b.staleSweep*n, 2*n)
+		if raw > n {
+			sweepPos = 2*n - raw
+		} else {
+			sweepPos = raw
+		}
+	}
+
+	for i, d := range dots {
+		var brightness float64
+		var wave float64 // tidal wave value for active dots (shared by brightness + glyph)
+
+		if d.stale && !d.dying && len(staleIndices) > 0 {
+			// KITT scanner: sharp gaussian sweep
+			staleIdx := -1
+			for si, idx := range staleIndices {
+				if idx == i {
+					staleIdx = si
+					break
+				}
+			}
+			if staleIdx >= 0 {
+				dist := math.Abs(float64(staleIdx) - sweepPos)
+				brightness = d.alive * config.BreatheStaleDim * (0.15 + 0.85*math.Exp(-dist*dist/0.8))
+			}
+		} else if !d.dying {
+			// Tidal wave: slow rolling swell tuned for 3-5 visible dots.
+			// Wide phase spread (1.5 rad/dot) so direction is clear even with 3.
+			// Narrow brightness range (0.5–1.0) keeps all dots visible — the
+			// glyph swap (⬡→⏣→⬢) is the primary visual signal.
+			activeIdx := 0
+			for ai, idx := range activeIndices {
+				if idx == i {
+					activeIdx = ai
+					break
+				}
+			}
+			wave = 0.5 + 0.5*math.Sin(b.tidalPhase-float64(activeIdx)*1.5)
+			individualBreath := 0.5 + 0.5*math.Sin(d.phase)
+			mixed := 0.85*wave + 0.15*individualBreath
+			brightness = d.alive * (0.5 + 0.5*mixed)
+		}
+
 		if brightness < 0 {
 			brightness = 0
 		}
@@ -126,10 +189,17 @@ func (b *BreatheDots) Render(glyphHollow, glyphFilled string, bg color.Color, ma
 			brightness = 1
 		}
 
-		// Pick glyph: filled above midpoint, hollow below
+		// Glyph: three states track the tidal wave.
+		// Peak → filled, shoulder → benzene, trough → hollow.
+		// Stale dots stay hollow always.
 		glyph := glyphHollow
-		if breathT > 0.5 {
-			glyph = glyphFilled
+		if !d.stale && !d.dying {
+			switch {
+			case wave > 0.66:
+				glyph = glyphFilled
+			case wave > 0.33:
+				glyph = glyphMid
+			}
 		}
 
 		fg := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
