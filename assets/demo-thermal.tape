@@ -1,10 +1,11 @@
 Output assets/thermal-demo.gif
 
 Set Shell "bash"
-Set FontSize 11
-Set Width 960
+Set FontSize 16
+Set Width 1920
 Set Height 150
 Set Padding 0
+Set Framerate 15
 
 Hide
 Type "cd /Users/toddwshaffer/Desktop/apps/coolant && ./bin/thermo --demo"
@@ -14,6 +15,6 @@ Type "c"
 Sleep 500ms
 Show
 
-Sleep 14s
+Sleep 20s
 
 Type "q"
