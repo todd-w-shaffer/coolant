@@ -101,9 +101,21 @@ func TestCalmSlowerThanDefault(t *testing.T) {
 		calm, def   float64
 		wantSmaller bool // true = calm should be smaller (slower)
 	}{
+		// Speed: calm is slower
 		{"TidalPhaseStep", calm.TidalPhaseStep, def.TidalPhaseStep, true},
 		{"KITTSweepRate", calm.KITTSweepRate, def.KITTSweepRate, true},
-		{"TidalBrightFloor", calm.TidalBrightFloor, def.TidalBrightFloor, false}, // higher = softer contrast
+		{"BreathePhaseStep", calm.BreathePhaseStep, def.BreathePhaseStep, true},
+		{"SpringFreq", calm.SpringFreq, def.SpringFreq, true},
+
+		// Brightness/contrast: calm is softer (higher floors, wider gaussians)
+		{"TidalBrightFloor", calm.TidalBrightFloor, def.TidalBrightFloor, false}, // higher = softer
+		{"TidalPhaseSpread", calm.TidalPhaseSpread, def.TidalPhaseSpread, false}, // wider = lazier
+		{"KITTAmbient", calm.KITTAmbient, def.KITTAmbient, false},                // brighter edges
+		{"KITTSigmaSq", calm.KITTSigmaSq, def.KITTSigmaSq, false},                // wider gaussian
+
+		// Peak: calm has gentler peak, slower decay
+		{"KITTPeak", calm.KITTPeak, def.KITTPeak, true},                 // gentler peak
+		{"PeakDecayRate", calm.PeakDecayRate, def.PeakDecayRate, false}, // closer to 1 = slower decay
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -126,9 +138,24 @@ func TestIntenseFasterThanDefault(t *testing.T) {
 		intense, def float64
 		wantLarger   bool // true = intense should be larger (faster)
 	}{
+		// Speed: intense is faster
 		{"TidalPhaseStep", intense.TidalPhaseStep, def.TidalPhaseStep, true},
 		{"KITTSweepRate", intense.KITTSweepRate, def.KITTSweepRate, true},
-		{"KITTSigmaSq", intense.KITTSigmaSq, def.KITTSigmaSq, false}, // smaller = tighter spotlight
+		{"BreathePhaseStep", intense.BreathePhaseStep, def.BreathePhaseStep, true},
+		{"SpringFreq", intense.SpringFreq, def.SpringFreq, true},
+		{"KITTPeak", intense.KITTPeak, def.KITTPeak, true}, // brighter peak
+		{"KITTSingleBright", intense.KITTSingleBright, def.KITTSingleBright, true},
+
+		// Contrast: intense is sharper (lower floors, tighter gaussians)
+		{"TidalBrightFloor", intense.TidalBrightFloor, def.TidalBrightFloor, false}, // lower = higher contrast
+		{"TidalPhaseSpread", intense.TidalPhaseSpread, def.TidalPhaseSpread, false}, // tighter = more dots lit
+		{"KITTSigmaSq", intense.KITTSigmaSq, def.KITTSigmaSq, false},                // tighter gaussian
+		{"KITTAmbient", intense.KITTAmbient, def.KITTAmbient, false},                // darker edges
+		{"GlyphMidThresh", intense.GlyphMidThresh, def.GlyphMidThresh, false},       // narrower mid zone
+		{"SpringDamping", intense.SpringDamping, def.SpringDamping, false},          // underdamped = overshoot
+
+		// Decay: intense peaks decay faster (closer to 0)
+		{"PeakDecayRate", intense.PeakDecayRate, def.PeakDecayRate, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,6 +164,56 @@ func TestIntenseFasterThanDefault(t *testing.T) {
 			}
 			if !tt.wantLarger && tt.intense >= tt.def {
 				t.Errorf("intense.%s (%v) should be < default (%v)", tt.name, tt.intense, tt.def)
+			}
+		})
+	}
+}
+
+func TestCalmUnchangedFieldsMatchDefault(t *testing.T) {
+	calm := mustGet(t, "calm")
+	def := mustGet(t, "default")
+
+	tests := []struct {
+		name string
+		calm float64
+		def  float64
+	}{
+		{"TidalWaveMix", calm.TidalWaveMix, def.TidalWaveMix},
+		{"TidalBreathMix", calm.TidalBreathMix, def.TidalBreathMix},
+		{"GlyphFilledThresh", calm.GlyphFilledThresh, def.GlyphFilledThresh},
+		{"GlyphMidThresh", calm.GlyphMidThresh, def.GlyphMidThresh},
+		{"KITTSingleBright", calm.KITTSingleBright, def.KITTSingleBright},
+		{"BreatheStaleRate", calm.BreatheStaleRate, def.BreatheStaleRate},
+		{"BreatheStaleDim", calm.BreatheStaleDim, def.BreatheStaleDim},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.calm != tt.def {
+				t.Errorf("calm.%s (%v) should equal default (%v)", tt.name, tt.calm, tt.def)
+			}
+		})
+	}
+}
+
+func TestIntenseUnchangedFieldsMatchDefault(t *testing.T) {
+	intense := mustGet(t, "intense")
+	def := mustGet(t, "default")
+
+	tests := []struct {
+		name    string
+		intense float64
+		def     float64
+	}{
+		{"TidalWaveMix", intense.TidalWaveMix, def.TidalWaveMix},
+		{"TidalBreathMix", intense.TidalBreathMix, def.TidalBreathMix},
+		{"GlyphFilledThresh", intense.GlyphFilledThresh, def.GlyphFilledThresh},
+		{"BreatheStaleRate", intense.BreatheStaleRate, def.BreatheStaleRate},
+		{"BreatheStaleDim", intense.BreatheStaleDim, def.BreatheStaleDim},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.intense != tt.def {
+				t.Errorf("intense.%s (%v) should equal default (%v)", tt.name, tt.intense, tt.def)
 			}
 		})
 	}

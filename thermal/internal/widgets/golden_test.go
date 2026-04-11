@@ -115,6 +115,14 @@ func TestCaptureGoldenFiles(t *testing.T) {
 	t.Run("alerts_line", func(t *testing.T) {
 		writeGolden(t, "alerts_line", captureAlertsLine())
 	})
+
+	t.Run("breathedots", func(t *testing.T) {
+		writeGolden(t, "breathedots", captureBreatheDots())
+	})
+
+	t.Run("gauges", func(t *testing.T) {
+		writeGolden(t, "gauges", captureGauges())
+	})
 }
 
 // ── Match golden files ───────────────────────────────────────
@@ -129,6 +137,8 @@ func TestClassicMatchesGolden(t *testing.T) {
 		{"thermal_levels", captureThermalLevels},
 		{"rates_line", captureRatesLine},
 		{"alerts_line", captureAlertsLine},
+		{"breathedots", captureBreatheDots},
+		{"gauges", captureGauges},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,7 +147,66 @@ func TestClassicMatchesGolden(t *testing.T) {
 	}
 }
 
-// ── Capture functions ────────────────────────────────────────
+// ── Capture functions (widgets) ──────────────────────────────
+
+// captureBreatheDots renders BreatheDots in three modes with deterministic state.
+func captureBreatheDots() string {
+	th := testTheme
+	ap := testAnim
+	var sb strings.Builder
+
+	// Mode 1: Active dots (tidal wave)
+	b := NewBreatheDots(th, ap)
+	b.SetTarget(3)
+	for i := 0; i < 60; i++ {
+		b.AnimTick()
+	}
+	s, w := b.Render("⬡", "⏣", "⬢", nil, 0)
+	sb.WriteString(fmt.Sprintf("active:w=%d:%s\n", w, s))
+
+	// Mode 2: Stale dots (KITT scanner)
+	b2 := NewBreatheDots(th, ap)
+	b2.SetTarget(3)
+	b2.SetStaleCount(2)
+	for i := 0; i < 60; i++ {
+		b2.AnimTick()
+	}
+	s, w = b2.Render("⬡", "⏣", "⬢", nil, 0)
+	sb.WriteString(fmt.Sprintf("stale:w=%d:%s\n", w, s))
+
+	// Mode 3: Highscore (completed KITT + active)
+	b3 := NewBreatheDots(th, ap)
+	b3.SetHighScoreMode(true)
+	b3.SetTarget(2)
+	b3.SetCompletedCount(3)
+	for i := 0; i < 60; i++ {
+		b3.AnimTick()
+	}
+	s, w = b3.Render("⬡", "⏣", "⬢", nil, 0)
+	sb.WriteString(fmt.Sprintf("highscore:w=%d:%s\n", w, s))
+
+	return sb.String()
+}
+
+// captureGauges renders Gauges.View() with the fixture snapshot.
+func captureGauges() string {
+	th := testTheme
+	ap := testAnim
+	g := NewGauges(th, ap)
+	g.SetSize(60, 6)
+
+	state := fixtureState()
+	g.Update(state)
+
+	// Pump enough ticks for spring to settle and renderHistory to fill
+	for i := 0; i < 90; i++ {
+		g.AnimTick()
+	}
+
+	return g.View() + "\n"
+}
+
+// ── Capture functions (existing) ────────────────────────────
 
 // captureSeverityGradient renders SeverityColor at 0,10,...,100 with CPU thresholds.
 func captureSeverityGradient() string {
