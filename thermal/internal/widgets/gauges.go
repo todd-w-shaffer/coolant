@@ -204,11 +204,11 @@ func (g *Gauges) View() string {
 
 	gauges := []gauge{
 		{g.renderHistory[0], g.springs[0].pos, 100,
-			CPUSparkThresh, 0, fmtPct},
+			CPUSparkThresh(), 0, fmtPct},
 		{g.renderHistory[1], g.springs[1].pos, 100,
-			MemSparkThresh, 1, fmtPct},
+			MemSparkThresh(), 1, fmtPct},
 		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
-			DecompSparkThresh, 2, fmtDecomp},
+			DecompSparkThresh(), 2, fmtDecomp},
 	}
 
 	var lines []string

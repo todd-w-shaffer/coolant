@@ -238,9 +238,7 @@ func Load(path string) error {
 		return fmt.Errorf("parsing config: %w", err)
 	}
 
-	if err := merge(C, raw); err != nil {
-		return fmt.Errorf("config: %w", err)
-	}
+	merge(C, raw)
 
 	if err := validate(C); err != nil {
 		return fmt.Errorf("config validation: %w", err)
@@ -253,7 +251,7 @@ func Load(path string) error {
 // Walk the raw TOML map and overlay present values onto the
 // defaults. Absent keys are left alone — partial configs work.
 
-func merge(dst *UserConfig, raw map[string]any) error {
+func merge(dst *UserConfig, raw map[string]any) {
 	if m, ok := section(raw, "memory"); ok {
 		coerceInt(&dst.Memory.WarmPct, m, "warm_pct")
 		coerceInt(&dst.Memory.HotPct, m, "hot_pct")
@@ -294,7 +292,7 @@ func merge(dst *UserConfig, raw map[string]any) error {
 		coerceFloat(&dst.Sparklines.GPUCrit, sl, "gpu_crit")
 	}
 	if cat, ok := section(raw, "categories"); ok {
-		for _, name := range []string{"build", "shell", "node", "go", "python", "rust", "swift"} {
+		for name := range CatThresholds {
 			if pair, err := coercePair(cat, name); err == nil {
 				dst.Categories.Thresholds[name] = pair
 			}
@@ -304,7 +302,6 @@ func merge(dst *UserConfig, raw map[string]any) error {
 		}
 		coerceInt(&dst.Categories.ShellExplosion, cat, "shell_explosion")
 	}
-	return nil
 }
 
 // section pulls a [table] out of the raw map.
@@ -409,7 +406,7 @@ func coercePair(m map[string]any, key string) ([2]int, error) {
 // whitespace between the number and the unit.
 func cleanNumeric(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimRight(s, "%")
+	s = strings.TrimSuffix(s, "%")
 	s = strings.TrimSpace(s)
 	lower := strings.ToLower(s)
 	for _, suffix := range []string{"gb", "mb"} {
@@ -459,6 +456,9 @@ func validate(c *UserConfig) error {
 
 	if c.Headroom.CritBytes < 0 || c.Headroom.WarnBytes < 0 {
 		return fmt.Errorf("headroom: thresholds must be non-negative")
+	}
+	if c.Headroom.WarnBytes > 0 && c.Headroom.CritBytes > 0 && c.Headroom.WarnBytes <= c.Headroom.CritBytes {
+		return fmt.Errorf("headroom: warn_gb must be greater than crit_gb (warn triggers first)")
 	}
 
 	if err := orderedInt("score", c.Score.Warm, c.Score.Hot, c.Score.Meltdown); err != nil {

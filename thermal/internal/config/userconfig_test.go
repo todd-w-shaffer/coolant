@@ -7,7 +7,6 @@ import (
 )
 
 func TestDefaultsMatchTuningConstants(t *testing.T) {
-	t.Helper()
 	d := Defaults()
 
 	// Memory

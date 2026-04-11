@@ -98,14 +98,23 @@ type SparkPair struct {
 	Bottom string
 }
 
-// Package-level gauge sparkline thresholds — allocated once, reused every frame.
-var (
-	CPUSparkThresh    = theme.SparkThresholds{Warn: config.C.Sparklines.CPUWarn, Crit: config.C.Sparklines.CPUCrit}
-	MemSparkThresh    = theme.SparkThresholds{Warn: config.C.Sparklines.MemWarn, Crit: config.C.Sparklines.MemCrit}
-	DecompSparkThresh = theme.SparkThresholds{Warn: config.C.Sparklines.DecompWarn, Crit: config.C.Sparklines.DecompCrit}
-	SwapSparkThresh   = theme.SparkThresholds{Warn: config.C.Sparklines.SwapWarnGB, Crit: config.C.Sparklines.SwapCritGB}
-	GPUSparkThresh    = theme.SparkThresholds{Warn: config.C.Sparklines.GPUWarn, Crit: config.C.Sparklines.GPUCrit}
-)
+// Sparkline threshold accessors — read from config.C at call time so
+// user config overrides take effect (Load runs after package init).
+func CPUSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.CPUWarn, Crit: config.C.Sparklines.CPUCrit}
+}
+func MemSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.MemWarn, Crit: config.C.Sparklines.MemCrit}
+}
+func DecompSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.DecompWarn, Crit: config.C.Sparklines.DecompCrit}
+}
+func SwapSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.SwapWarnGB, Crit: config.C.Sparklines.SwapCritGB}
+}
+func GPUSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.GPUWarn, Crit: config.C.Sparklines.GPUCrit}
+}
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
 // Allocate once via NewSparkBufs and pass to RenderSparkline.

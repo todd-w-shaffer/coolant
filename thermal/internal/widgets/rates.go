@@ -13,14 +13,6 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// Pointers to shared threshold vars from sparkline.go — no per-frame allocation.
-var (
-	ratesCPUThresh  = &CPUSparkThresh
-	ratesMemThresh  = &MemSparkThresh
-	ratesSwapThresh = &SwapSparkThresh
-	ratesGPUThresh  = &GPUSparkThresh
-)
-
 // Rates renders spawn/death/net rates + system stats, all fixed-width,
 // plus a hierarchical session row showing per-session category-typed process glyphs.
 type Rates struct {
@@ -81,28 +73,32 @@ func (r *Rates) View() string {
 	sb.WriteString(" ")
 	sb.WriteString(r.theme.GaugeDots[0].Formatted)
 	sb.WriteString("CPU:")
-	sb.WriteString(r.theme.SeverityColor(snap.System.CPUPercent, ratesCPUThresh))
+	cpuTh := CPUSparkThresh()
+	sb.WriteString(r.theme.SeverityColor(snap.System.CPUPercent, &cpuTh))
 	sb.WriteString(fmt.Sprintf("%03d%%", cpuPct))
 	sb.WriteString(sparkReset)
 
 	sb.WriteString("  ")
 	sb.WriteString(r.theme.GaugeDots[1].Formatted)
 	sb.WriteString("MEM:")
-	sb.WriteString(r.theme.SeverityColor(memPct, ratesMemThresh))
+	memTh := MemSparkThresh()
+	sb.WriteString(r.theme.SeverityColor(memPct, &memTh))
 	sb.WriteString(fmt.Sprintf("%04.1f/%02dGB", memUsedGB, memTotalGB))
 	sb.WriteString(sparkReset)
 
 	sb.WriteString("  ")
 	sb.WriteString(r.theme.GaugeDots[2].Formatted)
 	sb.WriteString("SWAP:")
-	sb.WriteString(r.theme.SeverityColor(swapGB, ratesSwapThresh))
+	swapTh := SwapSparkThresh()
+	sb.WriteString(r.theme.SeverityColor(swapGB, &swapTh))
 	sb.WriteString(fmt.Sprintf("%04.1fGB", swapGB))
 	sb.WriteString(sparkReset)
 
 	sb.WriteString("  ")
 	sb.WriteString(r.theme.GaugeDots[3].Formatted)
 	sb.WriteString("GPU:")
-	sb.WriteString(r.theme.SeverityColor(snap.System.GPUPercent, ratesGPUThresh))
+	gpuTh := GPUSparkThresh()
+	sb.WriteString(r.theme.SeverityColor(snap.System.GPUPercent, &gpuTh))
 	sb.WriteString(fmt.Sprintf("%03d%%", gpuPct))
 	sb.WriteString(sparkReset)
 
