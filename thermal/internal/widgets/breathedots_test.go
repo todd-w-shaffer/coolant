@@ -1,6 +1,8 @@
 package widgets
 
 import (
+	"fmt"
+	"math"
 	"testing"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
@@ -324,31 +326,37 @@ func TestTriangleWaveRangeInvariant(t *testing.T) {
 
 func floatPtr(v float64) *float64 { return &v }
 
+func assertNear(t *testing.T, got, want, eps float64, label string) {
+	t.Helper()
+	if diff := got - want; diff > eps || diff < -eps {
+		t.Errorf("%s = %v, want %v (diff %v, eps %v)", label, got, want, diff, eps)
+	}
+}
+
 func TestKITTGaussian(t *testing.T) {
 	tests := []struct {
 		name    string
 		profile *anim.Profile
 		dist    float64
-		want    float64
+		center  bool // true: want = ambient+peak; false: want = ambient
 	}{
-		// At center (dist=0): ambient + peak * exp(0) = ambient + peak
-		{"default center", anim.Default(), 0, anim.Default().KITTAmbient + anim.Default().KITTPeak},
-		{"calm center", anim.Calm(), 0, anim.Calm().KITTAmbient + anim.Calm().KITTPeak},
-		{"intense center", anim.Intense(), 0, anim.Intense().KITTAmbient + anim.Intense().KITTPeak},
-		// At large distance: approaches ambient (peak contribution ≈ 0)
-		{"default far", anim.Default(), 100, anim.Default().KITTAmbient},
-		{"calm far", anim.Calm(), 100, anim.Calm().KITTAmbient},
-		{"intense far", anim.Intense(), 100, anim.Intense().KITTAmbient},
+		{"default center", anim.Default(), 0, true},
+		{"calm center", anim.Calm(), 0, true},
+		{"intense center", anim.Intense(), 0, true},
+		{"default far", anim.Default(), 100, false},
+		{"calm far", anim.Calm(), 100, false},
+		{"intense far", anim.Intense(), 100, false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := NewBreatheDots(testTheme, tt.profile)
 			got := b.kittGaussian(tt.dist)
-			if diff := got - tt.want; diff > 1e-6 || diff < -1e-6 {
-				t.Errorf("kittGaussian(%v) = %v, want %v (diff %v)",
-					tt.dist, got, tt.want, diff)
+			want := tt.profile.KITTAmbient
+			if tt.center {
+				want += tt.profile.KITTPeak
 			}
+			assertNear(t, got, want, 1e-9, fmt.Sprintf("kittGaussian(%v)", tt.dist))
 		})
 	}
 }
@@ -388,18 +396,16 @@ func TestSinNorm(t *testing.T) {
 		x    float64
 		want float64
 	}{
-		{"zero", 0, 0.5},                  // sin(0)=0 → 0.5
-		{"pi/2", 1.5707963267948966, 1.0}, // sin(π/2)=1 → 1.0
-		{"pi", 3.141592653589793, 0.5},    // sin(π)≈0 → 0.5
-		{"3pi/2", 4.71238898038469, 0.0},  // sin(3π/2)=-1 → 0.0
+		{"zero", 0, 0.5},
+		{"pi/2", math.Pi / 2, 1.0},
+		{"pi", math.Pi, 0.5},
+		{"3pi/2", 3 * math.Pi / 2, 0.0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := sinNorm(tt.x)
-			if diff := got - tt.want; diff > 1e-9 || diff < -1e-9 {
-				t.Errorf("sinNorm(%v) = %v, want %v", tt.x, got, tt.want)
-			}
+			assertNear(t, got, tt.want, 1e-9, fmt.Sprintf("sinNorm(%v)", tt.x))
 		})
 	}
 }
