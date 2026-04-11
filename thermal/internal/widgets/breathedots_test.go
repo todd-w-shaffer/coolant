@@ -324,6 +324,97 @@ func TestTriangleWaveRangeInvariant(t *testing.T) {
 
 func floatPtr(v float64) *float64 { return &v }
 
+func TestKITTGaussian(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile *anim.Profile
+		dist    float64
+		want    float64
+	}{
+		// At center (dist=0): ambient + peak * exp(0) = ambient + peak
+		{"default center", anim.Default(), 0, anim.Default().KITTAmbient + anim.Default().KITTPeak},
+		{"calm center", anim.Calm(), 0, anim.Calm().KITTAmbient + anim.Calm().KITTPeak},
+		{"intense center", anim.Intense(), 0, anim.Intense().KITTAmbient + anim.Intense().KITTPeak},
+		// At large distance: approaches ambient (peak contribution ≈ 0)
+		{"default far", anim.Default(), 100, anim.Default().KITTAmbient},
+		{"calm far", anim.Calm(), 100, anim.Calm().KITTAmbient},
+		{"intense far", anim.Intense(), 100, anim.Intense().KITTAmbient},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBreatheDots(testTheme, tt.profile)
+			got := b.kittGaussian(tt.dist)
+			if diff := got - tt.want; diff > 1e-6 || diff < -1e-6 {
+				t.Errorf("kittGaussian(%v) = %v, want %v (diff %v)",
+					tt.dist, got, tt.want, diff)
+			}
+		})
+	}
+}
+
+func TestKITTGaussianSymmetric(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	pos := b.kittGaussian(2.5)
+	neg := b.kittGaussian(-2.5)
+	if pos != neg {
+		t.Errorf("kittGaussian not symmetric: f(2.5)=%v, f(-2.5)=%v", pos, neg)
+	}
+}
+
+func TestKITTGaussianMonotonicDecay(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	prev := b.kittGaussian(0)
+	ambient := testAnim.KITTAmbient
+	for i := 1; i <= 10; i++ {
+		cur := b.kittGaussian(float64(i))
+		// Strict decay while peak contribution is still measurable;
+		// at large distances both cur and prev floor at ambient.
+		if cur > prev {
+			t.Errorf("kittGaussian not monotonically decaying: f(%d)=%v > f(%d)=%v",
+				i, cur, i-1, prev)
+		}
+		if cur < ambient-1e-9 {
+			t.Errorf("kittGaussian below ambient floor: f(%d)=%v < %v",
+				i, cur, ambient)
+		}
+		prev = cur
+	}
+}
+
+func TestSinNorm(t *testing.T) {
+	tests := []struct {
+		name string
+		x    float64
+		want float64
+	}{
+		{"zero", 0, 0.5},                  // sin(0)=0 → 0.5
+		{"pi/2", 1.5707963267948966, 1.0}, // sin(π/2)=1 → 1.0
+		{"pi", 3.141592653589793, 0.5},    // sin(π)≈0 → 0.5
+		{"3pi/2", 4.71238898038469, 0.0},  // sin(3π/2)=-1 → 0.0
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sinNorm(tt.x)
+			if diff := got - tt.want; diff > 1e-9 || diff < -1e-9 {
+				t.Errorf("sinNorm(%v) = %v, want %v", tt.x, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSinNormRange(t *testing.T) {
+	// sinNorm must always return values in [0, 1]
+	for i := 0; i <= 100; i++ {
+		x := float64(i) * 0.1
+		got := sinNorm(x)
+		if got < 0 || got > 1 {
+			t.Errorf("sinNorm(%v) = %v, out of range [0, 1]", x, got)
+		}
+	}
+}
+
 func TestBreatheDotRenderMaxDots(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(10)
