@@ -9,6 +9,9 @@ thermal/thermal
 # graphify knowledge graph (rebuilt by post-commit hook)
 graphify-out/
 
+# Local OTEL dogfood data (Prometheus TSDB, Grafana state)
+dev/otel/data/
+
 # Archived artifacts — historical, not in use
 docs/archive/
 scripts/archive/
