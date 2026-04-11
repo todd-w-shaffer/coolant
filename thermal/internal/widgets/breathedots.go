@@ -8,6 +8,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/harmonica"
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
@@ -31,14 +32,16 @@ type BreatheDots struct {
 	staleSweep     float64 // KITT scanner position — continuous, bounces across stale/completed dots
 	tidalPhase     float64 // tidal wave phase for active dots — slow rolling swell
 	theme          *theme.Theme
+	anim           *anim.Profile
 	highScore      bool // when true, KITT scans completed agents instead of stale ones
 	completedCount int  // number of completed agents (highscore KITT dots)
 }
 
-func NewBreatheDots(th *theme.Theme) *BreatheDots {
+func NewBreatheDots(th *theme.Theme, ap *anim.Profile) *BreatheDots {
 	return &BreatheDots{
-		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), config.SpringFreq, config.SpringDamping),
+		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), ap.SpringFreq, ap.SpringDamping),
 		theme:  th,
+		anim:   ap,
 	}
 }
 
@@ -81,15 +84,15 @@ func (b *BreatheDots) AnimTick() {
 		)
 		if !b.dots[i].dying {
 			if b.dots[i].stale {
-				b.dots[i].phase += config.BreathePhaseStep * config.BreatheStaleRate
+				b.dots[i].phase += b.anim.BreathePhaseStep * b.anim.BreatheStaleRate
 			} else {
-				b.dots[i].phase += config.BreathePhaseStep
+				b.dots[i].phase += b.anim.BreathePhaseStep
 			}
 		}
 	}
 
-	b.staleSweep += config.KITTSweepRate
-	b.tidalPhase += config.TidalPhaseStep
+	b.staleSweep += b.anim.KITTSweepRate
+	b.tidalPhase += b.anim.TidalPhaseStep
 
 	// Remove fully faded dots
 	n := 0
@@ -165,15 +168,15 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 			}
 			if staleIdx >= 0 {
 				dist := math.Abs(float64(staleIdx) - sweepPos)
-				brightness = d.alive * config.BreatheStaleDim * kittGaussian(dist)
+				brightness = d.alive * b.anim.BreatheStaleDim * b.kittGaussian(dist)
 			}
 		} else if d.stale && !d.dying && b.highScore {
 			// Highscore mode: stale dots dim-breathe (no KITT)
-			brightness = d.alive * config.BreatheStaleDim * sinNorm(d.phase)
+			brightness = d.alive * b.anim.BreatheStaleDim * sinNorm(d.phase)
 		} else if !d.dying {
 			// Tidal wave: slow rolling swell tuned for 3-5 visible dots.
-			// Wide phase spread (1.5 rad/dot) so direction is clear even with 3.
-			// Narrow brightness range (0.5–1.0) keeps all dots visible — the
+			// Phase spread set by profile — wide enough for clear direction even with 3.
+			// Narrow brightness range keeps all dots visible — the
 			// glyph swap (⬡→⏣→⬢) is the primary visual signal.
 			activeIdx := 0
 			for ai, idx := range activeIndices {
@@ -182,10 +185,10 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 					break
 				}
 			}
-			wave = sinNorm(b.tidalPhase - float64(activeIdx)*1.5)
+			wave = sinNorm(b.tidalPhase - float64(activeIdx)*b.anim.TidalPhaseSpread)
 			individualBreath := sinNorm(d.phase)
-			mixed := config.TidalWaveMix*wave + config.TidalBreathMix*individualBreath
-			brightness = d.alive * (config.TidalBrightFloor + config.TidalBrightFloor*mixed)
+			mixed := b.anim.TidalWaveMix*wave + b.anim.TidalBreathMix*individualBreath
+			brightness = d.alive * (b.anim.TidalBrightFloor + b.anim.TidalBrightFloor*mixed)
 		}
 
 		if brightness < 0 {
@@ -201,9 +204,9 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 		glyph := glyphHollow
 		if !d.stale && !d.dying {
 			switch {
-			case wave > config.GlyphFilledThresh:
+			case wave > b.anim.GlyphFilledThresh:
 				glyph = glyphFilled
-			case wave > config.GlyphMidThresh:
+			case wave > b.anim.GlyphMidThresh:
 				glyph = glyphMid
 			}
 		}
@@ -217,10 +220,10 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 		for ci := 0; ci < b.completedCount; ci++ {
 			var brightness float64
 			if b.completedCount == 1 {
-				brightness = config.BreatheStaleDim * config.KITTSingleBright
+				brightness = b.anim.BreatheStaleDim * b.anim.KITTSingleBright
 			} else {
 				dist := math.Abs(float64(ci) - sweepPos)
-				brightness = config.BreatheStaleDim * kittGaussian(dist)
+				brightness = b.anim.BreatheStaleDim * b.kittGaussian(dist)
 			}
 
 			needSep := hasPrior || ci > 0
@@ -291,8 +294,8 @@ func (b *BreatheDots) SetCompletedCount(n int) {
 }
 
 // kittGaussian returns the KITT scanner brightness at distance from sweep center.
-func kittGaussian(dist float64) float64 {
-	return config.KITTAmbient + config.KITTPeak*math.Exp(-dist*dist/config.KITTSigmaSq)
+func (b *BreatheDots) kittGaussian(dist float64) float64 {
+	return b.anim.KITTAmbient + b.anim.KITTPeak*math.Exp(-dist*dist/b.anim.KITTSigmaSq)
 }
 
 // sinNorm maps a sine wave to [0, 1].

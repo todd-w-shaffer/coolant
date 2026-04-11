@@ -103,6 +103,12 @@ thermal/
 │   │   ├── ring.go           # generic RingBuffer[T] — O(1) push, used by history/alerts/rates
 │   │   └── data/
 │   │       └── messages.csv  # embedded status bar messages per threat level
+│   ├── anim/
+│   │   ├── profile.go        # Profile struct (all animation tunables)
+│   │   ├── default.go        # Default profile (reads from config/tuning.go)
+│   │   ├── calm.go           # Calm profile (slower rates, wider brightness, softer)
+│   │   ├── intense.go        # Intense profile (faster rates, tighter gaussian, snappier)
+│   │   └── registry.go       # animation registry: Get(), Names(), --animation flag lookup
 │   ├── theme/
 │   │   ├── theme.go          # Theme struct, SeverityColor, SparkThresholds, Init (LUT pre-compute)
 │   │   ├── classic.go        # Classic palette (backward-compat traffic-light)
@@ -124,7 +130,7 @@ thermal/
 │   ├── layout/
 │   │   └── horizontal.go     # bottom-strip layout compositor
 │   ├── config/
-│   │   └── tuning.go         # named constants: timing, thresholds, EMA, animation
+│   │   └── tuning.go         # named constants: timing, thresholds, EMA, animation defaults
 │   ├── ui/
 │   │   └── colors.go         # type colors, category colors, agent glyphs, DimText/ColorText helpers
 │   └── demo/
@@ -175,9 +181,10 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
 - **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
 - **Theme system** (`internal/theme/`): All colors flow through a `*theme.Theme` struct passed to every widget constructor. `Theme.Init()` pre-computes HCL blend LUTs (101 entries each for severity gradients). `Theme.SeverityColor()` replaces the old package-level `severityColor()`. Built-in themes registered in `theme.Registry`; resolved via `--theme` flag > `COOLANT_THEME` env > `"classic"` default. To add a theme: copy `classic.go`, change colors, register in `registry.go`.
-- **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). `--kitt-highscore` flag (or `COOLANT_KITT_HIGHSCORE=1`) repurposes the scanner to display completed agent count instead — stale dots dim-breathe, completed dots earn the KITT scan. Animation patterns are universal across themes; only accent color is themed.
+- **Animation system** (`internal/anim/`): All motion parameters flow through an `*anim.Profile` struct passed alongside `*theme.Theme` to widget constructors. Theme controls color, profile controls motion — orthogonal axes. `Default()` reads from `config/tuning.go` (single source of truth). Built-in profiles: `default`, `calm` (slower/softer), `intense` (faster/sharper). Resolved via `--animation` flag > `COOLANT_ANIMATION` env > `"default"`. To add a profile: copy `default.go`, change values, register in `registry.go`.
+- **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). `--kitt-highscore` flag (or `COOLANT_KITT_HIGHSCORE=1`) repurposes the scanner to display completed agent count instead — stale dots dim-breathe, completed dots earn the KITT scan. Animation patterns are universal across themes and profiles; theme controls accent color, profile controls speed/brightness/spring physics.
 - `GaugeDotColor.ANSIOverride` lets Classic use 16-color ANSI escapes while other themes use truecolor. If set, `Init()` uses the override; otherwise derives truecolor from `Color`.
-- Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. All magic numbers (timing, thresholds, EMA alphas, animation params) live in `internal/config/tuning.go` as named constants.
+- Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. Timing, thresholds, and EMA alphas live in `internal/config/tuning.go`; animation defaults also live there but are consumed via `anim.Default()` rather than directly.
 - Braille rendering done natively in Go (no awk, no subshells).
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
 

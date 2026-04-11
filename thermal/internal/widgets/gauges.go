@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/harmonica"
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
@@ -42,12 +43,14 @@ type Gauges struct {
 	seeded        bool           // true after first snapshot (skip spring on init)
 	sparkBufs     [3]*SparkBufs  // reusable interpolation buffers, one per gauge
 	theme         *theme.Theme
+	anim          *anim.Profile
 }
 
-func NewGauges(th *theme.Theme) *Gauges {
+func NewGauges(th *theme.Theme, ap *anim.Profile) *Gauges {
 	return &Gauges{
-		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), config.SpringFreq, config.SpringDamping),
+		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), ap.SpringFreq, ap.SpringDamping),
 		theme:  th,
+		anim:   ap,
 	}
 }
 
@@ -110,7 +113,7 @@ func (g *Gauges) AnimTick() {
 
 	// Peak smoothing: snap up on spikes, decay fast.
 	// Adjusted decay for 30fps (~1.3s half-life: 0.982^30 ≈ 0.58/s).
-	decayRate := config.PeakDecayRate
+	decayRate := g.anim.PeakDecayRate
 	visibleSamples := g.width
 	if visibleSamples < 1 {
 		visibleSamples = 120
