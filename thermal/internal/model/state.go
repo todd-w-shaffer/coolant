@@ -160,7 +160,7 @@ func (s *AppState) updateThreatAndAlerts(snap *collector.Snapshot) {
 		}
 	}
 
-	if s.Headroom.HeadroomBytes < config.HeadroomCritBytes && s.Headroom.Warning != "" {
+	if s.Headroom.HeadroomBytes < config.C.Headroom.CritBytes && s.Headroom.Warning != "" {
 		lastMsg := ""
 		if s.Alerts.Len() > 0 {
 			lastMsg = s.Alerts.Peek().Message
@@ -214,7 +214,7 @@ func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
 		s.NetRate = s.SpawnRate - s.DeathRate
 
 		// Alert on spawn bursts
-		if spawns >= config.SpawnBurstThreshold {
+		if spawns >= config.C.Spawn.BurstThreshold {
 			s.addAlert(AlertEntry{
 				Time:    snap.Timestamp,
 				Message: "spawn burst -- " + strconv.Itoa(spawns) + " new procs",

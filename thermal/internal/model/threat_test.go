@@ -20,9 +20,9 @@ func TestClassifyHighMemoryAlone(t *testing.T) {
 		wantMin   ThreatLevel
 		spawnRate float64
 	}{
-		{"mem at warm pct alone", config.MemWarmPct + 1, ThreatWarm, 0},
-		{"mem at hot pct alone → warm (score=2)", config.MemHotPct + 1, ThreatWarm, 0},
-		{"mem at crit pct alone → hot (score=3)", config.MemCritPct + 1, ThreatHot, 0},
+		{"mem at warm pct alone", float64(config.C.Memory.WarmPct) + 1, ThreatWarm, 0},
+		{"mem at hot pct alone → warm (score=2)", float64(config.C.Memory.HotPct) + 1, ThreatWarm, 0},
+		{"mem at crit pct alone → hot (score=3)", float64(config.C.Memory.CritPct) + 1, ThreatHot, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,8 +41,8 @@ func TestClassifyHighCPUAlone(t *testing.T) {
 		cpu     float64
 		wantMin ThreatLevel
 	}{
-		{"warm CPU", config.CPUWarmPct + 1, ThreatWarm},
-		{"crit CPU", config.CPUCritPct + 1, ThreatWarm}, // score=2, still warm
+		{"warm CPU", float64(config.C.CPU.WarmPct) + 1, ThreatWarm},
+		{"crit CPU", float64(config.C.CPU.CritPct) + 1, ThreatWarm}, // score=2, still warm
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,9 +61,9 @@ func TestClassifyHighSwapAlone(t *testing.T) {
 		swap    int64
 		wantMin ThreatLevel
 	}{
-		{"warm swap", int64(config.SwapWarmBytes) + 1, ThreatWarm},
-		{"hot swap", int64(config.SwapHotBytes) + 1, ThreatWarm},  // score=2
-		{"crit swap", int64(config.SwapCritBytes) + 1, ThreatHot}, // score=3
+		{"warm swap", config.C.Swap.WarmBytes + 1, ThreatWarm},
+		{"hot swap", config.C.Swap.HotBytes + 1, ThreatWarm},  // score=2
+		{"crit swap", config.C.Swap.CritBytes + 1, ThreatHot}, // score=3
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,11 +78,11 @@ func TestClassifyHighSwapAlone(t *testing.T) {
 
 func TestClassifyMultipleModerateSignalsCombine(t *testing.T) {
 	// Warm mem (score 1) + warm CPU (score 1) + warm swap (score 1) = score 3 → Hot
-	memUsed := pctToBytes(config.MemWarmPct + 1)
+	memUsed := pctToBytes(float64(config.C.Memory.WarmPct) + 1)
 	snap := testSnap(t,
-		withCPU(config.CPUWarmPct+1),
+		withCPU(float64(config.C.CPU.WarmPct)+1),
 		withMem(memUsed, testMemTotal),
-		withSwap(int64(config.SwapWarmBytes)+1),
+		withSwap(config.C.Swap.WarmBytes+1),
 	)
 	got := Classify(&snap, 0)
 	if got != ThreatHot {
@@ -92,7 +92,7 @@ func TestClassifyMultipleModerateSignalsCombine(t *testing.T) {
 
 func TestClassifyBoundaryAtWarm(t *testing.T) {
 	// Exactly at MemWarmPct should NOT trigger (uses >)
-	memUsed := pctToBytes(config.MemWarmPct)
+	memUsed := pctToBytes(float64(config.C.Memory.WarmPct))
 	snap := testSnap(t, withMem(memUsed, testMemTotal))
 	got := Classify(&snap, 0)
 	if got != ThreatCool {
@@ -102,11 +102,11 @@ func TestClassifyBoundaryAtWarm(t *testing.T) {
 
 func TestClassifySpawnRateAddsToScore(t *testing.T) {
 	// warm mem + warm CPU (score 2) + spawn = 3 → hot
-	memUsed := pctToBytes(config.MemWarmPct + 1)
-	snap := testSnap(t, withCPU(config.CPUWarmPct+1), withMem(memUsed, testMemTotal))
+	memUsed := pctToBytes(float64(config.C.Memory.WarmPct) + 1)
+	snap := testSnap(t, withCPU(float64(config.C.CPU.WarmPct)+1), withMem(memUsed, testMemTotal))
 
 	withoutSpawn := Classify(&snap, 0)
-	withSpawnRate := Classify(&snap, config.SpawnRateEscalation+1)
+	withSpawnRate := Classify(&snap, config.C.Spawn.RateEscalation+1)
 
 	if withSpawnRate <= withoutSpawn {
 		t.Errorf("spawn rate should escalate: without=%v, with=%v", withoutSpawn, withSpawnRate)
@@ -115,8 +115,8 @@ func TestClassifySpawnRateAddsToScore(t *testing.T) {
 
 func TestClassifyMeltdown(t *testing.T) {
 	// crit mem (3) + crit CPU (2) = 5 → meltdown
-	memUsed := pctToBytes(config.MemCritPct + 1)
-	snap := testSnap(t, withCPU(config.CPUCritPct+1), withMem(memUsed, testMemTotal))
+	memUsed := pctToBytes(float64(config.C.Memory.CritPct) + 1)
+	snap := testSnap(t, withCPU(float64(config.C.CPU.CritPct)+1), withMem(memUsed, testMemTotal))
 	got := Classify(&snap, 0)
 	if got != ThreatMeltdown {
 		t.Errorf("crit mem + crit CPU: got %v, want ThreatMeltdown", got)

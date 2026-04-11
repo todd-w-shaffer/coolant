@@ -129,19 +129,19 @@ func TestSessionPhaseBuildTrumpLanguage(t *testing.T) {
 }
 
 func TestSessionPhaseShellExplosionReturnsRed(t *testing.T) {
-	codes := make([]string, config.ShellExplosionThreshold)
+	codes := make([]string, config.C.Categories.ShellExplosion)
 	for i := range codes {
 		codes[i] = "S"
 	}
 	g := makeGroup(codes...)
 	got := sessionPhaseColor(g, testTheme)
 	if got != testTheme.SessionPhase.Explosion {
-		t.Errorf("shell explosion (%d shells) should return testTheme.SessionPhase.Explosion", config.ShellExplosionThreshold)
+		t.Errorf("shell explosion (%d shells) should return testTheme.SessionPhase.Explosion", config.C.Categories.ShellExplosion)
 	}
 }
 
 func TestSessionPhaseShellExplosionTrumpsAll(t *testing.T) {
-	codes := make([]string, config.ShellExplosionThreshold)
+	codes := make([]string, config.C.Categories.ShellExplosion)
 	for i := range codes {
 		codes[i] = "S"
 	}

@@ -7,10 +7,7 @@ import (
 
 // thermalLevelFor returns 0-4 based on count vs category thresholds.
 func thermalLevelFor(catName string, count int) int {
-	thresh, ok := config.CatThresholds[catName]
-	if !ok {
-		thresh = config.CatThresholdDefault
-	}
+	thresh := config.C.CatThreshold(catName)
 	warm := thresh[0]
 	hot := thresh[1]
 
