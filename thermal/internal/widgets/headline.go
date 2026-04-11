@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
@@ -22,9 +23,9 @@ type Headline struct {
 	theme  *theme.Theme
 }
 
-func NewHeadline(th *theme.Theme) *Headline {
+func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
 	return &Headline{
-		agents: NewBreatheDots(th),
+		agents: NewBreatheDots(th, ap),
 		theme:  th,
 	}
 }

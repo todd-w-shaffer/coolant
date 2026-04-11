@@ -6,6 +6,7 @@ import (
 	"image/color"
 	"strings"
 
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
@@ -33,11 +34,11 @@ type Horizontal struct {
 	theme     *theme.Theme
 }
 
-func NewHorizontal(th *theme.Theme) *Horizontal {
+func NewHorizontal(th *theme.Theme, ap *anim.Profile) *Horizontal {
 	return &Horizontal{
 		state:    model.NewAppState(),
-		headline: widgets.NewHeadline(th),
-		gauges:   widgets.NewGauges(th),
+		headline: widgets.NewHeadline(th, ap),
+		gauges:   widgets.NewGauges(th, ap),
 		rates:    widgets.NewRates(th),
 		alerts:   widgets.NewAlerts(th),
 		theme:    th,

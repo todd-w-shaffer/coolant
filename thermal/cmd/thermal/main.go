@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/demo"
@@ -33,9 +34,9 @@ type model struct {
 	eventChan chan collector.GateEvent
 }
 
-func newModel(demoMode bool, th *theme.Theme) model {
+func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 	return model{
-		layout:    layout.NewHorizontal(th),
+		layout:    layout.NewHorizontal(th, ap),
 		done:      make(chan struct{}),
 		demoMode:  demoMode,
 		snapChan:  make(chan collector.Snapshot, 16),
@@ -156,12 +157,21 @@ func (m model) View() tea.View {
 func main() {
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
 	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frappe)")
+	animName := flag.String("animation", "", "Animation profile (default, calm, intense)")
 	listThemes := flag.Bool("list-themes", false, "List available themes and exit")
+	listAnims := flag.Bool("list-animations", false, "List available animation profiles and exit")
 	kittHighScore := flag.Bool("kitt-highscore", false, "KITT scans completed agents instead of ghosts")
 	flag.Parse()
 
 	if *listThemes {
 		for _, name := range theme.Names() {
+			fmt.Println(name)
+		}
+		os.Exit(0)
+	}
+
+	if *listAnims {
+		for _, name := range anim.Names() {
 			fmt.Println(name)
 		}
 		os.Exit(0)
@@ -187,7 +197,21 @@ func main() {
 		highScore = true
 	}
 
-	m := newModel(*demoMode, th)
+	// Resolve animation: flag > env > default
+	animN := *animName
+	if animN == "" {
+		animN = os.Getenv("COOLANT_ANIMATION")
+	}
+	if animN == "" {
+		animN = "default"
+	}
+	ap, err := anim.Get(animN)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	m := newModel(*demoMode, th, ap)
 	if highScore {
 		m.layout.SetHighScoreMode(true)
 	}

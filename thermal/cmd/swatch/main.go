@@ -19,6 +19,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
 )
@@ -27,6 +28,7 @@ const swatchSparkWidth = 40 // braille chars (80 samples at 2 per char)
 
 func main() {
 	themeName := flag.String("theme", "classic", "theme name")
+	animName := flag.String("animation", "default", "animation profile name")
 	all := flag.Bool("all", false, "render all themes stacked")
 	flag.Parse()
 
@@ -42,6 +44,14 @@ func main() {
 			}
 			fmt.Print(renderTheme(th))
 		}
+		fmt.Println()
+		for i, name := range anim.Names() {
+			if i > 0 {
+				fmt.Println()
+			}
+			ap, _ := anim.Get(name)
+			fmt.Print(renderAnimProfile(ap))
+		}
 		return
 	}
 
@@ -51,17 +61,30 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Print(renderTheme(th))
+
+	ap, err := anim.Get(*animName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println()
+	fmt.Print(renderAnimProfile(ap))
+}
+
+// swatchHeader renders a padded ═══ header line for a swatch section.
+func swatchHeader(label string) string {
+	header := fmt.Sprintf("═══ %s ", label)
+	headerRunes := []rune(header)
+	if len(headerRunes) < 60 {
+		header += strings.Repeat("═", 60-len(headerRunes))
+	}
+	return header + "\n"
 }
 
 // renderTheme renders the full swatch for a single theme.
 func renderTheme(th *theme.Theme) string {
 	var sb strings.Builder
-	header := fmt.Sprintf("═══ %s ", th.Name)
-	headerRunes := []rune(header)
-	if len(headerRunes) < 60 {
-		header += strings.Repeat("═", 60-len(headerRunes))
-	}
-	sb.WriteString(header + "\n")
+	sb.WriteString(swatchHeader(th.Name))
 
 	sections := []struct {
 		label string
@@ -259,4 +282,42 @@ func renderChrome(th *theme.Theme) string {
 // colorText renders text with lipgloss foreground color.
 func colorText(c color.Color, text string) string {
 	return lipgloss.NewStyle().Foreground(c).Render(text)
+}
+
+// renderAnimProfile renders a summary of an animation profile's key constants.
+func renderAnimProfile(ap *anim.Profile) string {
+	var sb strings.Builder
+	sb.WriteString(swatchHeader("animation: " + ap.Name))
+
+	sections := []struct {
+		label string
+		lines []string
+	}{
+		{"Tidal Wave", []string{
+			fmt.Sprintf("  phase step: %.4f  wave mix: %.2f  breath mix: %.2f", ap.TidalPhaseStep, ap.TidalWaveMix, ap.TidalBreathMix),
+			fmt.Sprintf("  bright floor: %.2f  phase spread: %.1f rad", ap.TidalBrightFloor, ap.TidalPhaseSpread),
+			fmt.Sprintf("  glyph thresholds: filled > %.2f  mid > %.2f", ap.GlyphFilledThresh, ap.GlyphMidThresh),
+		}},
+		{"KITT Scanner", []string{
+			fmt.Sprintf("  sweep rate: %.4f  ambient: %.2f  peak: %.2f", ap.KITTSweepRate, ap.KITTAmbient, ap.KITTPeak),
+			fmt.Sprintf("  sigma²: %.2f  single bright: %.2f", ap.KITTSigmaSq, ap.KITTSingleBright),
+		}},
+		{"Breathing", []string{
+			fmt.Sprintf("  phase step: %.4f  stale rate: %.2f  stale dim: %.2f", ap.BreathePhaseStep, ap.BreatheStaleRate, ap.BreatheStaleDim),
+		}},
+		{"Spring Physics", []string{
+			fmt.Sprintf("  freq: %.1f  damping: %.1f  peak decay: %.4f", ap.SpringFreq, ap.SpringDamping, ap.PeakDecayRate),
+		}},
+	}
+
+	for _, sec := range sections {
+		sb.WriteString(dimLabel(sec.label))
+		sb.WriteString("\n")
+		for _, line := range sec.lines {
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+	}
+
+	return sb.String()
 }

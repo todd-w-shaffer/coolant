@@ -69,6 +69,7 @@ const (
 	TidalWaveMix      = 0.85  // tidal wave weight in brightness blend
 	TidalBreathMix    = 0.15  // individual breath weight in brightness blend
 	TidalBrightFloor  = 0.5   // minimum brightness for active dots
+	TidalPhaseSpread  = 1.5   // radians between adjacent dots (wider = clearer wave direction)
 	GlyphFilledThresh = 0.66  // wave value above which glyph shows ⬢ (filled)
 	GlyphMidThresh    = 0.33  // wave value above which glyph shows ⏣ (benzene)
 )

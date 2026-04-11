@@ -3,14 +3,15 @@ package widgets
 import (
 	"testing"
 
-	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
 var testTheme = theme.Classic()
+var testAnim = anim.Default()
 
 func TestBreatheDotSetTargetSpawn(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(3)
 	if b.Len() != 3 {
 		t.Errorf("Len() = %d, want 3", b.Len())
@@ -27,7 +28,7 @@ func TestBreatheDotSetTargetSpawn(t *testing.T) {
 }
 
 func TestBreatheDotSetTargetKill(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(3)
 	b.SetTarget(1)
 	// 2 should be marked dying, 1 alive
@@ -48,7 +49,7 @@ func TestBreatheDotSetTargetKill(t *testing.T) {
 }
 
 func TestBreatheDotSetTargetKillsFromEnd(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(3)
 	b.SetTarget(1)
 	// First dot should be alive, last two dying
@@ -61,7 +62,7 @@ func TestBreatheDotSetTargetKillsFromEnd(t *testing.T) {
 }
 
 func TestBreatheDotPhaseMonotonic(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(3)
 	for i := 1; i < len(b.dots); i++ {
 		if b.dots[i].phase <= b.dots[i-1].phase {
@@ -71,7 +72,7 @@ func TestBreatheDotPhaseMonotonic(t *testing.T) {
 }
 
 func TestBreatheDotAnimTickAdvancesAlive(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(1)
 	// Run enough ticks for the spring to move from 0 toward 1
 	for i := 0; i < 30; i++ {
@@ -83,7 +84,7 @@ func TestBreatheDotAnimTickAdvancesAlive(t *testing.T) {
 }
 
 func TestBreatheDotAnimTickRemovesFaded(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(1)
 	// Let it fade in
 	for i := 0; i < 60; i++ {
@@ -101,17 +102,17 @@ func TestBreatheDotAnimTickRemovesFaded(t *testing.T) {
 }
 
 func TestBreatheDotAnimTickAdvancesPhase(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(1)
 	initialPhase := b.dots[0].phase
 	b.AnimTick()
-	if b.dots[0].phase != initialPhase+config.BreathePhaseStep {
-		t.Errorf("phase after 1 tick = %f, want %f", b.dots[0].phase, initialPhase+config.BreathePhaseStep)
+	if b.dots[0].phase != initialPhase+testAnim.BreathePhaseStep {
+		t.Errorf("phase after 1 tick = %f, want %f", b.dots[0].phase, initialPhase+testAnim.BreathePhaseStep)
 	}
 }
 
 func TestBreatheDotAnimTickFreezesPhaseDying(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(1)
 	b.AnimTick() // advance phase once
 	phase := b.dots[0].phase
@@ -123,7 +124,7 @@ func TestBreatheDotAnimTickFreezesPhaseDying(t *testing.T) {
 }
 
 func TestBreatheDotStaleDimsBrightness(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(2)
 	// Advance so dots are fully visible
 	for i := 0; i < 60; i++ {
@@ -153,7 +154,7 @@ func TestBreatheDotStaleDimsBrightness(t *testing.T) {
 }
 
 func TestBreatheDotStalePhaseSlower(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(2)
 	b.SetStaleCount(1)
 
@@ -171,7 +172,7 @@ func TestBreatheDotStalePhaseSlower(t *testing.T) {
 }
 
 func TestBreatheDotRenderEmpty(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	str, w := b.Render("⬡", "⏣", "⬢", nil, 0)
 	if str != "" || w != 0 {
 		t.Errorf("empty Render() = (%q, %d), want (\"\", 0)", str, w)
@@ -179,7 +180,7 @@ func TestBreatheDotRenderEmpty(t *testing.T) {
 }
 
 func TestBreatheDotRenderVisWidth(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(3)
 	// Advance so dots are visible
 	for i := 0; i < 30; i++ {
@@ -193,7 +194,7 @@ func TestBreatheDotRenderVisWidth(t *testing.T) {
 }
 
 func TestBreatheDotHighScoreRendersCompletedDots(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
 	b.SetCompletedCount(3)
 	// No active dots — just 3 completed KITT dots
@@ -208,7 +209,7 @@ func TestBreatheDotHighScoreRendersCompletedDots(t *testing.T) {
 }
 
 func TestBreatheDotHighScoreWithActiveDots(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
 	b.SetTarget(2)         // 2 active (tidal wave)
 	b.SetCompletedCount(3) // 3 completed (KITT)
@@ -226,7 +227,7 @@ func TestBreatheDotHighScoreStaleLosesKITT(t *testing.T) {
 	// In highscore mode, stale dots should NOT get KITT scanner —
 	// they should dim-breathe like regular dots, because KITT is reserved
 	// for completed agents.
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
 	b.SetTarget(2)
 	b.SetStaleCount(1)
@@ -253,7 +254,7 @@ func TestBreatheDotHighScoreStaleLosesKITT(t *testing.T) {
 }
 
 func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
 
 	b.SetCompletedCount(1)
@@ -274,7 +275,7 @@ func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
 }
 
 func TestBreatheDotRenderMaxDots(t *testing.T) {
-	b := NewBreatheDots(testTheme)
+	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(10)
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
