@@ -142,16 +142,7 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 	if b.highScore {
 		kittCount = b.completedCount
 	}
-	var sweepPos float64
-	if kittCount > 1 {
-		n := float64(kittCount - 1)
-		raw := math.Mod(b.staleSweep*n, 2*n)
-		if raw > n {
-			sweepPos = 2*n - raw
-		} else {
-			sweepPos = raw
-		}
-	}
+	sweepPos := triangleWave(b.staleSweep, kittCount)
 
 	for i, d := range dots {
 		var brightness float64
@@ -291,6 +282,24 @@ func (b *BreatheDots) SetCompletedCount(n int) {
 		return
 	}
 	b.completedCount = n
+}
+
+// triangleWave returns a position that bounces linearly between 0 and count-1.
+// pos is a continuous input (e.g. staleSweep * n); count is the number of dots.
+// Returns 0 when count <= 1.
+func triangleWave(pos float64, count int) float64 {
+	if count <= 1 {
+		return 0
+	}
+	n := float64(count - 1)
+	raw := math.Mod(pos*n, 2*n)
+	if raw < 0 {
+		raw += 2 * n
+	}
+	if raw > n {
+		return 2*n - raw
+	}
+	return raw
 }
 
 // kittGaussian returns the KITT scanner brightness at distance from sweep center.

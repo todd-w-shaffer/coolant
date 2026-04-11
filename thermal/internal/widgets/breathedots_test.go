@@ -274,6 +274,56 @@ func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
 	}
 }
 
+func TestTriangleWave(t *testing.T) {
+	tests := []struct {
+		name      string
+		pos       float64
+		count     int
+		wantMin   float64
+		wantMax   float64
+		wantExact *float64
+	}{
+		{"zero position", 0, 5, 0, 0, floatPtr(0)},
+		{"mid forward", 0.5, 5, 0, 4, nil},
+		{"peak at 1.0", 1.0, 5, 0, 4, floatPtr(4)},            // pos=1.0 → raw=4=n → returns n (peak)
+		{"single dot always zero", 0.5, 1, 0, 0, floatPtr(0)}, // n-1=0, no sweep
+		{"two dots", 0.25, 2, 0, 1, nil},
+		{"two dots mid", 0.5, 2, 0, 1, floatPtr(0.5)},     // n=1, raw=0.5, forward pass
+		{"monotonic forward", 0.1, 10, 0, 9, nil},         // still in forward pass
+		{"bounce back", 1.5, 5, 0, 4, floatPtr(2)},        // pos=1.5 → raw=mod(6,8)=6>4 → 2*4-6=2
+		{"full period return", 2.0, 5, 0, 4, floatPtr(0)}, // pos=2.0 → raw=mod(8,8)=0 → returns 0
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := triangleWave(tt.pos, tt.count)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("triangleWave(%v, %d) = %v, want in [%v, %v]",
+					tt.pos, tt.count, got, tt.wantMin, tt.wantMax)
+			}
+			if tt.wantExact != nil && got != *tt.wantExact {
+				t.Errorf("triangleWave(%v, %d) = %v, want exactly %v",
+					tt.pos, tt.count, got, *tt.wantExact)
+			}
+		})
+	}
+}
+
+func TestTriangleWaveRangeInvariant(t *testing.T) {
+	count := 6
+	n := float64(count - 1)
+	for i := 0; i <= 20; i++ {
+		pos := float64(i) * 0.1
+		got := triangleWave(pos, count)
+		if got < 0 || got > n {
+			t.Errorf("triangleWave(%v, %d) = %v, out of range [0, %v]",
+				pos, count, got, n)
+		}
+	}
+}
+
+func floatPtr(v float64) *float64 { return &v }
+
 func TestBreatheDotRenderMaxDots(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(10)
