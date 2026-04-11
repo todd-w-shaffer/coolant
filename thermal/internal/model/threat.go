@@ -42,43 +42,43 @@ func Classify(snap *collector.Snapshot, spawnRate float64) ThreatLevel {
 
 	// Memory pressure
 	switch {
-	case mem > config.MemCritPct:
+	case mem > float64(config.C.Memory.CritPct):
 		score += 3
-	case mem > config.MemHotPct:
+	case mem > float64(config.C.Memory.HotPct):
 		score += 2
-	case mem > config.MemWarmPct:
+	case mem > float64(config.C.Memory.WarmPct):
 		score += 1
 	}
 
 	// CPU pressure
 	switch {
-	case cpu > config.CPUCritPct:
+	case cpu > float64(config.C.CPU.CritPct):
 		score += 2
-	case cpu > config.CPUWarmPct:
+	case cpu > float64(config.C.CPU.WarmPct):
 		score += 1
 	}
 
 	// Swap — macOS uses some swap normally, only worry when it's significant
 	switch {
-	case swapUsed > config.SwapCritBytes:
+	case swapUsed > config.C.Swap.CritBytes:
 		score += 3
-	case swapUsed > config.SwapHotBytes:
+	case swapUsed > config.C.Swap.HotBytes:
 		score += 2
-	case swapUsed > config.SwapWarmBytes:
+	case swapUsed > config.C.Swap.WarmBytes:
 		score += 1
 	}
 
 	// Spawn rate
-	if spawnRate > config.SpawnRateEscalation {
+	if spawnRate > config.C.Spawn.RateEscalation {
 		score += 1
 	}
 
 	switch {
-	case score >= config.ScoreMeltdown:
+	case score >= config.C.Score.Meltdown:
 		return ThreatMeltdown
-	case score >= config.ScoreHot:
+	case score >= config.C.Score.Hot:
 		return ThreatHot
-	case score >= config.ScoreWarm:
+	case score >= config.C.Score.Warm:
 		return ThreatWarm
 	default:
 		return ThreatCool

@@ -100,11 +100,11 @@ type SparkPair struct {
 
 // Package-level gauge sparkline thresholds — allocated once, reused every frame.
 var (
-	CPUSparkThresh    = theme.SparkThresholds{Warn: config.CPUSparkWarn, Crit: config.CPUSparkCrit}
-	MemSparkThresh    = theme.SparkThresholds{Warn: config.MemSparkWarn, Crit: config.MemSparkCrit}
-	DecompSparkThresh = theme.SparkThresholds{Warn: config.DecompSparkWarn, Crit: config.DecompSparkCrit}
-	SwapSparkThresh   = theme.SparkThresholds{Warn: config.SwapSparkWarn, Crit: config.SwapSparkCrit}
-	GPUSparkThresh    = theme.SparkThresholds{Warn: config.GPUSparkWarn, Crit: config.GPUSparkCrit}
+	CPUSparkThresh    = theme.SparkThresholds{Warn: config.C.Sparklines.CPUWarn, Crit: config.C.Sparklines.CPUCrit}
+	MemSparkThresh    = theme.SparkThresholds{Warn: config.C.Sparklines.MemWarn, Crit: config.C.Sparklines.MemCrit}
+	DecompSparkThresh = theme.SparkThresholds{Warn: config.C.Sparklines.DecompWarn, Crit: config.C.Sparklines.DecompCrit}
+	SwapSparkThresh   = theme.SparkThresholds{Warn: config.C.Sparklines.SwapWarnGB, Crit: config.C.Sparklines.SwapCritGB}
+	GPUSparkThresh    = theme.SparkThresholds{Warn: config.C.Sparklines.GPUWarn, Crit: config.C.Sparklines.GPUCrit}
 )
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.

@@ -73,9 +73,9 @@ func EstimateHeadroom(typeCounts map[string]int, memUsed, memTotal int64) Headro
 	switch {
 	case headroom < 0:
 		info.Warning = fmt.Sprintf("!! over-committed by ~%s", FormatBytes(-headroom))
-	case headroom < config.HeadroomCritBytes:
+	case headroom < config.C.Headroom.CritBytes:
 		info.Warning = fmt.Sprintf("!! headroom ~%s before swap", FormatBytes(headroom))
-	case headroom < config.HeadroomWarnBytes:
+	case headroom < config.C.Headroom.WarnBytes:
 		info.Warning = fmt.Sprintf("headroom ~%s", FormatBytes(headroom))
 	}
 

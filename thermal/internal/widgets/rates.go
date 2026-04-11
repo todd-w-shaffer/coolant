@@ -189,7 +189,7 @@ func sessionGroupCounts(sessions []collector.SessionTree) []sessionGroup {
 func sessionPhaseColor(g *sessionGroup, th *theme.Theme) color.Color {
 	// Shell explosion: highest phase
 	shellIdx := catIndex["shell"]
-	if g.cats[shellIdx] >= config.ShellExplosionThreshold {
+	if g.cats[shellIdx] >= config.C.Categories.ShellExplosion {
 		return th.SessionPhase.Explosion
 	}
 

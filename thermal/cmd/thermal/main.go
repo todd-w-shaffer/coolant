@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -162,6 +163,17 @@ func main() {
 	listAnims := flag.Bool("list-animations", false, "List available animation profiles and exit")
 	kittHighScore := flag.Bool("kitt-highscore", false, "KITT scans completed agents instead of ghosts")
 	flag.Parse()
+
+	// Load user config: COOLANT_CONFIG env > ~/.config/coolant/config.toml > defaults
+	cfgPath := os.Getenv("COOLANT_CONFIG")
+	if cfgPath == "" {
+		home, _ := os.UserHomeDir()
+		cfgPath = filepath.Join(home, ".config", "coolant", "config.toml")
+	}
+	if err := config.Load(cfgPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
 
 	if *listThemes {
 		for _, name := range theme.Names() {

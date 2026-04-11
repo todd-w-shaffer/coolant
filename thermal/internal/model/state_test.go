@@ -178,7 +178,7 @@ func TestAlertOnSpawnBurst(t *testing.T) {
 
 	s.Update(testSnap(t, withTime(now)))
 
-	procs := make([]collector.ProcessInfo, config.SpawnBurstThreshold)
+	procs := make([]collector.ProcessInfo, config.C.Spawn.BurstThreshold)
 	for i := range procs {
 		procs[i] = collector.ProcessInfo{PID: 200 + i, TypeCode: "N"}
 	}
