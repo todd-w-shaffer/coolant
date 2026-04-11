@@ -1,4 +1,4 @@
-// Command swatch renders a theme palette preview — print and exit, no bubbletea.
+// Command swatch renders a theme palette preview.
 // Used for iterating on palettes without booting the full dashboard.
 //
 // Usage:
@@ -6,6 +6,7 @@
 //	go run ./cmd/swatch                  # classic (default)
 //	go run ./cmd/swatch --theme iron     # specific theme
 //	go run ./cmd/swatch --all            # all themes stacked
+//	go run ./cmd/swatch --animate        # live 3s animation preview (tidal, KITT, highscore)
 package main
 
 import (
@@ -30,6 +31,7 @@ func main() {
 	themeName := flag.String("theme", "classic", "theme name")
 	animName := flag.String("animation", "default", "animation profile name")
 	all := flag.Bool("all", false, "render all themes stacked")
+	animate := flag.Bool("animate", false, "live animation preview (~3s bubbletea loop)")
 	flag.Parse()
 
 	if *all {
@@ -60,13 +62,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	fmt.Print(renderTheme(th))
 
 	ap, err := anim.Get(*animName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
+
+	if *animate {
+		if err := runAnimate(th, ap); err != nil {
+			fmt.Fprintf(os.Stderr, "animate: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	fmt.Print(renderTheme(th))
 	fmt.Println()
 	fmt.Print(renderAnimProfile(ap))
 }
