@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
@@ -255,7 +256,7 @@ func captureThermalLevels() string {
 func captureRatesLine() string {
 	th := testTheme
 	state := fixtureState()
-	r := NewRates(th)
+	r := NewRates(th, keys.Default(), nil)
 	r.SetSize(200, 1)
 	r.Update(state)
 	return r.View() + "\n"
