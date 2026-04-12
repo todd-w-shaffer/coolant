@@ -171,3 +171,14 @@ const (
 	HeadroomCritBytes int64 = 2 << 30 // 2GB
 	HeadroomWarnBytes int64 = 4 << 30 // 4GB
 )
+
+// ── Help panel ─────────────────────────────────────────────
+
+const (
+	// HelpAutoDismiss is how long full-help stays on screen before auto-collapsing.
+	HelpAutoDismiss = 5 * time.Second
+
+	// HelpShortMinWidth is the minimum strip width before the short help hint
+	// degrades from a full key·desc list to a compact "[?]" token.
+	HelpShortMinWidth = 80
+)
