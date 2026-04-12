@@ -42,6 +42,13 @@ type Theme struct {
 	// -- Overall thermal gradient (headline bar) --
 	OverallGradient [5]ThermalLevel
 
+	// Continuous-gradient LUT for the segment-LCD temperature readout.
+	// Maps temperature value 0..99 to a truecolor fg ANSI escape produced
+	// by BlendHcl between adjacent OverallGradient[i].Fg anchors.
+	overallTempLUT    [100]string
+	overallTempDimLUT [100]string         // HCL-dimmed variant for the ghost-trail frame
+	overallTempColors [100]colorful.Color // cached blend results for dynamic pulse modulation
+
 	// -- Category thermal gradient (category boxes) --
 	CategoryGradient [5]ThermalLevel
 
@@ -142,6 +149,77 @@ func (t *Theme) Init() {
 	}
 
 	t.helpStyles = buildHelpStyles(t)
+
+	// Continuous OverallGradient LUT: blend across the 5 Fg anchors so the
+	// LCD readout hue drifts smoothly across 0..99 instead of snapping to
+	// the four threat bands.
+	var anchors [5]colorful.Color
+	for i := range t.OverallGradient {
+		anchors[i] = colorfulFromColor(t.OverallGradient[i].Fg)
+	}
+	for v := 0; v < 100; v++ {
+		pos := float64(v) / 99.0 * 4.0 // 0..4 across the five anchors
+		seg := int(pos)
+		if seg >= 4 {
+			seg = 3
+		}
+		ratio := pos - float64(seg)
+		blended := anchors[seg].BlendHcl(anchors[seg+1], ratio).Clamped()
+		t.overallTempColors[v] = blended
+		t.overallTempLUT[v] = truecolorFg(blended)
+		t.overallTempDimLUT[v] = truecolorFg(dimColorful(blended, GhostOverlayRatio))
+	}
+}
+
+// GhostOverlayRatio scales the temperature color for the ghost-trail frame
+// that shows the previous value briefly after a change. Low enough to read
+// as "fading"; high enough to still be legible for a tick.
+const GhostOverlayRatio = 0.4
+
+// OverallTemperatureFg returns the precomputed truecolor fg ANSI escape for
+// a temperature value 0..99. Out-of-range values clamp.
+func (t *Theme) OverallTemperatureFg(value int) string {
+	return t.overallTempLUT[clampTemp(value)]
+}
+
+// OverallTemperatureFgDimmed returns the HCL-dimmed variant of the
+// continuous gradient entry for value, used by the ghost-trail frame.
+func (t *Theme) OverallTemperatureFgDimmed(value int) string {
+	return t.overallTempDimLUT[clampTemp(value)]
+}
+
+// OverallTemperaturePulsedFg returns a truecolor fg escape for value,
+// dimmed on the fly by `brightness` in [0,1]. brightness >= 1 returns the
+// steady-state LUT entry; otherwise HCL chroma+lightness are scaled.
+// Called per-frame while meltdown is active; the blend reuses a cached
+// colorful.Color so only the dim+format pass runs per tick.
+func (t *Theme) OverallTemperaturePulsedFg(value int, brightness float64) string {
+	v := clampTemp(value)
+	if brightness >= 1.0 {
+		return t.overallTempLUT[v]
+	}
+	return truecolorFg(dimColorful(t.overallTempColors[v], brightness))
+}
+
+func clampTemp(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 99 {
+		return 99
+	}
+	return v
+}
+
+// colorfulFromColor converts an image/color.Color (lipgloss palette index or
+// truecolor) to colorful.Color in [0,1] component space.
+func colorfulFromColor(c color.Color) colorful.Color {
+	r, g, b, _ := c.RGBA()
+	return colorful.Color{
+		R: float64(r) / 65535.0,
+		G: float64(g) / 65535.0,
+		B: float64(b) / 65535.0,
+	}
 }
 
 // SeverityColor returns a truecolor ANSI escape for a value relative to

@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
@@ -67,6 +68,35 @@ func TestHeadline_TwoRowPreservesTopContent(t *testing.T) {
 		if !strings.Contains(top, want) {
 			t.Errorf("top row missing category label %q:\n%s", want, top)
 		}
+	}
+}
+
+// TestHeadline_MeltdownPulseDrivesModulation — at meltdown, successive
+// AnimTicks must change the rendered output. This proves the pulse phase
+// is owned at Headline (single oscillator) and actually reaches the
+// segment readout's fg color.
+func TestHeadline_MeltdownPulseDrivesModulation(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+
+	state := fixtureState()
+	state.ThreatLevel = model.ThreatMeltdown
+	h.Update(state)
+
+	frames := make([]string, 0, 8)
+	for i := 0; i < 8; i++ {
+		lines := h.ViewLines()
+		frames = append(frames, lines[0])
+		h.AnimTick()
+	}
+	distinct := map[string]bool{}
+	for _, f := range frames {
+		distinct[f] = true
+	}
+	if len(distinct) < 2 {
+		t.Errorf("meltdown pulse produced %d distinct top frames across 8 ticks, want >=2", len(distinct))
 	}
 }
 

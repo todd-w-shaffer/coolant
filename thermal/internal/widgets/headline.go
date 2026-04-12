@@ -9,10 +9,15 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
+
+// meltdownPhaseStep advances the meltdown pulse phase per AnimTick for a
+// 1 Hz oscillation at the project's AnimFPS cadence.
+var meltdownPhaseStep = 2 * math.Pi / float64(config.AnimFPS)
 
 // Headline renders the unified thermal bar. It is a 2-row strip when online
 // (top row: quip + LCD readout + agent icons + session diamonds + category
@@ -24,6 +29,12 @@ type Headline struct {
 	agents *BreatheDots
 	temp   *SegmentReadout
 	theme  *theme.Theme
+
+	// pulsePhase is the single meltdown oscillator; the segment readout
+	// and any future bar-level throb consume this same phase so the whole
+	// headline throbs together.
+	pulsePhase float64
+	meltdown   bool
 }
 
 func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
@@ -41,11 +52,13 @@ func (h *Headline) SetSize(w, height int) {
 func (h *Headline) Update(state *model.AppState) {
 	h.state = state
 	if state == nil {
+		h.meltdown = false
 		return
 	}
 	h.agents.SetTarget(state.AgentCount())
 	h.agents.SetStaleCount(state.StaleAgentCount())
 	h.agents.SetCompletedCount(state.CompletedAgentCount())
+	h.meltdown = state.Online && state.ThreatLevel == model.ThreatMeltdown
 }
 
 // SetHighScoreMode toggles KITT-as-highscore on the agent dot display.
@@ -53,9 +66,17 @@ func (h *Headline) SetHighScoreMode(on bool) {
 	h.agents.SetHighScoreMode(on)
 }
 
-// AnimTick advances agent icon springs and breathing phases.
+// AnimTick advances agent icon springs, the readout's ghost/flash
+// countdowns, and (during meltdown) the single bar-wide pulse phase.
 func (h *Headline) AnimTick() {
 	h.agents.AnimTick()
+	h.temp.AnimTick()
+	if h.meltdown {
+		h.pulsePhase += meltdownPhaseStep
+		if h.pulsePhase > 2*math.Pi {
+			h.pulsePhase -= 2 * math.Pi
+		}
+	}
 }
 
 // fixedCellWidth is the compact width for always-visible category boxes.
@@ -171,7 +192,11 @@ func (h *Headline) ViewLines() []string {
 	tempTop, tempBot, tempVisWidth := "", "", 0
 	if twoRow {
 		h.temp.Update(model.OverallTemperature(h.state), level)
-		tempTop, tempBot, tempVisWidth = h.temp.Render(iconBg)
+		pulseScale := 1.0
+		if h.meltdown {
+			pulseScale = 0.6 + 0.4*(math.Sin(h.pulsePhase)+1)/2
+		}
+		tempTop, tempBot, tempVisWidth = h.temp.RenderWithPulse(iconBg, pulseScale)
 	}
 
 	topCell, botCell := h.buildOverallCell(quip, fg, iconBg,
