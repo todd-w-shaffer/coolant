@@ -326,6 +326,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "palette-classic-by-name" },
           "unit": "currencyUSD",
           "decimals": 2,
           "custom": {
