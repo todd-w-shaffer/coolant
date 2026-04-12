@@ -22,6 +22,7 @@ import (
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
 )
 
@@ -212,7 +213,7 @@ func renderSessionDiamonds(th *theme.Theme) string {
 	}
 	var sb strings.Builder
 	for i, p := range phases {
-		sb.WriteString(colorText(p.color, "⌬ "+p.name))
+		sb.WriteString(colorText(p.color, ui.SessionDiamondGlyph+" "+p.name))
 		if i < len(phases)-1 {
 			sb.WriteString("  ")
 		}

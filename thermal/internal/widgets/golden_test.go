@@ -256,7 +256,7 @@ func captureThermalLevels() string {
 func captureRatesLine() string {
 	th := testTheme
 	state := fixtureState()
-	r := NewRates(th, keys.Default(), nil)
+	r := NewRates(th, keys.Default())
 	r.SetSize(200, 1)
 	r.Update(state)
 	return r.View() + "\n"

@@ -174,11 +174,6 @@ const (
 
 // ── Help panel ─────────────────────────────────────────────
 
-const (
-	// HelpAutoDismiss is how long full-help stays on screen before auto-collapsing.
-	HelpAutoDismiss = 5 * time.Second
-
-	// HelpShortMinWidth is the minimum strip width before the short help hint
-	// degrades from a full key·desc list to a compact "[?]" token.
-	HelpShortMinWidth = 80
-)
+// HelpShortMinWidth is the minimum strip width before the short help hint
+// degrades from a full key·desc list to a compact "[?]" token.
+const HelpShortMinWidth = 80

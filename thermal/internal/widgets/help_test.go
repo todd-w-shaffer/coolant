@@ -44,28 +44,3 @@ func TestHelpShortDegradesBelowMinWidth(t *testing.T) {
 		t.Errorf("Short at width=40 should NOT include full descriptions, got %q", out)
 	}
 }
-
-func TestRatesViewFullModeReturnsHelpOnly(t *testing.T) {
-	th := mustTheme(t, "classic")
-	state := fixtureState()
-	r := NewRates(th, keys.Default(), func() int8 { return rateHelpFull })
-	r.SetSize(200, 1)
-	r.Update(state)
-	out := r.View()
-	if !strings.Contains(out, helpDismissHint) {
-		t.Errorf("full-mode View() should contain dismiss hint, got %q", out)
-	}
-	if strings.Contains(out, "CPU:") {
-		t.Errorf("full-mode View() should NOT contain CPU stats, got %q", out)
-	}
-}
-
-func TestHelpFullIncludesAllGroups(t *testing.T) {
-	th := mustTheme(t, "classic")
-	out := newHelpAtWidth(t, th, 200).Full(keys.Default())
-	for _, want := range []string{"help", "quit", "collapse sessions", "purge stale agents", helpDismissHint} {
-		if !strings.Contains(out, want) {
-			t.Errorf("Full output missing %q\nfull output: %q", want, out)
-		}
-	}
-}

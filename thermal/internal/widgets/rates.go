@@ -14,28 +14,16 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// Mirrored (not imported) to avoid a layout↔widgets import cycle.
-const (
-	rateHelpShort int8 = 0
-	rateHelpFull  int8 = 1
-)
-
 type Rates struct {
-	width    int
-	state    *model.AppState
-	theme    *theme.Theme
-	keys     keys.KeyMap
-	helpMode func() int8
-	help     *HelpRenderer
+	width int
+	state *model.AppState
+	theme *theme.Theme
+	keys  keys.KeyMap
+	help  *HelpRenderer
 }
 
-// NewRates constructs the rates widget. A nil helpMode is treated as
-// permanently short — useful for tests.
-func NewRates(th *theme.Theme, km keys.KeyMap, helpMode func() int8) *Rates {
-	if helpMode == nil {
-		helpMode = func() int8 { return rateHelpShort }
-	}
-	return &Rates{theme: th, keys: km, helpMode: helpMode, help: NewHelpRenderer(th)}
+func NewRates(th *theme.Theme, km keys.KeyMap) *Rates {
+	return &Rates{theme: th, keys: km, help: NewHelpRenderer(th)}
 }
 
 func (r *Rates) SetSize(w, h int) {
@@ -64,11 +52,6 @@ func (r *Rates) View() string {
 		}
 		return " " + ui.ColorText(ui.CyanColor, fmt.Sprintf("OFFLINE %s", durStr)) +
 			ui.DimText("  —  no API connection, processes will wind down")
-	}
-
-	// Offline branch above must continue to suppress help.
-	if r.helpMode() == rateHelpFull {
-		return " " + r.help.Full(r.keys)
 	}
 
 	// Warm/cool/net — fixed width with sign
