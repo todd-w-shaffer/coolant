@@ -1,15 +1,9 @@
-// Package keys is the central registry for coolant's keybindings.
-//
-// All key dispatch in cmd/thermal/main.go and all help rendering in
-// internal/widgets/help.go consume the same KeyMap so labels and behavior
-// can never drift. v1 ships hard-coded defaults; the package is the seam
-// for a future TOML loader.
+// Package keys is the central registry for coolant's keybindings — shared
+// between key dispatch and help rendering so labels and behavior cannot drift.
 package keys
 
 import "charm.land/bubbles/v2/key"
 
-// KeyMap holds every binding the dashboard responds to. Order of the fields
-// is incidental; render order is fixed by ShortHelp / FullHelp below.
 type KeyMap struct {
 	Help       key.Binding
 	Quit       key.Binding
@@ -17,7 +11,6 @@ type KeyMap struct {
 	PurgeStale key.Binding
 }
 
-// Default returns the v1 hard-coded KeyMap.
 func Default() KeyMap {
 	return KeyMap{
 		Help: key.NewBinding(
@@ -39,14 +32,12 @@ func Default() KeyMap {
 	}
 }
 
-// ShortHelp satisfies bubbles/help.KeyMap. Order is load-bearing — it
-// determines on-screen left-to-right rendering and is asserted by tests.
+// ShortHelp satisfies bubbles/help.KeyMap. Order is load-bearing — tests
+// assert left-to-right rendering.
 func (k KeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Help, k.Quit, k.Collapse, k.PurgeStale}
 }
 
-// FullHelp satisfies bubbles/help.KeyMap. Two columns: navigation/quit on
-// the left, view actions on the right.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Help, k.Quit},

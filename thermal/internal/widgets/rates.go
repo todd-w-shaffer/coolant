@@ -14,36 +14,33 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// Help mode constants mirrored from the layout package — mirrored (not
-// imported) to avoid a layout↔widgets import cycle. Layout passes a closure
-// returning these int8 values into NewRates.
+// Mirrored (not imported) to avoid a layout↔widgets import cycle.
 const (
 	rateHelpShort int8 = 0
 	rateHelpFull  int8 = 1
 )
 
-// Rates renders spawn/death/net rates + system stats, all fixed-width,
-// plus a hierarchical session row showing per-session category-typed process glyphs.
 type Rates struct {
 	width    int
 	state    *model.AppState
 	theme    *theme.Theme
 	keys     keys.KeyMap
 	helpMode func() int8
+	help     *HelpRenderer
 }
 
-// NewRates constructs the rates widget. helpMode is invoked per View() call;
-// passing a closure keeps widgets free of layout-package types. A nil
-// helpMode is treated as permanently short — useful for tests.
+// NewRates constructs the rates widget. A nil helpMode is treated as
+// permanently short — useful for tests.
 func NewRates(th *theme.Theme, km keys.KeyMap, helpMode func() int8) *Rates {
 	if helpMode == nil {
 		helpMode = func() int8 { return rateHelpShort }
 	}
-	return &Rates{theme: th, keys: km, helpMode: helpMode}
+	return &Rates{theme: th, keys: km, helpMode: helpMode, help: NewHelpRenderer(th)}
 }
 
 func (r *Rates) SetSize(w, h int) {
 	r.width = w
+	r.help.SetWidth(w)
 }
 
 func (r *Rates) Update(state *model.AppState) {
@@ -69,10 +66,9 @@ func (r *Rates) View() string {
 			ui.DimText("  —  no API connection, processes will wind down")
 	}
 
-	// Full-help mode short-circuits the entire stats line. Offline-first so
-	// the OFFLINE branch above continues to suppress help, per spec.
+	// Offline branch above must continue to suppress help.
 	if r.helpMode() == rateHelpFull {
-		return " " + HelpFullView(r.theme, r.keys, r.width)
+		return " " + r.help.Full(r.keys)
 	}
 
 	// Warm/cool/net — fixed width with sign
@@ -145,10 +141,8 @@ func (r *Rates) View() string {
 		sb.WriteString(ui.DimText("⊙ Chrome"))
 	}
 
-	// Help hint — themed short form via bubbles/help, or "[?]" below
-	// HelpShortMinWidth (handled inside HelpShortView).
 	sb.WriteString("  ")
-	sb.WriteString(HelpShortView(r.theme, r.keys, r.width))
+	sb.WriteString(r.help.Short(r.keys))
 
 	return sb.String()
 }

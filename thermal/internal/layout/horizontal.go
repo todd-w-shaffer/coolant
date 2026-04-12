@@ -18,14 +18,12 @@ import (
 )
 
 // Help mode states. int8 (not bool) to leave room for future modes
-// (per-widget contextual help) without changing the public API.
+// without changing the public API.
 const (
 	HelpShort int8 = 0
 	HelpFull  int8 = 1
 )
 
-// HelpDismissMsg is delivered by the auto-dismiss tick scheduled when help
-// enters full mode. main.go forwards it to (*Horizontal).DismissHelp.
 type HelpDismissMsg struct{}
 
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).
@@ -79,14 +77,12 @@ func (h *Horizontal) SetHighScoreMode(on bool) {
 	h.headline.SetHighScoreMode(on)
 }
 
-// HelpMode returns the current help panel state (HelpShort or HelpFull).
 func (h *Horizontal) HelpMode() int8 {
 	return h.helpMode
 }
 
-// ToggleHelp flips between short and full help. When entering full mode it
-// returns a one-shot tea.Cmd that fires HelpDismissMsg after
-// config.HelpAutoDismiss; when leaving full mode it returns nil.
+// ToggleHelp flips short↔full. Entering full schedules an auto-dismiss tick;
+// leaving returns nil.
 func (h *Horizontal) ToggleHelp() tea.Cmd {
 	if h.helpMode == HelpFull {
 		h.helpMode = HelpShort
@@ -98,7 +94,6 @@ func (h *Horizontal) ToggleHelp() tea.Cmd {
 	})
 }
 
-// DismissHelp returns to short mode unconditionally. Idempotent.
 func (h *Horizontal) DismissHelp() {
 	h.helpMode = HelpShort
 }

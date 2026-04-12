@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image/color"
 
+	"charm.land/bubbles/v2/help"
 	colorful "github.com/lucasb-eyer/go-colorful"
 )
 
@@ -65,6 +66,8 @@ type Theme struct {
 	SpawnColor color.Color // warm/spawn rate text
 	DeathColor color.Color // cool/death rate text
 	NetColor   color.Color // net rate text
+
+	helpStyles help.Styles
 }
 
 // ThermalLevel pairs foreground and background for a heat level.
@@ -116,6 +119,8 @@ func (t *Theme) Init() {
 	for i, c := range t.OfflineSparkColors {
 		t.OfflineSparkANSI[i] = truecolorFg(c)
 	}
+
+	t.helpStyles = buildHelpStyles(t)
 }
 
 // SeverityColor returns a truecolor ANSI escape for a value relative to
