@@ -1,0 +1,913 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 2,
+  "links": [],
+  "panels": [
+    {
+      "id": 100,
+      "title": "Think-to-Ship Ratio",
+      "description": "(input + cacheRead tokens) consumed per line of code shipped. High = deep reasoning. Low = rote generation.",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "(sum(claude_code_token_usage_tokens_total{type=\"input\"}) + sum(claude_code_token_usage_tokens_total{type=\"cacheRead\"})) / sum(claude_code_lines_of_code_count_total{type=\"added\"})",
+          "legendFormat": "tokens/line",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "continuous-BlYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "yellow", "value": 5000 },
+              { "color": "red", "value": 20000 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 101,
+      "title": "Cost per Line",
+      "description": "List-rate dollars per line of code shipped",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_cost_usage_USD_total) / sum(claude_code_lines_of_code_count_total{type=\"added\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.05 },
+              { "color": "red", "value": 0.20 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 102,
+      "title": "Lines per Dollar",
+      "description": "Inverse of cost per line — lines shipped for every $1 spent",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_lines_of_code_count_total{type=\"added\"}) / sum(claude_code_cost_usage_USD_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "continuous-RdYlGr" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "green", "value": 20 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 103,
+      "title": "Cost per Active Minute",
+      "description": "Burn rate when you're actually engaged (idle time excluded)",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_cost_usage_USD_total) / (sum(claude_code_active_time_seconds_total) / 60)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.50 },
+              { "color": "red", "value": 2.00 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 200,
+      "title": "Hottest Sessions (Cost Burn Rate)",
+      "description": "Which terminal is burning the most right now — last 5 min",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (session_id) (rate(claude_code_cost_usage_USD_total[5m]))) * 60",
+          "legendFormat": "{{session_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.10 },
+              { "color": "red", "value": 0.50 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 201,
+      "title": "Fastest Sessions (Lines/min)",
+      "description": "Which terminal is actually shipping code right now",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (session_id) (rate(claude_code_lines_of_code_count_total{type=\"added\"}[5m]))) * 60",
+          "legendFormat": "{{session_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "color": { "mode": "continuous-BlPu" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 300,
+      "title": "Think-to-Ship Ratio Over Time",
+      "description": "Rolling ratio — spikes when Claude is reasoning hard, dips during scaffolding/generation",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "expr": "(sum(rate(claude_code_token_usage_tokens_total{type=\"input\"}[5m])) + sum(rate(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[5m]))) / sum(rate(claude_code_lines_of_code_count_total{type=\"added\"}[5m]))",
+          "legendFormat": "tokens/line",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "fixedColor": "#FFB86C", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 301,
+      "title": "Cache Efficiency Over Time",
+      "description": "Cache hit rate as a function of time — does it degrade in long conversations?",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "targets": [
+        {
+          "expr": "sum(rate(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[5m])) / (sum(rate(claude_code_token_usage_tokens_total{type=\"cacheRead\"}[5m])) + sum(rate(claude_code_token_usage_tokens_total{type=\"input\"}[5m])))",
+          "legendFormat": "hit rate",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "decimals": 2,
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "transparent", "value": null },
+              { "color": "yellow", "value": 0.5 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "last"] }
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 400,
+      "title": "Cost Rate by Session",
+      "description": "Per-session burn rate over time — see when each terminal is active",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "targets": [
+        {
+          "expr": "sum by (session_id) (rate(claude_code_cost_usage_USD_total[5m])) * 60",
+          "legendFormat": "{{session_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "stacking": { "mode": "none" }
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 401,
+      "title": "Cache Savings Estimate",
+      "description": "Running total of cacheRead tokens — at ~10x cheaper than input, this represents real dollar savings vs. no-cache baseline",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_token_usage_tokens_total{type=\"cacheRead\"}) / 1000000 * 13.5",
+          "legendFormat": "est. savings",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(claude_code_token_usage_tokens_total{type=\"cacheRead\"})",
+          "legendFormat": "cached tokens",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "A" },
+            "properties": [
+              { "id": "unit", "value": "currencyUSD" },
+              { "id": "decimals", "value": 2 }
+            ]
+          },
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "unit", "value": "short" },
+              { "id": "decimals", "value": 0 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "orientation": "vertical"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 500,
+      "title": "Effective Hourly Rate",
+      "description": "List-rate cost per hour of active engagement. A developer wielding Claude effectively is running a team, not a tool — this is the team rate.",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_cost_usage_USD_total) / (sum(claude_code_active_time_seconds_total) / 3600)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 0,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "orange", "value": 250 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 501,
+      "title": "Engineer Equivalent",
+      "description": "At $100/hr loaded engineering cost, how many engineers' worth of work are you equivalent to spending on?",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 29 },
+      "targets": [
+        {
+          "expr": "(sum(claude_code_cost_usage_USD_total) / (sum(claude_code_active_time_seconds_total) / 3600)) / 100",
+          "legendFormat": "engineers",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "color": { "mode": "continuous-BlPu" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "purple", "value": 2 },
+              { "color": "super-light-purple", "value": 5 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 502,
+      "title": "Max Plan Multiplier",
+      "description": "List-rate value / $200 Max subscription. Values > 1 mean you're getting more than you pay for.",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 29 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_cost_usage_USD_total) / 200",
+          "legendFormat": "× Max",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "color": { "mode": "continuous-RdYlGr" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 1.0 },
+              { "color": "super-light-green", "value": 3.0 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "value_and_name"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 510,
+      "title": "Code Churn Ratio",
+      "description": "Lines removed ÷ lines added. High = refactoring/rework. Low = greenfield building. Can exceed 1.0 during heavy refactors.",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 35 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_lines_of_code_count_total{type=\"removed\"}) / sum(claude_code_lines_of_code_count_total{type=\"added\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "red", "value": 0.8 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 511,
+      "title": "Net Lines Shipped",
+      "description": "Added minus removed — honest codebase growth, churn doesn't count",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 35 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_lines_of_code_count_total{type=\"added\"}) - sum(claude_code_lines_of_code_count_total{type=\"removed\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "fixedColor": "green", "mode": "fixed" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 512,
+      "title": "Cache Build / Read Balance",
+      "description": "cacheCreation ÷ cacheRead — a ratio, not a percentage. High = priming new contexts. Low = deeply reusing cached work.",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 35 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_token_usage_tokens_total{type=\"cacheCreation\"}) / sum(claude_code_token_usage_tokens_total{type=\"cacheRead\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "color": { "mode": "continuous-BlYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 513,
+      "title": "Avg Session Weight",
+      "description": "Total tokens ÷ session count. Typical cost/complexity of a single session.",
+      "type": "stat",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 35 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_token_usage_tokens_total) / sum(claude_code_session_count_total)",
+          "legendFormat": "tokens/session",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 520,
+      "title": "Output Generation Rate",
+      "description": "Output tokens per active minute — Claude's real writing speed",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 40 },
+      "targets": [
+        {
+          "expr": "sum(rate(claude_code_token_usage_tokens_total{type=\"output\"}[5m])) * 60",
+          "legendFormat": "output tokens/min",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 30,
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean", "max"] }
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 521,
+      "title": "Cost per Edit Decision",
+      "description": "Dollars spent per code edit decision Claude made",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 6, "x": 12, "y": 40 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_cost_usage_USD_total) / sum(claude_code_code_edit_tool_decision_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 3,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.10 },
+              { "color": "red", "value": 0.50 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 522,
+      "title": "Avg Session Lifespan",
+      "description": "Active seconds ÷ session count = mean minutes per session",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 6, "x": 18, "y": 40 },
+      "targets": [
+        {
+          "expr": "sum(claude_code_active_time_seconds_total) / sum(claude_code_session_count_total)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "orange", "value": null }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 530,
+      "title": "Per-Session Think-to-Ship",
+      "description": "Tokens per line broken down by session — which terminal is reasoning vs. shipping?",
+      "type": "bargauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 47 },
+      "targets": [
+        {
+          "expr": "topk(20, sort_desc(sum by (session_id) (claude_code_token_usage_tokens_total{type=~\"input|cacheRead\"}) / sum by (session_id) (claude_code_lines_of_code_count_total{type=\"added\"})))",
+          "legendFormat": "{{session_id}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "continuous-BlYlRd" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 531,
+      "title": "Code Churn Over Time",
+      "description": "Added (green) vs removed (orange) — when does rework dominate?",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 47 },
+      "targets": [
+        {
+          "expr": "sum(increase(claude_code_lines_of_code_count_total{type=\"added\"}[5m]))",
+          "legendFormat": "added",
+          "refId": "A"
+        },
+        {
+          "expr": "-sum(increase(claude_code_lines_of_code_count_total{type=\"removed\"}[5m]))",
+          "legendFormat": "removed",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "gradientMode": "scheme",
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "added" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "removed" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["sum"] }
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 540,
+      "title": "Max Team Size",
+      "description": "Peak concurrent Claude sessions you've had running — how big was your team at its biggest?",
+      "type": "stat",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 55 },
+      "targets": [
+        {
+          "expr": "max_over_time((count(count by (session_id) (rate(claude_code_cost_usage_USD_total[2m]) > 0)))[30d:5m])",
+          "legendFormat": "peak",
+          "refId": "A"
+        },
+        {
+          "expr": "count(count by (session_id) (rate(claude_code_cost_usage_USD_total[2m]) > 0))",
+          "legendFormat": "current",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "continuous-BlPu" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "purple", "value": 3 },
+              { "color": "super-light-purple", "value": 6 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background_solid",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "orientation": "horizontal"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 541,
+      "title": "Concurrent Sessions Over Time",
+      "description": "How many Claudes were working at once, historically",
+      "type": "timeseries",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 55 },
+      "targets": [
+        {
+          "expr": "count(count by (session_id) (rate(claude_code_cost_usage_USD_total[2m]) > 0))",
+          "legendFormat": "active sessions",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 40,
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "lineInterpolation": "stepAfter",
+            "showPoints": "never"
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "single" },
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["max", "mean"] }
+      },
+      "datasource": { "type": "prometheus" }
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["claude-code", "coolant", "insights"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Claude Code Insights",
+  "uid": "coolant-insights",
+  "version": 3
+}
