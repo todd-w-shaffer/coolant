@@ -18,6 +18,7 @@ datasources:
           query:
             type: csv
             source: url
+            parser: backend
             format: table
             url: http://localhost:9091/org_colors.csv
             url_options:
@@ -30,6 +31,7 @@ datasources:
           query:
             type: csv
             source: url
+            parser: backend
             format: table
             url: http://localhost:9091/repo_colors.csv
             url_options:

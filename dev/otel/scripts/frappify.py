@@ -17,6 +17,7 @@ Re-runnable: idempotent on already-Frappe input.
 """
 from __future__ import annotations
 
+import csv
 import json
 import re
 import sys
@@ -78,6 +79,16 @@ MODEL_KEYED_PANELS = {
     ("claude-spend.json",  20),
     ("claude-spend.json",  30),
 }
+
+# Panels whose series are dynamic data labels (repo, organization_id)
+# themed via a static name→color CSV under dev/otel/lookups/. One byName
+# override per CSV row, skipping `__slot*__` / `__default__` placeholders.
+# (filename, panel_id) → csv basename.
+CSV_KEYED_PANELS = {
+    ("claude-techdebt.json", 301): "repo_colors.csv",
+    ("claude-cfo.json",      401): "org_colors.csv",
+}
+
 
 # Panels whose default color mode needs to be set or corrected. Injects
 # a color block when defaults has none; replaces the existing mode when
@@ -160,31 +171,21 @@ def render_model_overrides(indent: str) -> str:
     return ",\n".join(lines)
 
 
-def inject_model_overrides(text: str, panel_id: int) -> tuple[str, bool]:
-    span = find_panel_span(text, panel_id)
-    if not span:
-        return text, False
-    start, end = span
+def _splice_overrides(text: str, start: int, end: int, body: str) -> tuple[str, bool]:
+    """Replace an empty `"overrides": []` inside text[start:end] with body,
+    or insert a new overrides key after the `"defaults": {...}` block."""
     block = text[start:end]
 
-    # Short-circuit if byRegexp for opus already present (idempotent).
-    if '"byRegexp"' in block and '".*opus.*"' in block:
-        return text, False
-
-    # Case A: existing empty `"overrides": []` inside this block.
     empty = re.search(r'"overrides":\s*\[\s*\]', block)
     if empty:
-        body = render_model_overrides("          ")
         replacement = f'"overrides": [\n{body}\n        ]'
         new_block = block[:empty.start()] + replacement + block[empty.end():]
         return text[:start] + new_block + text[end:], True
 
-    # Case B: no overrides key — insert after the `"defaults": {...}` block
-    # inside fieldConfig. Match `"defaults": {` and brace-balance to its close.
     defaults_m = re.search(r'"defaults":\s*\{', block)
     if not defaults_m:
         return text, False
-    i = defaults_m.end() - 1  # position of the opening `{`
+    i = defaults_m.end() - 1
     depth = 0
     in_str = False
     esc = False
@@ -212,10 +213,64 @@ def inject_model_overrides(text: str, panel_id: int) -> tuple[str, bool]:
     if close_idx is None:
         return text, False
 
-    body = render_model_overrides("          ")
     insertion = f',\n        "overrides": [\n{body}\n        ]'
     new_block = block[:close_idx + 1] + insertion + block[close_idx + 1:]
     return text[:start] + new_block + text[end:], True
+
+
+def inject_model_overrides(text: str, panel_id: int) -> tuple[str, bool]:
+    span = find_panel_span(text, panel_id)
+    if not span:
+        return text, False
+    start, end = span
+    block = text[start:end]
+
+    # Idempotent: opus override already present.
+    if '"byRegexp"' in block and '".*opus.*"' in block:
+        return text, False
+
+    return _splice_overrides(text, start, end, render_model_overrides("          "))
+
+
+def load_csv_colors(csv_path: Path) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    with csv_path.open() as f:
+        for row in csv.DictReader(f):
+            name = (row.get("name") or "").strip()
+            color = (row.get("color") or "").strip()
+            if not name or not color:
+                continue
+            if name.startswith("__"):
+                continue
+            rows.append((name, color))
+    return rows
+
+
+def render_csv_overrides(rows: list[tuple[str, str]], indent: str) -> str:
+    lines = []
+    for name, color in rows:
+        lines.append(
+            f'{indent}{{ "matcher": {{ "id": "byName", "options": "{name}" }}, '
+            f'"properties": [{{ "id": "color", "value": {{ "fixedColor": "{color}", "mode": "fixed" }} }}] }}'
+        )
+    return ",\n".join(lines)
+
+
+def inject_csv_overrides(text: str, panel_id: int, csv_path: Path) -> tuple[str, bool]:
+    rows = load_csv_colors(csv_path)
+    if not rows:
+        return text, False
+    span = find_panel_span(text, panel_id)
+    if not span:
+        return text, False
+    start, end = span
+    block = text[start:end]
+
+    # Idempotent: every CSV row already present as a byName override.
+    if all(f'"id": "byName", "options": "{n}"' in block for n, _ in rows):
+        return text, False
+
+    return _splice_overrides(text, start, end, render_csv_overrides(rows, "          "))
 
 
 def set_default_color_mode(text: str, panel_id: int, mode: str) -> tuple[str, bool]:
@@ -264,6 +319,14 @@ def process(path: Path) -> list[str]:
         text, ch = inject_model_overrides(text, pid)
         if ch:
             changes.append(f"model#{pid}")
+
+    lookups_root = Path(__file__).resolve().parent.parent / "lookups"
+    for (fname, pid), csv_name in CSV_KEYED_PANELS.items():
+        if fname != path.name:
+            continue
+        text, ch = inject_csv_overrides(text, pid, lookups_root / csv_name)
+        if ch:
+            changes.append(f"csv#{pid}")
 
     for (fname, pid), mode in BARE_COLOR_PANELS.items():
         if fname != path.name:
