@@ -62,6 +62,7 @@ skills/coolant/SKILL.md      # /coolant skill (opt-in build suppression)
 tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
 tests/*.bats                 # bats test files, one per script
 assets/                      # VHS tape files, demo GIFs, marketing screenshots
+dev/otel/                    # Local Prometheus+Grafana stack for OTEL dogfooding (see below)
 ```
 
 ### Archive folders (gitignored — do not read, reference, or treat as current)
@@ -74,6 +75,24 @@ Historical artifacts kept for nostalgia. May be stale or broken.
 - `thermal/cmd/archive/` — one-off Go experiments (breathe, comets, sparkdebug)
 - `bin/archive/` — compiled binaries from archived experiments
 
+### dev/otel/ (Local OTEL dogfood stack)
+
+Local Prometheus + Grafana prototype for validating the Thermal Cloud
+data model and dashboard queries before touching hosted infra. Claude
+Code pushes OTLP metrics directly to Prometheus (no collector needed —
+Prometheus 3.x native OTLP receiver). Grafana auto-provisions the
+datasource and five dashboards via file-based config.
+
+- `start.sh` — launches both processes with prefixed logs, Ctrl-C kills both
+- `env.sh` — source before launching Claude Code; `cclaude` alias in ~/.zshrc does this automatically
+- `dashboards/` — claude-spend, claude-insights, claude-models, claude-cfo, claude-vpeng
+- `data/` — gitignored Prometheus TSDB and Grafana state
+
+Verified Claude Code metric names (live-checked, not guessed):
+`claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total`,
+`claude_code_lines_of_code_count_total`, `claude_code_active_time_seconds_total`,
+`claude_code_session_count_total`, `claude_code_code_edit_tool_decision_total`.
+
 ### thermal/ (Go thermal dashboard)
 
 Thermal dashboard rendered via bubbletea. Runs as a bottom tmux strip or standalone.
@@ -85,7 +104,7 @@ thermal/
 │   ├── parent_darwin.go     # kqueue EVFILT_PROC watcher — exits when parent dies
 │   └── parent_other.go      # no-op stub for non-darwin platforms
 ├── cmd/brailletext/main.go  # standalone braille font debug tool
-├── cmd/swatch/main.go       # theme palette preview tool (print-and-exit, no bubbletea)
+├── cmd/swatch/main.go       # theme palette preview tool (static or --animate bubbletea loop)
 ├── internal/
 │   ├── collector/
 │   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
