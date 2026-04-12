@@ -87,6 +87,90 @@ func (h *Headline) AnimTick() {
 	}
 }
 
+// rowPair is a 2-row rendered fragment at a fixed visible width. visWidth
+// counts cells (post-ANSI), so layers can pad/align deterministically.
+type rowPair struct {
+	top, bot string
+	visWidth int
+}
+
+// bgPad returns n cells of iconBg-styled whitespace. Many headline fragments
+// need this and re-constructing the lipgloss style inline is noisy.
+func bgPad(bg color.Color, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", n))
+}
+
+// renderLCDFrag wraps the segment readout as a rowPair. Returns a zero
+// fragment when the headline is offline or the readout is suppressed.
+func (h *Headline) renderLCDFrag(iconBg color.Color, pulseScale float64) rowPair {
+	if h.state == nil || !h.state.Online {
+		return rowPair{}
+	}
+	top, bot, w := h.temp.RenderWithPulse(iconBg, pulseScale)
+	if w == 0 {
+		return rowPair{}
+	}
+	return rowPair{top: top, bot: bot, visWidth: w}
+}
+
+// renderSessionsAgentsStack stacks session diamonds (top) over ACTIVE agents
+// (bottom). Ghost/stale/KITT agents are NOT in this cell — they render as a
+// separate fragment extending leftward under the runtime column so growth
+// in the stale tail doesn't push this cell around. Both rows right-anchor
+// within the cell so session and active-agent glyphs stay flush against
+// the build/shell divider on their right edge.
+func (h *Headline) renderSessionsAgentsStack(sessionStr string, sessionWidth int, activeStr string, activeWidth int, iconBg color.Color) rowPair {
+	if sessionWidth == 0 && activeWidth == 0 {
+		return rowPair{}
+	}
+
+	cellWidth := sessionWidth
+	if activeWidth > cellWidth {
+		cellWidth = activeWidth
+	}
+
+	padLeft := func(s string, w int) string {
+		if w >= cellWidth {
+			return s
+		}
+		return bgPad(iconBg, cellWidth-w) + s
+	}
+
+	return rowPair{
+		top:      padLeft(sessionStr, sessionWidth),
+		bot:      padLeft(activeStr, activeWidth),
+		visWidth: cellWidth,
+	}
+}
+
+// buildCat and shellCat are resolved once at package init so the per-frame
+// render path doesn't linear-scan collector.Categories.
+var buildCat, shellCat collector.Category
+
+func init() {
+	for _, c := range collector.Categories {
+		switch c.Name {
+		case "build":
+			buildCat = c
+		case "shell":
+			shellCat = c
+		}
+	}
+}
+
+// renderBuildShellStack stacks build:NNN (top) over shell:NNN (bottom),
+// each as an independent thermal-colored cell at fixedCellWidth.
+func (h *Headline) renderBuildShellStack(smoothed map[string]float64) rowPair {
+	return rowPair{
+		top:      renderCatCell(buildCat, smoothed, fixedCellWidth, h.theme),
+		bot:      renderCatCell(shellCat, smoothed, fixedCellWidth, h.theme),
+		visWidth: fixedCellWidth,
+	}
+}
+
 // fixedCellWidth is the compact width for always-visible category boxes.
 // "build:002" = 9 chars + 1 padding each side = 11
 const fixedCellWidth = 11
@@ -141,170 +225,163 @@ func (h *Headline) View() string {
 	return strings.Join(h.ViewLines(), "\n")
 }
 
-// ViewLines returns the headline as a slice of rendered rows — 2 rows online
-// and active, 1 row offline. The 2-row form is additive: the top row still
-// shows everything the 1-row legacy form showed; the bottom row paints the
-// LCD readout's lower half and bg-fills the remainder.
+// dynamicCellWidth is the width of each dynamic runtime cell on the bottom
+// row of the left zone.
+const dynamicCellWidth = 8
+
+// ViewLines returns the headline as a 2-line slice. Layout (online):
+//
+//	[quip ...........................]  [      ] [⌬ session] [build:000] [LCD]
+//	[                    runtime cells]  [      ] [⬡ agent  ] [shell:001] [LCD]
+//
+// Right-aligned cluster (sessions/agents → build/shell → LCD) stays pinned;
+// runtimes appear/disappear as the only dynamic churn, growing leftward into
+// the quip pad. Offline collapses to a quip-only top row with bg-filled bot.
 func (h *Headline) ViewLines() []string {
 	if h.state == nil {
 		return []string{""}
 	}
-
-	// Split categories into dynamic (left) and fixed (right-anchored)
-	var dynamic, fixed []collector.Category
-	for _, cat := range collector.Categories {
-		if collector.FixedCategories[cat.Name] {
-			fixed = append(fixed, cat)
-		} else if h.state.SmoothedCats[cat.Name] >= 0.5 {
-			dynamic = append(dynamic, cat)
-		}
-	}
-
-	fixedTotalWidth := len(fixed) * fixedCellWidth
-	dynamicCount := len(dynamic)
-	dynamicCellWidth := 0
-	if dynamicCount > 0 {
-		dynamicCellWidth = 8
-	}
-	dynamicTotalWidth := dynamicCount * dynamicCellWidth
-
-	overallWidth := h.width - fixedTotalWidth - dynamicTotalWidth
-	if overallWidth < 20 {
-		overallWidth = 20
-	}
-
-	twoRow := h.state.Online
-
-	var iconBg, fg color.Color
-	var quip string
-	level := 0
 	if !h.state.Online {
-		iconBg = h.theme.OfflineBg
-		fg = h.theme.OfflineFg
-		quip = model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
-	} else {
-		level = threatToThermal(h.state.ThreatLevel)
-		iconBg = h.theme.OverallGradient[level].Bg
-		fg = h.theme.OverallGradient[level].Fg
-		quip = h.state.StableQuip()
+		return h.offlineViewLines()
 	}
 
-	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
+	level := threatToThermal(h.state.ThreatLevel)
+	iconBg := h.theme.OverallGradient[level].Bg
+	fg := h.theme.OverallGradient[level].Fg
+	quip := h.state.StableQuip()
+
+	pulseScale := 1.0
+	if h.meltdown {
+		pulseScale = 0.6 + 0.4*(math.Sin(h.pulsePhase)+1)/2
+	}
+	lcd := h.renderLCDFrag(iconBg, pulseScale)
+
+	buildShell := h.renderBuildShellStack(h.state.SmoothedCats)
 
 	var sessions []collector.SessionTree
 	if h.state.Current != nil {
 		sessions = h.state.Current.Sessions
 	}
-	sessionStr, sessionVisWidth := renderSessionDiamonds(sessions, iconBg, h.theme)
+	sessionStr, sessionWidth := renderSessionDiamonds(sessions, iconBg, h.theme)
+	ghostStr, activeStr, ghostWidth, activeWidth := h.agents.RenderSplit(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
+	sessAgents := h.renderSessionsAgentsStack(sessionStr, sessionWidth, activeStr, activeWidth, iconBg)
 
-	tempTop, tempBot, tempVisWidth := "", "", 0
-	if twoRow {
-		pulseScale := 1.0
-		if h.meltdown {
-			pulseScale = 0.6 + 0.4*(math.Sin(h.pulsePhase)+1)/2
+	var dynamic []collector.Category
+	for _, cat := range collector.Categories {
+		if !collector.FixedCategories[cat.Name] && h.state.SmoothedCats[cat.Name] >= 0.5 {
+			dynamic = append(dynamic, cat)
 		}
-		tempTop, tempBot, tempVisWidth = h.temp.RenderWithPulse(iconBg, pulseScale)
+	}
+	runtimeWidth := len(dynamic) * dynamicCellWidth
+
+	bgStyle := lipgloss.NewStyle().Background(iconBg)
+	divider := bgStyle.Render(" ")
+
+	// Compose right cluster with single-space dividers.
+	var rightTop, rightBot strings.Builder
+	rightVis := 0
+	appendFrag := func(f rowPair) {
+		if f.visWidth == 0 {
+			return
+		}
+		if rightVis > 0 {
+			rightTop.WriteString(divider)
+			rightBot.WriteString(divider)
+			rightVis++
+		}
+		rightTop.WriteString(f.top)
+		rightBot.WriteString(f.bot)
+		rightVis += f.visWidth
+	}
+	appendFrag(sessAgents)
+	appendFrag(buildShell)
+	appendFrag(lcd)
+
+	// Left combined width = quip zone + runtime zone, sharing the bot row for
+	// the ghost tail. Ghosts right-anchor within this width so they visually
+	// extend leftward from the stack cell under the runtimes.
+	leftCombined := h.width - rightVis
+	if rightVis > 0 {
+		leftCombined--
+	}
+	if leftCombined < 0 {
+		leftCombined = 0
+	}
+	leftWidth := leftCombined - runtimeWidth
+	if leftWidth < 0 {
+		leftWidth = 0
 	}
 
-	topCell, botCell := h.buildOverallCell(quip, fg, iconBg,
-		tempTop, tempBot, tempVisWidth,
-		iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
-
-	var dynamicCells []string
-	for _, cat := range dynamic {
-		dynamicCells = append(dynamicCells, renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth, h.theme))
-	}
-	var fixedCells []string
-	for _, cat := range fixed {
-		fixedCells = append(fixedCells, renderCatCell(cat, h.state.SmoothedCats, fixedCellWidth, h.theme))
-	}
-	catsTop := strings.Join(dynamicCells, "") + strings.Join(fixedCells, "")
-	catsWidth := dynamicTotalWidth + fixedTotalWidth
-
-	// Always emit two rows so the downstream layout never reflows when the
-	// LCD flashes off (e.g., demo's offline cycles). When the readout is
-	// hidden, botCell is empty and the bottom row is just bg-filled space
-	// of the same width as the overall cell, plus plain-space padding for
-	// the category region.
-	topLine := topCell + catsTop
-	if botCell == "" {
-		bgStyle := lipgloss.NewStyle().Background(iconBg)
-		botCell = bgStyle.Render(strings.Repeat(" ", overallWidth))
-	}
-	botLine := botCell + strings.Repeat(" ", catsWidth)
-	return []string{topLine, botLine}
-}
-
-// buildOverallCell builds the quip/readout/icons/sessions zone and returns
-// the top and bottom rows of the overall cell. botLine is "" in 1-row
-// (offline) mode.
-func (h *Headline) buildOverallCell(quip string, fg, bg color.Color,
-	tempTop, tempBot string, tempVisWidth int,
-	iconStr string, iconVisWidth int,
-	sessionStr string, sessionVisWidth int, totalWidth int) (topLine, botLine string) {
-	tempMargin := 0
-	if tempVisWidth > 0 {
-		tempMargin = 1
-	}
-	iconMargin := 0
-	if iconVisWidth > 0 {
-		iconMargin = 1
-	}
-	sessionMargin := 0
-	if sessionVisWidth > 0 {
-		sessionMargin = 1
-	}
-
-	rightWidth := tempVisWidth + tempMargin + iconVisWidth + iconMargin + sessionVisWidth + sessionMargin
-	maxQuip := totalWidth - 2 - rightWidth
+	maxQuip := leftWidth - 1
 	if maxQuip < 0 {
 		maxQuip = 0
 	}
-	// Quip widths must be counted in runes, not bytes — offline messages
-	// contain em-dashes (3 bytes, 1 cell) and a byte count would throw
-	// the pad math off by 2 cells per multi-byte rune.
 	if utf8.RuneCountInString(quip) > maxQuip {
 		quip = truncRunes(quip, maxQuip)
 	}
 	quipWidth := utf8.RuneCountInString(quip)
 
-	baseStyle := lipgloss.NewStyle().Foreground(fg).Background(bg)
-	bgStyle := lipgloss.NewStyle().Background(bg)
-
-	left := baseStyle.Render(" " + quip)
-	padWidth := totalWidth - 1 - quipWidth - rightWidth
-	if padWidth < 0 {
-		padWidth = 0
-	}
-	pad := bgStyle.Render(strings.Repeat(" ", padWidth))
-
-	var right strings.Builder
-	if tempVisWidth > 0 {
-		right.WriteString(tempTop)
-		right.WriteString(bgStyle.Render(" "))
-	}
-	if iconVisWidth > 0 {
-		right.WriteString(iconStr)
-	}
-	if sessionVisWidth > 0 {
-		if iconVisWidth > 0 {
-			right.WriteString(bgStyle.Render(" "))
+	quipStyle := lipgloss.NewStyle().Foreground(fg).Background(iconBg)
+	leftTop := ""
+	if leftWidth > 0 {
+		padAfterQuip := leftWidth - 1 - quipWidth
+		if padAfterQuip < 0 {
+			padAfterQuip = 0
 		}
-		right.WriteString(sessionStr)
-	}
-	if iconVisWidth > 0 || sessionVisWidth > 0 {
-		right.WriteString(bgStyle.Render(" "))
+		leftTop = quipStyle.Render(" "+quip) + bgPad(iconBg, padAfterQuip)
 	}
 
-	topLine = left + pad + right.String()
-	if tempVisWidth == 0 {
-		return topLine, ""
+	var runtimeCells strings.Builder
+	for _, cat := range dynamic {
+		runtimeCells.WriteString(renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth, h.theme))
+	}
+	runtimeTop := runtimeCells.String()
+
+	// Ghost tail right-anchored within leftCombined so it ends flush against
+	// the active-agents cell. Overflow (when ghost count exceeds the budget)
+	// silently extends leftward — tolerated for the stale-agent edge case.
+	ghostPadLeft := leftCombined - ghostWidth
+	if ghostPadLeft < 0 {
+		ghostPadLeft = 0
+	}
+	botLeft := bgPad(iconBg, ghostPadLeft) + ghostStr
+
+	sep := ""
+	if rightVis > 0 {
+		sep = divider
 	}
 
-	leftBotWidth := 1 + quipWidth + padWidth
-	rightAfterTemp := rightWidth - tempVisWidth // trailing bg after the readout
-	botLine = bgStyle.Render(strings.Repeat(" ", leftBotWidth)) + tempBot + bgStyle.Render(strings.Repeat(" ", rightAfterTemp))
-	return topLine, botLine
+	topLine := leftTop + runtimeTop + sep + rightTop.String()
+	botLine := botLeft + sep + rightBot.String()
+	return []string{topLine, botLine}
+}
+
+// offlineViewLines renders the quip-only offline mode: top row has the
+// offline message on offline bg, bottom row is bg-filled to preserve the
+// no-reflow 2-row contract.
+func (h *Headline) offlineViewLines() []string {
+	iconBg := h.theme.OfflineBg
+	fg := h.theme.OfflineFg
+	quip := model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
+
+	maxQuip := h.width - 1
+	if maxQuip < 0 {
+		maxQuip = 0
+	}
+	if utf8.RuneCountInString(quip) > maxQuip {
+		quip = truncRunes(quip, maxQuip)
+	}
+	quipWidth := utf8.RuneCountInString(quip)
+
+	quipStyle := lipgloss.NewStyle().Foreground(fg).Background(iconBg)
+
+	padW := h.width - 1 - quipWidth
+	if padW < 0 {
+		padW = 0
+	}
+	topLine := quipStyle.Render(" "+quip) + bgPad(iconBg, padW)
+	botLine := bgPad(iconBg, h.width)
+	return []string{topLine, botLine}
 }
 
 // renderSessionDiamonds renders phase-colored ⌬ icons for each session,
