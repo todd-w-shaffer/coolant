@@ -12,6 +12,18 @@ cd "$SCRIPT_DIR"
 command -v prometheus >/dev/null 2>&1 || { echo "brew install prometheus"; exit 1; }
 command -v grafana    >/dev/null 2>&1 || { echo "brew install grafana"; exit 1; }
 
+# Version drift check — last validated against this Grafana.
+# Bump GRAFANA_VALIDATED_VERSION when we've sanity-checked dashboards
+# on a newer release. Warns but does not block.
+GRAFANA_VALIDATED_VERSION="12.4.2"
+GRAFANA_CURRENT_VERSION="$(grafana --version 2>/dev/null | awk '{print $NF}')"
+if [ -n "$GRAFANA_CURRENT_VERSION" ] && [ "$GRAFANA_CURRENT_VERSION" != "$GRAFANA_VALIDATED_VERSION" ]; then
+    echo ""
+    echo "⚠  Grafana $GRAFANA_CURRENT_VERSION installed — dashboards last validated on $GRAFANA_VALIDATED_VERSION."
+    echo "   If theming looks off, eyeball dev/otel/dashboards/ then bump GRAFANA_VALIDATED_VERSION in this script."
+    echo ""
+fi
+
 GRAFANA_HOME="$(brew --prefix grafana)/share/grafana"
 
 cleanup() {
