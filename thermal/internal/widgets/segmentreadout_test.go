@@ -20,20 +20,20 @@ func newTestSegment(t *testing.T) *SegmentReadout {
 }
 
 // TestSegmentReadout_RenderShape — both rows render, contain braille runes,
-// and visible width is the constant 12.
+// and visible width is the constant 13.
 func TestSegmentReadout_RenderShape(t *testing.T) {
 	s := newTestSegment(t)
 	s.Update(87, 3)
 	top, bot, w := s.Render(color.RGBA{0, 0, 0, 255})
 
-	if w != 12 {
-		t.Errorf("visWidth=%d, want 12", w)
+	if w != 13 {
+		t.Errorf("visWidth=%d, want 13", w)
 	}
-	if ansi.StringWidth(top) != 12 {
-		t.Errorf("top visual width=%d, want 12 (stripped: %q)", ansi.StringWidth(top), ansi.Strip(top))
+	if ansi.StringWidth(top) != 13 {
+		t.Errorf("top visual width=%d, want 13 (stripped: %q)", ansi.StringWidth(top), ansi.Strip(top))
 	}
-	if ansi.StringWidth(bot) != 12 {
-		t.Errorf("bot visual width=%d, want 12 (stripped: %q)", ansi.StringWidth(bot), ansi.Strip(bot))
+	if ansi.StringWidth(bot) != 13 {
+		t.Errorf("bot visual width=%d, want 13 (stripped: %q)", ansi.StringWidth(bot), ansi.Strip(bot))
 	}
 	// Top row must contain the head rune of each selected digit (0, 8, 7).
 	for _, d := range []int{0, 8, 7} {

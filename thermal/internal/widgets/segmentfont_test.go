@@ -55,17 +55,22 @@ func TestDigitToBraille_AllDigits(t *testing.T) {
 	}
 }
 
-// TestDegreeToBraille — top rune carries dots, bot rune is blank (U+2800).
+// TestDegreeToBraille — 2-cell hollow ring in the top row, blank bot row.
+// Cell 0 = dots {2,3,4,8} = U+288E ⢎; cell 1 = dots {1,5,6,7} = U+2871 ⡱.
+// Together they form a symmetric 4×4-pixel ring outline.
 func TestDegreeToBraille(t *testing.T) {
 	top, bot := degreeToBraille()
-	if top == 0x2800 {
-		t.Errorf("degree top rune is blank, want dots set")
+	wantTop := [2]rune{0x288E, 0x2871}
+	wantBot := [2]rune{0x2800, 0x2800}
+	for i, r := range top {
+		if r != wantTop[i] {
+			t.Errorf("degree top[%d] = %#x, want %#x", i, r, wantTop[i])
+		}
 	}
-	if top < 0x2800 || top > 0x28FF {
-		t.Errorf("degree top = %#x out of braille range", top)
-	}
-	if bot != 0x2800 {
-		t.Errorf("degree bot = %#x, want 0x2800 (blank)", bot)
+	for i, r := range bot {
+		if r != wantBot[i] {
+			t.Errorf("degree bot[%d] = %#x, want %#x", i, r, wantBot[i])
+		}
 	}
 }
 
@@ -75,17 +80,17 @@ func TestRenderTemperature_Formatting(t *testing.T) {
 		value   int
 		wantLen int
 	}{
-		{0, 12},
-		{7, 12},
-		{42, 12},
-		{99, 12},
-		{-5, 12},
-		{150, 12},
+		{0, 13},
+		{7, 13},
+		{42, 13},
+		{99, 13},
+		{-5, 13},
+		{150, 13},
 	}
 	for _, tc := range cases {
 		top, bot, w := RenderTemperature(tc.value)
-		if w != 12 {
-			t.Errorf("value=%d visWidth=%d, want 12", tc.value, w)
+		if w != 13 {
+			t.Errorf("value=%d visWidth=%d, want 13", tc.value, w)
 		}
 		if n := utf8.RuneCountInString(top); n != tc.wantLen {
 			t.Errorf("value=%d top rune count=%d, want %d", tc.value, n, tc.wantLen)
