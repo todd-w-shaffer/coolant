@@ -3,12 +3,14 @@ package widgets
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
 // TestHeadline_ViewLinesTwoRowsWhenOnline — online+active state returns two
@@ -56,11 +58,10 @@ func TestHeadline_ViewLinesAlwaysTwoRows(t *testing.T) {
 	}
 }
 
-// TestHeadline_TwoRowPreservesTopContent — the 2-row growth is additive. The
-// top row must still contain the quip text and the fixed category labels
-// that the 1-row headline shows today. If this fails the refactor removed
-// user-visible content.
-func TestHeadline_TwoRowPreservesTopContent(t *testing.T) {
+// TestHeadline_BuildAboveShell — in the restacked layout, build lives on
+// the top row and shell on the bottom row (one stacked cell, not two
+// side-by-side cells).
+func TestHeadline_BuildAboveShell(t *testing.T) {
 	th := theme.Classic()
 	th.Init()
 	h := NewHeadline(th, anim.Default())
@@ -68,11 +69,147 @@ func TestHeadline_TwoRowPreservesTopContent(t *testing.T) {
 	h.Update(fixtureState())
 
 	lines := h.ViewLines()
+	top, bot := ansi.Strip(lines[0]), ansi.Strip(lines[1])
+	if !strings.Contains(top, "build:") {
+		t.Errorf("top row missing build:\n%s", top)
+	}
+	if strings.Contains(top, "shell:") {
+		t.Errorf("top row should NOT contain shell: (moved to bot)\n%s", top)
+	}
+	if !strings.Contains(bot, "shell:") {
+		t.Errorf("bot row missing shell:\n%s", bot)
+	}
+	if strings.Contains(bot, "build:") {
+		t.Errorf("bot row should NOT contain build: (lives on top)\n%s", bot)
+	}
+}
+
+// TestHeadline_LCDOnFarRight — online fixture renders the LCD fragment as
+// the rightmost visible content on both rows (no trailing bg-padded
+// runtime cells after it).
+func TestHeadline_LCDOnFarRight(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	// Pump a few ticks so the segment readout settles.
+	for i := 0; i < 4; i++ {
+		h.AnimTick()
+	}
+
+	lines := h.ViewLines()
 	top := ansi.Strip(lines[0])
-	for _, want := range []string{"build", "shell"} {
-		if !strings.Contains(top, want) {
-			t.Errorf("top row missing category label %q:\n%s", want, top)
+	// The temperature value is 2 digits 0-99; confirm a digit bitmap
+	// pixel is in the final ~12 columns of the visible top row.
+	if len(top) < 12 {
+		t.Fatalf("top row too short: %q", top)
+	}
+	// Build / shell labels must not appear after the LCD — they are
+	// the second-rightmost cluster, so "build:" should be to the
+	// LEFT of any LCD braille pixel.
+	lastBuild := strings.LastIndex(top, "build:")
+	if lastBuild == -1 {
+		t.Fatalf("expected build: on top row: %q", top)
+	}
+	trailing := top[lastBuild+len("build:"):]
+	// After "build:NNN" there should be LCD content and nothing else
+	// in the label family: no "shell:" and no runtime labels.
+	if strings.Contains(trailing, "shell:") {
+		t.Errorf("shell: should not appear after build: on top row\n%s", top)
+	}
+}
+
+// TestHeadline_RuntimesOnTopRow — dynamic runtime labels appear on the top
+// row, adjacent to the sessions cluster. Bottom-row bg below them is where
+// the ghost KITT trail lives.
+func TestHeadline_RuntimesOnTopRow(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	state := fixtureState()
+	state.SmoothedCats["node"] = 5
+	h.Update(state)
+
+	lines := h.ViewLines()
+	top, bot := ansi.Strip(lines[0]), ansi.Strip(lines[1])
+	if !strings.Contains(top, "node") {
+		t.Errorf("top row missing node runtime: %q", top)
+	}
+	if strings.Contains(bot, "node") {
+		t.Errorf("bot row should NOT contain node (moved to top): %q", bot)
+	}
+}
+
+// TestHeadline_GhostsDontPushActiveAgents — when the ghost/KITT tail is
+// large, the right cluster (and therefore active agents pinned against its
+// left edge) must not shift. Regression: previously the session/agent cell
+// grew to accommodate ghosts, shoving everything leftward across the screen.
+func TestHeadline_GhostsDontPushActiveAgents(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	// Screen column of "shell:" on the bot row — the anchor for the
+	// active-agents cell that lives one divider-space to its left.
+	shellCol := func() int {
+		stripped := ansi.Strip(h.ViewLines()[1])
+		idx := strings.Index(stripped, "shell:")
+		if idx < 0 {
+			return -1
 		}
+		return utf8.RuneCountInString(stripped[:idx])
+	}
+
+	// Baseline: 2 active agents, no stales.
+	h.agents.SetTarget(2)
+	for i := 0; i < 60; i++ {
+		h.agents.AnimTick()
+	}
+	baselineCol := shellCol()
+	if baselineCol < 0 {
+		t.Fatalf("baseline: missing shell: anchor")
+	}
+
+	// Stressed: active count unchanged, 10 stale dots dumped into KITT.
+	h.agents.SetTarget(12)
+	h.agents.SetStaleCount(10)
+	for i := 0; i < 60; i++ {
+		h.agents.AnimTick()
+	}
+	stressedCol := shellCol()
+	if stressedCol != baselineCol {
+		t.Errorf("right cluster drifted: shell col baseline=%d stressed=%d", baselineCol, stressedCol)
+	}
+}
+
+// TestHeadline_SessionsAboveAgents — sessions diamonds on top row, agent
+// hex glyphs on bottom row, at approximately the same column range.
+func TestHeadline_SessionsAboveAgents(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+	h.agents.SetTarget(3)
+	for i := 0; i < 60; i++ {
+		h.agents.AnimTick()
+	}
+
+	lines := h.ViewLines()
+	top, bot := ansi.Strip(lines[0]), ansi.Strip(lines[1])
+	if !strings.ContainsRune(top, '⌬') {
+		t.Errorf("top row missing session diamond ⌬:\n%s", top)
+	}
+	hasAgentGlyph := strings.ContainsRune(bot, '⬡') ||
+		strings.ContainsRune(bot, '⏣') ||
+		strings.ContainsRune(bot, '⬢')
+	if !hasAgentGlyph {
+		t.Errorf("bot row missing agent hex glyph:\n%s", bot)
 	}
 }
 
@@ -102,6 +239,201 @@ func TestHeadline_MeltdownPulseDrivesModulation(t *testing.T) {
 	}
 	if len(distinct) < 2 {
 		t.Errorf("meltdown pulse produced %d distinct top frames across 8 ticks, want >=2", len(distinct))
+	}
+}
+
+// TestRenderLCDFrag_OfflineZeroWidth — when headline is offline the LCD
+// fragment is suppressed: empty rows and zero visible width.
+func TestRenderLCDFrag_OfflineZeroWidth(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	state := fixtureState()
+	state.Online = false
+	h.Update(state)
+
+	rp := h.renderLCDFrag(th.OfflineBg, 1.0)
+	if rp.visWidth != 0 {
+		t.Errorf("offline: visWidth=%d want 0", rp.visWidth)
+	}
+	if rp.top != "" || rp.bot != "" {
+		t.Errorf("offline: expected empty rows, got top=%q bot=%q", rp.top, rp.bot)
+	}
+}
+
+// TestRenderLCDFrag_OnlineTwoRowsEqualWidth — online fragment: both rows
+// measured at the reported visWidth and non-zero.
+func TestRenderLCDFrag_OnlineTwoRowsEqualWidth(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	iconBg := th.OverallGradient[1].Bg
+	rp := h.renderLCDFrag(iconBg, 1.0)
+	if rp.visWidth == 0 {
+		t.Fatalf("online: visWidth=0, expected non-zero LCD")
+	}
+	if got := ansi.StringWidth(rp.top); got != rp.visWidth {
+		t.Errorf("top ansi width=%d want %d", got, rp.visWidth)
+	}
+	if got := ansi.StringWidth(rp.bot); got != rp.visWidth {
+		t.Errorf("bot ansi width=%d want %d", got, rp.visWidth)
+	}
+}
+
+// TestRenderSessionsAgentsStack_WidthMaxOfRows — stack width is max of the
+// session and agent row widths; both rows padded to that width.
+func TestRenderSessionsAgentsStack_WidthMaxOfRows(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	var sessions []collector.SessionTree
+	if h.state.Current != nil {
+		sessions = h.state.Current.Sessions
+	}
+	iconBg := th.OverallGradient[1].Bg
+	sessionStr, sessionWidth := renderSessionDiamonds(sessions, iconBg, th)
+	_, activeStr, _, activeWidth := h.agents.RenderSplit(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
+
+	rp := h.renderSessionsAgentsStack(sessionStr, sessionWidth, activeStr, activeWidth, iconBg)
+
+	if got := ansi.StringWidth(rp.top); got != rp.visWidth {
+		t.Errorf("top ansi width=%d visWidth=%d", got, rp.visWidth)
+	}
+	if got := ansi.StringWidth(rp.bot); got != rp.visWidth {
+		t.Errorf("bot ansi width=%d visWidth=%d", got, rp.visWidth)
+	}
+}
+
+// TestRenderSessionsAgentsStack_EmptySessionsStillFillsRow — no sessions
+// but 3 agents: top row is bg-filled to agent width, not empty. Prevents
+// the cell from becoming L-shaped.
+func TestRenderSessionsAgentsStack_EmptySessionsStillFillsRow(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+	h.agents.SetTarget(3)
+	for i := 0; i < 60; i++ {
+		h.agents.AnimTick()
+	}
+
+	iconBg := th.OverallGradient[1].Bg
+	_, activeStr, _, activeWidth := h.agents.RenderSplit(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
+	if activeWidth == 0 {
+		t.Fatalf("precondition: active agents row should be non-empty")
+	}
+
+	rp := h.renderSessionsAgentsStack("", 0, activeStr, activeWidth, iconBg)
+
+	if rp.visWidth != activeWidth {
+		t.Errorf("visWidth=%d want %d (active width)", rp.visWidth, activeWidth)
+	}
+	if ansi.StringWidth(rp.top) != activeWidth {
+		t.Errorf("top width=%d want %d (bg-padded)", ansi.StringWidth(rp.top), activeWidth)
+	}
+}
+
+// TestRenderSessionsAgentsStack_BothEmptyReturnsZero — no sessions, no
+// agents: the whole fragment collapses so ViewLines can omit the divider.
+func TestRenderSessionsAgentsStack_BothEmptyReturnsZero(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	iconBg := th.OverallGradient[1].Bg
+	rp := h.renderSessionsAgentsStack("", 0, "", 0, iconBg)
+	if rp.visWidth != 0 || rp.top != "" || rp.bot != "" {
+		t.Errorf("empty stack: got %+v, want zero rowPair", rp)
+	}
+}
+
+// TestRenderBuildShellStack_BothRowsFixedWidth — both rows render at
+// fixedCellWidth so the stack is a consistent rectangle.
+func TestRenderBuildShellStack_BothRowsFixedWidth(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	smoothed := map[string]float64{"build": 2, "shell": 1}
+	rp := h.renderBuildShellStack(smoothed)
+	if rp.visWidth != fixedCellWidth {
+		t.Errorf("visWidth=%d want %d", rp.visWidth, fixedCellWidth)
+	}
+	if got := ansi.StringWidth(rp.top); got != fixedCellWidth {
+		t.Errorf("top width=%d want %d", got, fixedCellWidth)
+	}
+	if got := ansi.StringWidth(rp.bot); got != fixedCellWidth {
+		t.Errorf("bot width=%d want %d", got, fixedCellWidth)
+	}
+}
+
+// TestRenderBuildShellStack_TopIsBuildBotIsShell — structural contract:
+// build on top, shell on bottom. Strip ANSI to test content.
+func TestRenderBuildShellStack_TopIsBuildBotIsShell(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	smoothed := map[string]float64{"build": 2, "shell": 1}
+	rp := h.renderBuildShellStack(smoothed)
+	if !strings.Contains(ansi.Strip(rp.top), "build:") {
+		t.Errorf("top missing build: %q", ansi.Strip(rp.top))
+	}
+	if !strings.Contains(ansi.Strip(rp.bot), "shell:") {
+		t.Errorf("bot missing shell: %q", ansi.Strip(rp.bot))
+	}
+}
+
+// TestHeadline_OfflineNoLCDNoStacks — offline mode must NOT leak stack
+// content onto either row. Quip goes on top, bot is bg-filled.
+func TestHeadline_OfflineNoLCDNoStacks(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	state := fixtureState()
+	state.Online = false
+	h.Update(state)
+
+	lines := h.ViewLines()
+	for i, line := range lines {
+		stripped := ansi.Strip(line)
+		if strings.Contains(stripped, "build:") {
+			t.Errorf("offline line %d leaks build:%q", i, stripped)
+		}
+		if strings.Contains(stripped, "shell:") {
+			t.Errorf("offline line %d leaks shell:%q", i, stripped)
+		}
+		if strings.ContainsRune(stripped, '⌬') {
+			t.Errorf("offline line %d leaks session diamond:%q", i, stripped)
+		}
+	}
+}
+
+// TestHeadline_NarrowTerminalDoesNotPanic — small widths must not panic and
+// must still produce two equal-width rows.
+func TestHeadline_NarrowTerminalDoesNotPanic(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(40, 2)
+	h.Update(fixtureState())
+
+	lines := h.ViewLines()
+	if len(lines) != 2 {
+		t.Fatalf("narrow: got %d lines, want 2", len(lines))
+	}
+	if ansi.StringWidth(lines[0]) != ansi.StringWidth(lines[1]) {
+		t.Errorf("narrow: row widths differ top=%d bot=%d",
+			ansi.StringWidth(lines[0]), ansi.StringWidth(lines[1]))
 	}
 }
 
