@@ -141,7 +141,7 @@ func renderSeverityGradient(th *theme.Theme) string {
 
 	thresh := &theme.SparkThresholds{Warn: 40, Crit: 75}
 	buf := widgets.NewSparkBufs(swatchSparkWidth)
-	pair := widgets.RenderSparkline(data, nil, swatchSparkWidth, 100, thresh, 0, buf, th)
+	pair := widgets.RenderSparkline(data, nil, swatchSparkWidth, 100, thresh, 0, buf, th, false)
 
 	var sb strings.Builder
 	sb.WriteString(pair.Top)

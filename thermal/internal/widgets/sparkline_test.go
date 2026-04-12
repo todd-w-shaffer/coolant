@@ -277,7 +277,7 @@ func TestRenderSparklineOfflineRainbow(t *testing.T) {
 	for i := range data {
 		data[i] = 50
 	}
-	pair := RenderSparkline(data, online, width, 100, nil, 0, buf, testTheme)
+	pair := RenderSparkline(data, online, width, 100, nil, 0, buf, testTheme, false)
 
 	// Bottom row should contain rainbow ANSI escape sequences (e.g., \033[31m).
 	if !strings.Contains(pair.Bottom, "\033[3") {
@@ -294,7 +294,7 @@ func TestRenderSparklineAllOnline(t *testing.T) {
 		data[i] = float64(i * 10)
 		online[i] = true
 	}
-	pair := RenderSparkline(data, online, width, 100, nil, 0, buf, testTheme)
+	pair := RenderSparkline(data, online, width, 100, nil, 0, buf, testTheme, false)
 	if len(pair.Bottom) == 0 {
 		t.Error("all-online sparkline Bottom is empty")
 	}
@@ -302,7 +302,7 @@ func TestRenderSparklineAllOnline(t *testing.T) {
 
 func TestRenderSparklineWidthZero(t *testing.T) {
 	buf := NewSparkBufs(1) // minimal buf
-	pair := RenderSparkline([]float64{1, 2}, []bool{true, true}, 0, 100, nil, 0, buf, testTheme)
+	pair := RenderSparkline([]float64{1, 2}, []bool{true, true}, 0, 100, nil, 0, buf, testTheme, false)
 	if pair.Top != "" || pair.Bottom != "" {
 		t.Errorf("width=0 should produce empty pair, got Top=%q Bottom=%q", pair.Top, pair.Bottom)
 	}

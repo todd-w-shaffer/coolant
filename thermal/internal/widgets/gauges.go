@@ -44,7 +44,12 @@ type Gauges struct {
 	sparkBufs     [3]*SparkBufs  // reusable interpolation buffers, one per gauge
 	theme         *theme.Theme
 	anim          *anim.Profile
+	dimmed        bool // render via theme's dim LUTs (for behind-overlay mode)
 }
+
+// SetDimmed toggles dim rendering. Layout flips this on before rendering
+// gauges behind an overlay, and off after.
+func (g *Gauges) SetDimmed(d bool) { g.dimmed = d }
 
 func NewGauges(th *theme.Theme, ap *anim.Profile) *Gauges {
 	return &Gauges{
@@ -221,17 +226,25 @@ func (g *Gauges) View() string {
 		}
 
 		// Render 2-row sparkline with online/offline mask (buffer-pooled)
-		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i], g.theme)
+		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i], g.theme, g.dimmed)
 
-		// Overlay braille text label on leading empty positions
-		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, g.theme.GaugeDots[ga.dotIdx].ANSI)
+		labelANSI := g.theme.GaugeDots[ga.dotIdx].ANSI
+		if g.dimmed {
+			labelANSI = g.theme.GaugeDots[ga.dotIdx].DimmedANSI
+		}
+		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, labelANSI)
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string
 		if !g.state.Online {
 			coloredVal = "\033[2;36m" + "----" + sparkReset
 		} else {
-			valColor := g.theme.SeverityColor(ga.display, &ga.thresh)
+			var valColor string
+			if g.dimmed {
+				valColor = g.theme.SeverityColorDimmed(ga.display, &ga.thresh)
+			} else {
+				valColor = g.theme.SeverityColor(ga.display, &ga.thresh)
+			}
 			coloredVal = valColor + ga.fmtVal(ga.display) + sparkReset
 		}
 
