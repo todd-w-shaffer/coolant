@@ -277,7 +277,11 @@ func (h *Headline) ViewLines() []string {
 	bgStyle := lipgloss.NewStyle().Background(iconBg)
 	divider := bgStyle.Render(" ")
 
-	// Compose right cluster with single-space dividers.
+	// Compose right cluster with single-space dividers. The bot row of the
+	// first (sessions/agents) fragment is tracked separately so it can be
+	// absorbed into the ghost trail when no active agents exist — ghosts
+	// then end flush under the sessions column instead of floating at its
+	// left edge.
 	var rightTop, rightBot strings.Builder
 	rightVis := 0
 	appendFrag := func(f rowPair) {
@@ -296,6 +300,11 @@ func (h *Headline) ViewLines() []string {
 	appendFrag(sessAgents)
 	appendFrag(buildShell)
 	appendFrag(lcd)
+
+	// When there are no active agents but the sessions/agents cell still
+	// occupies space (sessions > 0), rebuild the bot row so the ghost
+	// trail absorbs the sep + empty stack-bot cells to its right.
+	absorbStackBot := activeWidth == 0 && sessAgents.visWidth > 0
 
 	// Left combined width = quip zone + runtime zone, sharing the bot row for
 	// the ghost tail. Ghosts right-anchor within this width so they visually
@@ -337,10 +346,16 @@ func (h *Headline) ViewLines() []string {
 	}
 	runtimeTop := runtimeCells.String()
 
-	// Ghost tail right-anchored within leftCombined so it ends flush against
-	// the active-agents cell. Overflow (when ghost count exceeds the budget)
-	// silently extends leftward — tolerated for the stale-agent edge case.
-	ghostPadLeft := leftCombined - ghostWidth
+	// Ghost tail right-anchored so it ends flush against the active-agents
+	// cell. When no active agents exist, the anchor extends right by
+	// sep + sessionWidth so ghosts sit under the sessions column instead
+	// of at the empty stack-bot's left edge. Overflow (when ghost count
+	// exceeds the budget) silently extends leftward.
+	ghostArea := leftCombined
+	if absorbStackBot {
+		ghostArea += 1 + sessAgents.visWidth
+	}
+	ghostPadLeft := ghostArea - ghostWidth
 	if ghostPadLeft < 0 {
 		ghostPadLeft = 0
 	}
@@ -352,8 +367,44 @@ func (h *Headline) ViewLines() []string {
 	}
 
 	topLine := leftTop + runtimeTop + sep + rightTop.String()
-	botLine := botLeft + sep + rightBot.String()
+
+	// For the bot row, if we absorbed the stack-cell's bot into the ghost
+	// area, skip that fragment + its leading sep in the right cluster.
+	botRight := rightBot.String()
+	botSep := sep
+	if absorbStackBot {
+		// Strip the sessAgents bot (which is `sessAgents.visWidth` bg cells)
+		// plus the divider that precedes the NEXT fragment. Since sessAgents
+		// was the first fragment (no leading divider) and buildShell/lcd are
+		// appended with leading dividers, we emit botRight starting from the
+		// buildShell fragment — which already carries its own leading sep.
+		botRight = h.rebuildBotRight(buildShell, lcd, divider)
+		// botSep (between ghostArea and right cluster) is unchanged: still a
+		// single divider because ghostArea absorbed sessAgents.visWidth cells
+		// plus the pre-existing sep *between* leftCombined and rightBot. The
+		// divider before buildShell (inside rightBot) becomes the new boundary.
+		botSep = ""
+	}
+	botLine := botLeft + botSep + botRight
 	return []string{topLine, botLine}
+}
+
+// rebuildBotRight composes the bot row's right-cluster starting from the
+// buildShell fragment (sessAgents bot is absorbed into the ghost trail).
+// Each fragment is preceded by a divider — the first divider is the
+// ghost-area/right-cluster boundary, subsequent ones separate fragments.
+func (h *Headline) rebuildBotRight(buildShell, lcd rowPair, divider string) string {
+	var sb strings.Builder
+	write := func(f rowPair) {
+		if f.visWidth == 0 {
+			return
+		}
+		sb.WriteString(divider)
+		sb.WriteString(f.bot)
+	}
+	write(buildShell)
+	write(lcd)
+	return sb.String()
 }
 
 // offlineViewLines renders the quip-only offline mode: top row has the

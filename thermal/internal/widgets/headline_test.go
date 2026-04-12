@@ -187,6 +187,60 @@ func TestHeadline_GhostsDontPushActiveAgents(t *testing.T) {
 	}
 }
 
+// TestHeadline_GhostsAlignUnderSessionsWhenNoActives — when active agents
+// go to zero but stale/KITT ghosts remain, the ghost trail's right edge
+// must sit flush under the sessions column (absorbing the empty stack
+// cell) instead of floating at its left edge with a gap.
+func TestHeadline_GhostsAlignUnderSessionsWhenNoActives(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	// Force the target state: 0 actives, 3 stale/ghost dots. SetTarget
+	// spawns the dot slots; SetStaleCount marks them all stale so the
+	// active/ghost split returns activeWidth=0, ghostWidth=3.
+	h.agents.SetTarget(3)
+	h.agents.SetStaleCount(3)
+	for i := 0; i < 60; i++ {
+		h.agents.AnimTick()
+	}
+
+	lines := h.ViewLines()
+	top := ansi.Strip(lines[0])
+	bot := ansi.Strip(lines[1])
+
+	// Sessions column on top row.
+	sessCol := strings.IndexRune(top, '⌬')
+	if sessCol < 0 {
+		t.Fatalf("top row missing session diamond ⌬: %q", top)
+	}
+	// Convert byte index to rune column.
+	sessRuneCol := utf8.RuneCountInString(top[:sessCol])
+
+	// Rightmost ghost glyph on bot row.
+	rightmostGhost := -1
+	col := 0
+	for _, r := range bot {
+		if r == '⬡' || r == '⏣' || r == '⬢' {
+			rightmostGhost = col
+		}
+		col++
+	}
+	if rightmostGhost < 0 {
+		t.Fatalf("bot row missing ghost glyph (precondition: stale dots should render): %q", bot)
+	}
+
+	if rightmostGhost != sessRuneCol {
+		t.Errorf("ghost right-edge not aligned under sessions column:\n"+
+			"  ghost rightmost col = %d\n"+
+			"  sessions  ⌬    col = %d\n"+
+			"  top: %q\n  bot: %q",
+			rightmostGhost, sessRuneCol, top, bot)
+	}
+}
+
 // TestHeadline_SessionsAboveAgents — sessions diamonds on top row, agent
 // hex glyphs on bottom row, at approximately the same column range.
 func TestHeadline_SessionsAboveAgents(t *testing.T) {
