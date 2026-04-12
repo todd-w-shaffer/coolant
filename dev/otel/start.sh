@@ -14,7 +14,7 @@ command -v grafana    >/dev/null 2>&1 || { echo "brew install grafana"; exit 1; 
 
 # Port-in-use guard — prevents a second start.sh from clobbering a stack
 # already running in another terminal.
-for port_check in "3000:Grafana" "9090:Prometheus"; do
+for port_check in "3000:Grafana" "9090:Prometheus" "9091:Lookups"; do
     port="${port_check%%:*}"
     service="${port_check##*:}"
     if lsof -i ":$port" >/dev/null 2>&1; then
@@ -37,15 +37,33 @@ if [ -n "$GRAFANA_CURRENT_VERSION" ] && [ "$GRAFANA_CURRENT_VERSION" != "$GRAFAN
 fi
 
 GRAFANA_HOME="$(brew --prefix grafana)/share/grafana"
+GRAFANA_PLUGIN_DIR="$GRAFANA_HOME/data/plugins"
+
+# Infinity plugin preflight — phase 3a dashboards bind dynamic-series
+# colors via a "Config from query results" transform sourced from
+# yesoreyeram-infinity-datasource. Install if missing; idempotent.
+if [ ! -d "$GRAFANA_PLUGIN_DIR/yesoreyeram-infinity-datasource" ]; then
+    echo "Installing yesoreyeram-infinity-datasource into $GRAFANA_PLUGIN_DIR ..."
+    mkdir -p "$GRAFANA_PLUGIN_DIR"
+    grafana cli \
+        --homepath "$GRAFANA_HOME" \
+        --pluginsDir "$GRAFANA_PLUGIN_DIR" \
+        plugins install yesoreyeram-infinity-datasource
+fi
 
 cleanup() {
     echo ""
     echo "Shutting down..."
-    kill "$PROM_PID" "$GRAF_PID" 2>/dev/null
-    wait "$PROM_PID" "$GRAF_PID" 2>/dev/null
+    kill "$PROM_PID" "$GRAF_PID" "$LOOKUPS_PID" 2>/dev/null
+    wait "$PROM_PID" "$GRAF_PID" "$LOOKUPS_PID" 2>/dev/null
     echo "Done."
 }
 trap cleanup EXIT INT TERM
+
+echo "Starting lookups HTTP server on :9091 (CSVs for Infinity)..."
+python3 -m http.server 9091 --directory "$SCRIPT_DIR/lookups" \
+    2>&1 | sed 's/^/[lookups]    /' &
+LOOKUPS_PID=$!
 
 echo "Starting Prometheus on :9090 (OTLP receiver enabled)..."
 prometheus \

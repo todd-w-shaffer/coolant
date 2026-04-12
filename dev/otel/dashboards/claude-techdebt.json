@@ -153,7 +153,7 @@
       "gridPos": { "h": 10, "w": 12, "x": 0, "y": 18 },
       "targets": [
         {
-          "expr": "sort_desc(sum by (repo) (claude_code_cost_usage_USD_total))",
+          "expr": "sort_desc(sum by (repo) (claude_code_cost_usage_USD_total{repo!=\"\"}))",
           "legendFormat": "",
           "refId": "A",
           "format": "table",
@@ -226,7 +226,7 @@
       "gridPos": { "h": 10, "w": 12, "x": 12, "y": 18 },
       "targets": [
         {
-          "expr": "sum by (repo) (increase(claude_code_cost_usage_USD_total[1d])) / sum by (repo) (increase(claude_code_lines_of_code_count_total{type=\"added\"}[1d]))",
+          "expr": "sum by (repo) (increase(claude_code_cost_usage_USD_total{repo!=\"\"}[1d])) / sum by (repo) (increase(claude_code_lines_of_code_count_total{repo!=\"\",type=\"added\"}[1d]))",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -235,7 +235,7 @@
         "defaults": {
           "unit": "currencyUSD",
           "decimals": 4,
-          "color": { "mode": "palette-classic" },
+          "color": { "mode": "palette-classic-by-name" },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 40,

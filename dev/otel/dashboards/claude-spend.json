@@ -440,7 +440,12 @@
             "scaleDistribution": { "type": "linear" }
           }
         },
-        "overrides": []
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".*opus.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "#ca9ee6", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*sonnet.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "#babbf1", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*haiku.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "#81c8be", "mode": "fixed" } }] },
+          { "matcher": { "id": "byRegexp", "options": ".*claude-3.*" }, "properties": [{ "id": "color", "value": { "fixedColor": "#f4b8e4", "mode": "fixed" } }] }
+        ]
       },
       "options": {
         "tooltip": { "mode": "multi", "sort": "desc" },
@@ -583,7 +588,7 @@
             "axisBorderShow": false,
             "scaleDistribution": { "type": "linear" }
           },
-          "color": { "mode": "palette-classic" }
+          "color": { "mode": "palette-classic-by-name" }
         },
         "overrides": [
           {

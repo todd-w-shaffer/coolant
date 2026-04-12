@@ -76,13 +76,16 @@ MODEL_KEYED_PANELS = {
     ("claude-models.json", 530),
     ("claude-models.json", 531),
     ("claude-spend.json",  20),
+    ("claude-spend.json",  30),
 }
 
-# Panels whose fieldConfig.defaults lacks any color block. Set a default
-# mode so byName overrides engage cleanly and the audit reads clean.
+# Panels whose default color mode needs to be set or corrected. Injects
+# a color block when defaults has none; replaces the existing mode when
+# one is already present with a different value.
 BARE_COLOR_PANELS = {
     ("claude-cfo.json",      301): "palette-classic-by-name",
     ("claude-insights.json", 531): "palette-classic-by-name",
+    ("claude-spend.json",    41):  "palette-classic-by-name",
     # Model Mix table — every data column has per-column threshold colors
     # via overrides. Default mode is cosmetic here.
     ("claude-models.json",   540): "thresholds",
@@ -222,16 +225,22 @@ def set_default_color_mode(text: str, panel_id: int, mode: str) -> tuple[str, bo
     start, end = span
     block = text[start:end]
 
-    if re.search(rf'"color":\s*\{{\s*"mode":\s*"{re.escape(mode)}"', block):
-        return text, False  # already set
-
     defaults_m = re.search(r'"defaults":\s*\{', block)
     if not defaults_m:
         return text, False
-    insert_at = defaults_m.end()  # right after the `{`
-    # If defaults is non-empty the next non-ws char will be `"`. Inject a
-    # color line + comma after the brace.
-    # Find the indentation of the next content line.
+
+    # If defaults already has a color block with "mode", either skip (match)
+    # or surgically replace just the mode value (mismatch).
+    color_m = re.search(r'"color"\s*:\s*\{\s*"mode"\s*:\s*"([^"]+)"', block)
+    if color_m:
+        if color_m.group(1) == mode:
+            return text, False
+        mstart, mend = color_m.span(1)
+        new_block = block[:mstart] + mode + block[mend:]
+        return text[:start] + new_block + text[end:], True
+
+    # No color block — inject one after the opening `{` of defaults.
+    insert_at = defaults_m.end()
     tail = block[insert_at:]
     indent_m = re.match(r'(\s*)', tail)
     indent = indent_m.group(1) if indent_m else "\n          "
