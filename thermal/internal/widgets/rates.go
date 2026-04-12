@@ -8,21 +8,38 @@ import (
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
+// Help mode constants mirrored from the layout package — mirrored (not
+// imported) to avoid a layout↔widgets import cycle. Layout passes a closure
+// returning these int8 values into NewRates.
+const (
+	rateHelpShort int8 = 0
+	rateHelpFull  int8 = 1
+)
+
 // Rates renders spawn/death/net rates + system stats, all fixed-width,
 // plus a hierarchical session row showing per-session category-typed process glyphs.
 type Rates struct {
-	width int
-	state *model.AppState
-	theme *theme.Theme
+	width    int
+	state    *model.AppState
+	theme    *theme.Theme
+	keys     keys.KeyMap
+	helpMode func() int8
 }
 
-func NewRates(th *theme.Theme) *Rates {
-	return &Rates{theme: th}
+// NewRates constructs the rates widget. helpMode is invoked per View() call;
+// passing a closure keeps widgets free of layout-package types. A nil
+// helpMode is treated as permanently short — useful for tests.
+func NewRates(th *theme.Theme, km keys.KeyMap, helpMode func() int8) *Rates {
+	if helpMode == nil {
+		helpMode = func() int8 { return rateHelpShort }
+	}
+	return &Rates{theme: th, keys: km, helpMode: helpMode}
 }
 
 func (r *Rates) SetSize(w, h int) {
@@ -50,6 +67,12 @@ func (r *Rates) View() string {
 		}
 		return " " + ui.ColorText(ui.CyanColor, fmt.Sprintf("OFFLINE %s", durStr)) +
 			ui.DimText("  —  no API connection, processes will wind down")
+	}
+
+	// Full-help mode short-circuits the entire stats line. Offline-first so
+	// the OFFLINE branch above continues to suppress help, per spec.
+	if r.helpMode() == rateHelpFull {
+		return " " + HelpFullView(r.theme, r.keys, r.width)
 	}
 
 	// Warm/cool/net — fixed width with sign
@@ -122,9 +145,10 @@ func (r *Rates) View() string {
 		sb.WriteString(ui.DimText("⊙ Chrome"))
 	}
 
-	// Help hint
+	// Help hint — themed short form via bubbles/help, or "[?]" below
+	// HelpShortMinWidth (handled inside HelpShortView).
 	sb.WriteString("  ")
-	sb.WriteString(ui.DimText("[h] help"))
+	sb.WriteString(HelpShortView(r.theme, r.keys, r.width))
 
 	return sb.String()
 }

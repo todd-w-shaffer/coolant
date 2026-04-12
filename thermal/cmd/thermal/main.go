@@ -8,11 +8,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/demo"
+	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
@@ -29,6 +32,7 @@ type model struct {
 	width     int
 	height    int
 	layout    *layout.Horizontal
+	keys      keys.KeyMap
 	done      chan struct{}
 	demoMode  bool
 	snapChan  chan collector.Snapshot
@@ -36,8 +40,10 @@ type model struct {
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
+	km := keys.Default()
 	return model{
-		layout:    layout.NewHorizontal(th, ap),
+		layout:    layout.NewHorizontal(th, ap, km),
+		keys:      km,
 		done:      make(chan struct{}),
 		demoMode:  demoMode,
 		snapChan:  make(chan collector.Snapshot, 16),
@@ -106,17 +112,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
+		// Full-help mode: any key dismisses without dispatching its action.
+		if m.layout.HelpMode() == layout.HelpFull {
+			m.layout.DismissHelp()
+			return m, nil
+		}
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			close(m.done)
 			return m, tea.Quit
-		case "h":
-			m.layout.ToggleHelp()
-		case "c":
+		case key.Matches(msg, m.keys.Help):
+			return m, m.layout.ToggleHelp()
+		case key.Matches(msg, m.keys.Collapse):
 			m.layout.ToggleCollapse()
-		case "x":
+		case key.Matches(msg, m.keys.PurgeStale):
 			m.layout.State().PurgeStaleAgents()
 		}
+
+	case layout.HelpDismissMsg:
+		m.layout.DismissHelp()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

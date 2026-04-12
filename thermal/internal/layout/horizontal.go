@@ -3,15 +3,30 @@ package layout
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
 )
+
+// Help mode states. int8 (not bool) to leave room for future modes
+// (per-widget contextual help) without changing the public API.
+const (
+	HelpShort int8 = 0
+	HelpFull  int8 = 1
+)
+
+// HelpDismissMsg is delivered by the auto-dismiss tick scheduled when help
+// enters full mode. main.go forwards it to (*Horizontal).DismissHelp.
+type HelpDismissMsg struct{}
 
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).
 // Layout order:
@@ -29,20 +44,21 @@ type Horizontal struct {
 	gauges    *widgets.Gauges
 	rates     *widgets.Rates
 	alerts    *widgets.Alerts
-	helpMode  bool
+	helpMode  int8
 	collapsed bool
 	theme     *theme.Theme
 }
 
-func NewHorizontal(th *theme.Theme, ap *anim.Profile) *Horizontal {
-	return &Horizontal{
+func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizontal {
+	h := &Horizontal{
 		state:    model.NewAppState(),
 		headline: widgets.NewHeadline(th, ap),
 		gauges:   widgets.NewGauges(th, ap),
-		rates:    widgets.NewRates(th),
 		alerts:   widgets.NewAlerts(th),
 		theme:    th,
 	}
+	h.rates = widgets.NewRates(th, km, h.HelpMode)
+	return h
 }
 
 func (h *Horizontal) State() *model.AppState {
@@ -63,8 +79,28 @@ func (h *Horizontal) SetHighScoreMode(on bool) {
 	h.headline.SetHighScoreMode(on)
 }
 
-func (h *Horizontal) ToggleHelp() {
-	h.helpMode = !h.helpMode
+// HelpMode returns the current help panel state (HelpShort or HelpFull).
+func (h *Horizontal) HelpMode() int8 {
+	return h.helpMode
+}
+
+// ToggleHelp flips between short and full help. When entering full mode it
+// returns a one-shot tea.Cmd that fires HelpDismissMsg after
+// config.HelpAutoDismiss; when leaving full mode it returns nil.
+func (h *Horizontal) ToggleHelp() tea.Cmd {
+	if h.helpMode == HelpFull {
+		h.helpMode = HelpShort
+		return nil
+	}
+	h.helpMode = HelpFull
+	return tea.Tick(config.HelpAutoDismiss, func(_ time.Time) tea.Msg {
+		return HelpDismissMsg{}
+	})
+}
+
+// DismissHelp returns to short mode unconditionally. Idempotent.
+func (h *Horizontal) DismissHelp() {
+	h.helpMode = HelpShort
 }
 
 func (h *Horizontal) ToggleCollapse() {
@@ -112,9 +148,7 @@ func (h *Horizontal) activeView() string {
 		lines = append(lines, h.headline.View())
 	}
 
-	if h.helpMode && h.height >= 5 {
-		lines = append(lines, h.helpView()...)
-	} else if h.height >= 3 {
+	if h.height >= 3 {
 		lines = append(lines, h.gauges.ViewLines(h.height)...)
 	}
 
@@ -123,30 +157,6 @@ func (h *Horizontal) activeView() string {
 	}
 
 	return h.padToHeight(lines)
-}
-
-func (h *Horizontal) helpView() []string {
-	d := h.theme.HelpColor
-	ct := ui.ColorText
-	dim := ui.DimText
-	sp := h.theme.SessionPhase
-
-	diamond := func(c color.Color) string { return ct(c, "⌬") }
-
-	return []string{
-		" " + dim("sparklines") + " " + ct(d, "CPU cores") + "  " + ct(d, "MEM app memory") + "  " +
-			ct(d, "SWAP compressor pressure — spikes before lockup") + "  " +
-			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
-		" " + dim("sessions") + " " + diamond(sp.Idle) + "  " + ct(d, "idle") + " " +
-			diamond(sp.Active) + " " + ct(d, "active") + "  " +
-			diamond(sp.Language) + " " + ct(d, "language") + "  " +
-			diamond(sp.Build) + " " + ct(d, "build") + "  " +
-			diamond(sp.Explosion) + " " + ct(d, "shells (30+)"),
-		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphMid) + dim(ui.AgentGlyphFilled) + " " +
-			ct(d, "subagents — tidal wave hollow/mid/filled, ghosts KITT-scan") + "  " +
-			dim("categories track process types in the headline bar"),
-		" " + dim("[h] close") + "  " + dim("[c] collapse") + "  " + dim("[x] purge ghosts") + "  " + dim("[q] quit"),
-	}
 }
 
 func (h *Horizontal) idleView() string {

@@ -286,7 +286,7 @@ func renderChrome(th *theme.Theme) string {
 	sb.WriteString("  ")
 	sb.WriteString(colorText(th.HelpColor, "help text"))
 	sb.WriteString("  ")
-	sb.WriteString(colorText(th.IdleColor, "[h] help"))
+	sb.WriteString(colorText(th.IdleColor, "idle text"))
 	return sb.String()
 }
 
