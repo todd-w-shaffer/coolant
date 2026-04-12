@@ -122,15 +122,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			close(m.done)
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Help):
-			return m, m.layout.ToggleHelp()
+			m.layout.ToggleHelp()
 		case key.Matches(msg, m.keys.Collapse):
 			m.layout.ToggleCollapse()
 		case key.Matches(msg, m.keys.PurgeStale):
 			m.layout.State().PurgeStaleAgents()
 		}
-
-	case layout.HelpDismissMsg:
-		m.layout.DismissHelp()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width

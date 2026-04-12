@@ -252,7 +252,7 @@ func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color, th 
 		} else {
 			c = sessionPhaseColor(&g, th)
 		}
-		sb.WriteString(lipgloss.NewStyle().Foreground(c).Background(bg).Render("⌬"))
+		sb.WriteString(lipgloss.NewStyle().Foreground(c).Background(bg).Render(ui.SessionDiamondGlyph))
 		visWidth++
 	}
 	return sb.String(), visWidth

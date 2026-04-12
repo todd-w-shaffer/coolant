@@ -22,12 +22,9 @@ func TestToggleHelpEntersFullMode(t *testing.T) {
 	if got := h.HelpMode(); got != HelpShort {
 		t.Fatalf("initial HelpMode = %d, want %d", got, HelpShort)
 	}
-	cmd := h.ToggleHelp()
+	h.ToggleHelp()
 	if got := h.HelpMode(); got != HelpFull {
 		t.Errorf("after ToggleHelp HelpMode = %d, want %d", got, HelpFull)
-	}
-	if cmd == nil {
-		t.Errorf("ToggleHelp() entering full mode should return a non-nil tea.Cmd (auto-dismiss tick)")
 	}
 }
 
@@ -52,11 +49,8 @@ func TestDismissHelpIdempotent(t *testing.T) {
 func TestToggleHelpFromFullReturnsToShort(t *testing.T) {
 	h := newHorizontalForTest(t)
 	h.ToggleHelp()
-	cmd := h.ToggleHelp()
+	h.ToggleHelp()
 	if got := h.HelpMode(); got != HelpShort {
 		t.Errorf("toggling from full HelpMode = %d, want %d", got, HelpShort)
-	}
-	if cmd != nil {
-		t.Errorf("ToggleHelp() leaving full mode should return nil cmd, got non-nil")
 	}
 }

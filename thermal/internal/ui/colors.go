@@ -59,6 +59,10 @@ const AgentGlyphHollow = "⬡"
 const AgentGlyphMid = "⏣"
 const AgentGlyphFilled = "⬢"
 
+// SessionDiamondGlyph is the phase-colored session indicator rendered in the
+// headline, the help legend, and the swatch preview.
+const SessionDiamondGlyph = "⌬"
+
 // CategoryGlyph maps activity categories to distinct single-cell unicode glyphs.
 // Visual weight mirrors resource weight: heavy categories get solid shapes.
 var CategoryGlyph = map[string]string{

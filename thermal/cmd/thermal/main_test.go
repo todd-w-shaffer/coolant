@@ -32,12 +32,18 @@ func TestHelpKeyEntersFullMode(t *testing.T) {
 	if got := m.layout.HelpMode(); got != layout.HelpShort {
 		t.Fatalf("initial HelpMode = %d, want %d", got, layout.HelpShort)
 	}
-	m, cmd := pressKey(t, m, "h")
+	m, _ = pressKey(t, m, "h")
 	if got := m.layout.HelpMode(); got != layout.HelpFull {
 		t.Errorf("after 'h' HelpMode = %d, want %d", got, layout.HelpFull)
 	}
-	if cmd == nil {
-		t.Errorf("'h' should return non-nil cmd (auto-dismiss tick)")
+}
+
+func TestHelpKeyTogglesOffFromFullMode(t *testing.T) {
+	m := newTestModel(t)
+	m, _ = pressKey(t, m, "h")
+	m, _ = pressKey(t, m, "h")
+	if got := m.layout.HelpMode(); got != layout.HelpShort {
+		t.Errorf("after second 'h' HelpMode = %d, want %d", got, layout.HelpShort)
 	}
 }
 
@@ -63,18 +69,5 @@ func TestKeyConsumedInFullMode(t *testing.T) {
 	case <-m.done:
 		t.Errorf("'q' in full mode should not have closed done channel")
 	default:
-	}
-}
-
-func TestHelpDismissMsgReturnsToShort(t *testing.T) {
-	m := newTestModel(t)
-	m, _ = pressKey(t, m, "h")
-	if got := m.layout.HelpMode(); got != layout.HelpFull {
-		t.Fatalf("setup: HelpMode = %d, want %d", got, layout.HelpFull)
-	}
-	out, _ := m.Update(layout.HelpDismissMsg{})
-	m = out.(model)
-	if got := m.layout.HelpMode(); got != layout.HelpShort {
-		t.Errorf("after HelpDismissMsg HelpMode = %d, want %d", got, layout.HelpShort)
 	}
 }
