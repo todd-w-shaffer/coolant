@@ -60,8 +60,16 @@ def classify(panel: dict) -> tuple[str, str, list[str]]:
         mode in CLASSIC_MODES and frappe_override_hits >= 2
     )
 
+    # configFromData transform binds per-series colors from a lookup query.
+    # When present, default color.mode is irrelevant — theming is driven
+    # entirely by the joined color column.
+    transforms = panel.get("transformations", []) or []
+    has_config_from_data = any(
+        (t or {}).get("id") == "configFromData" for t in transforms
+    )
+
     issues = []
-    if mode in CLASSIC_MODES and not classic_with_frappe_fallback:
+    if mode in CLASSIC_MODES and not classic_with_frappe_fallback and not has_config_from_data:
         issues.append(f"mode={mode}")
     if mode == "(none)":
         issues.append("no color block")
@@ -75,7 +83,7 @@ def classify(panel: dict) -> tuple[str, str, list[str]]:
 
     if not issues:
         status = "✅ themed"
-    elif classic_with_frappe_fallback:
+    elif classic_with_frappe_fallback or has_config_from_data:
         status = "✅ themed"
     elif mode in CLASSIC_MODES and not named_leftovers and not non_frappe_hex:
         status = "🌈 classic-palette"

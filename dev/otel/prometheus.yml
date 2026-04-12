@@ -6,5 +6,14 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Promote selected OTEL resource attributes to metric labels so PromQL
+# can aggregate `by (repo)` without joining target_info. Without this,
+# env.sh's OTEL_RESOURCE_ATTRIBUTES land on target_info only.
+otlp:
+  promote_resource_attributes:
+    - repo
+    - service.name
+    - service.instance.id
+
 # No scrape_configs needed — Claude Code pushes via OTLP to
 # /api/v1/otlp/v1/metrics (enabled by --enable-feature=otlp-write-receiver)

@@ -7,9 +7,9 @@
 - ⚪ default: 10
 
 
-- 🌈 classic-palette: 4
+- 🌈 classic-palette: 3
 
-- ✅ themed: 78
+- ✅ themed: 79
 
 ## claude-cfo.json
 
@@ -90,11 +90,11 @@
 | 21 | Token Mix | ✅ themed | `thresholds` | — |
 | 22 | Spend per Session | ✅ themed | `thresholds` | — |
 | 3 |  | ⚪ default | `(none)` | no color block |
-| 30 | Cost Over Time | 🌈 classic-palette | `palette-classic-by-name` | mode=palette-classic-by-name |
+| 30 | Cost Over Time | ✅ themed | `palette-classic-by-name` | — |
 | 31 | Token Rate by Type | ✅ themed | `palette-classic` | — |
 | 4 |  | ⚪ default | `(none)` | no color block |
 | 40 | Lines Added vs Removed | ✅ themed | `fixed` | — |
-| 41 | Edit Decisions | ✅ themed | `palette-classic` | — |
+| 41 | Edit Decisions | ✅ themed | `palette-classic-by-name` | — |
 | 42 | Active Time | ✅ themed | `fixed` | — |
 
 ## claude-techdebt.json
@@ -106,7 +106,7 @@
 | 200 | Think-to-Ship Ratio — by Repo | ✅ themed | `thresholds` | — |
 | 201 | Edit Rejection Rate — by Repo | ✅ themed | `thresholds` | — |
 | 300 | Total Spend — by Repo | ✅ themed | `thresholds` | — |
-| 301 | Cost per Line Added — Daily Trend | 🌈 classic-palette | `palette-classic` | mode=palette-classic |
+| 301 | Cost per Line Added — Daily Trend | 🌈 classic-palette | `palette-classic-by-name` | mode=palette-classic-by-name |
 
 ## claude-vpeng.json
 
