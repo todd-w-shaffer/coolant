@@ -24,13 +24,15 @@ var segmentDigits = [10]digitBitmap{
 	/* 9 */ {".####.", "#....#", "#....#", "######", ".....#", ".....#", "#....#", ".####."},
 }
 
-// segmentDegree is the 2-pixel-wide degree glyph (top half only). Packed
-// into the digitBitmap shape for type uniformity; only cols 0–1 are read.
+// segmentDegree is the 4-pixel-wide hollow ring degree glyph (top half
+// only). Packed into the digitBitmap shape for type uniformity; only
+// cols 0–3 are read. The left and right halves mirror each other so the
+// two output braille cells form a symmetric ring outline.
 var segmentDegree = digitBitmap{
-	".#....",
-	"#.....",
-	"#.....",
-	".#....",
+	".##...",
+	"#..#..",
+	"#..#..",
+	".##...",
 	"......",
 	"......",
 	"......",
@@ -63,19 +65,24 @@ func digitToBraille(bmp digitBitmap) (top [3]rune, bot [3]rune) {
 	return
 }
 
-// degreeToBraille packs the degree glyph's leftmost 2 pixel columns into a
-// single top rune. The bottom rune is always blank (U+2800) so the glyph
+// degreeToBraille packs the degree glyph's 4 pixel columns into 2 top
+// braille cells. Bottom cells are always blank (U+2800) so the glyph
 // floats in the top half of its 2-row cell.
-func degreeToBraille() (top, bot rune) {
-	for row := 0; row < 4; row++ {
-		if segmentDegree[row][0] == '#' {
-			top |= fontLeftBits[row]
+func degreeToBraille() (top, bot [2]rune) {
+	for col := 0; col < 2; col++ {
+		pixCol := col * 2
+		for row := 0; row < 4; row++ {
+			if segmentDegree[row][pixCol] == '#' {
+				top[col] |= fontLeftBits[row]
+			}
+			if segmentDegree[row][pixCol+1] == '#' {
+				top[col] |= fontRightBits[row]
+			}
 		}
-		if segmentDegree[row][1] == '#' {
-			top |= fontRightBits[row]
-		}
+		top[col] |= 0x2800
+		bot[col] = 0x2800
 	}
-	return top | 0x2800, 0x2800
+	return
 }
 
 // RenderTemperature formats value as a zero-padded 3-digit number followed
@@ -108,7 +115,9 @@ func RenderTemperature(value int) (top, bot string, visWidth int) {
 		}
 	}
 	dt, db := degreeToBraille()
-	topB.WriteRune(dt)
-	botB.WriteRune(db)
-	return topB.String(), botB.String(), 12
+	topB.WriteRune(dt[0])
+	topB.WriteRune(dt[1])
+	botB.WriteRune(db[0])
+	botB.WriteRune(db[1])
+	return topB.String(), botB.String(), 13
 }
