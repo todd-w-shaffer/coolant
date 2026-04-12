@@ -33,6 +33,12 @@ type Theme struct {
 	lowANSI    string      // cached: truecolorFg(GradientLow)
 	highANSI   string      // cached: truecolorFg(GradientHigh)
 
+	// Dimmed variants — HCL-dimmed copies for rendering behind overlays.
+	dimLowMidLUT  [101]string
+	dimMidHighLUT [101]string
+	dimLowANSI    string
+	dimHighANSI   string
+
 	// -- Overall thermal gradient (headline bar) --
 	OverallGradient [5]ThermalLevel
 
@@ -91,25 +97,40 @@ type GaugeDotColor struct {
 	Color        color.Color // lipgloss color for styled rendering
 	ANSIOverride string      // explicit ANSI escape (e.g. "\033[37m" for 16-color); if set, Init skips truecolor derivation
 	ANSI         string      // raw ANSI color escape (set by Init from ANSIOverride or truecolor derivation)
+	DimmedANSI   string      // HCL-dimmed variant used behind overlays (set by Init)
 	Formatted    string      // pre-computed: ANSI + Char + reset + space (derived by Init)
 }
 
+// DimOverlayRatio scales lightness and chroma of theme colors when they
+// render behind an overlay. 1.0 = full color, 0 = black. Tuned to leave
+// sparklines readable as live motion but visually recede behind help text.
+const DimOverlayRatio = 0.5
+
 // Init pre-computes LUTs and derived ANSI strings. Called once at theme load.
 func (t *Theme) Init() {
+	dimLow := dimColorful(t.GradientLow, DimOverlayRatio)
+	dimMid := dimColorful(t.GradientMid, DimOverlayRatio)
+	dimHigh := dimColorful(t.GradientHigh, DimOverlayRatio)
 	for i := 0; i <= 100; i++ {
 		ratio := float64(i) / 100.0
 		t.lowMidLUT[i] = truecolorFg(t.GradientLow.BlendHcl(t.GradientMid, ratio).Clamped())
 		t.midHighLUT[i] = truecolorFg(t.GradientMid.BlendHcl(t.GradientHigh, ratio).Clamped())
+		t.dimLowMidLUT[i] = truecolorFg(dimLow.BlendHcl(dimMid, ratio).Clamped())
+		t.dimMidHighLUT[i] = truecolorFg(dimMid.BlendHcl(dimHigh, ratio).Clamped())
 	}
 	t.lowANSI = truecolorFg(t.GradientLow)
 	t.highANSI = truecolorFg(t.GradientHigh)
+	t.dimLowANSI = truecolorFg(dimLow)
+	t.dimHighANSI = truecolorFg(dimHigh)
 
 	for i := range t.GaugeDots {
 		d := &t.GaugeDots[i]
 		if d.ANSIOverride != "" {
 			d.ANSI = d.ANSIOverride
+			d.DimmedANSI = d.ANSIOverride // 16-color palettes have no truecolor dim variant; reuse.
 		} else {
 			d.ANSI = truecolorFgFromColor(d.Color)
+			d.DimmedANSI = truecolorDimmedFgFromColor(d.Color, DimOverlayRatio)
 		}
 		d.Formatted = d.ANSI + d.Char + "\033[0m "
 	}
@@ -145,6 +166,27 @@ func (t *Theme) SeverityColor(v float64, thresh *SparkThresholds) string {
 	}
 }
 
+// SeverityColorDimmed mirrors SeverityColor but reads the HCL-dimmed LUTs,
+// producing theme-faithful muted colors for rendering behind overlays.
+func (t *Theme) SeverityColorDimmed(v float64, thresh *SparkThresholds) string {
+	if thresh == nil {
+		return t.dimLowANSI
+	}
+	switch {
+	case v >= thresh.Crit:
+		return t.dimHighANSI
+	case v >= thresh.Warn:
+		ratio := (v - thresh.Warn) / (thresh.Crit - thresh.Warn)
+		return t.dimMidHighLUT[blendIndex(ratio)]
+	default:
+		if thresh.Warn <= 0 {
+			return t.dimLowANSI
+		}
+		ratio := v / thresh.Warn
+		return t.dimLowMidLUT[blendIndex(ratio)]
+	}
+}
+
 // blendIndex clamps a ratio to [0,1] and converts to a LUT index 0-100.
 func blendIndex(ratio float64) int {
 	if ratio <= 0 {
@@ -166,6 +208,21 @@ func truecolorFg(c colorful.Color) string {
 func truecolorFgFromColor(c color.Color) string {
 	r, g, b, _ := c.RGBA()
 	return fmt.Sprintf("\033[38;2;%d;%d;%dm", r>>8, g>>8, b>>8)
+}
+
+// truecolorDimmedFgFromColor returns a dimmed truecolor ANSI escape by
+// scaling the color's HCL chroma and lightness by ratio.
+func truecolorDimmedFgFromColor(c color.Color, ratio float64) string {
+	r, g, b, _ := c.RGBA()
+	cf := colorful.Color{R: float64(r>>8) / 255.0, G: float64(g>>8) / 255.0, B: float64(b>>8) / 255.0}
+	return truecolorFg(dimColorful(cf, ratio))
+}
+
+// dimColorful scales HCL chroma and lightness by ratio. Preserves hue so
+// dimmed colors still read as theme-faithful muted variants.
+func dimColorful(c colorful.Color, ratio float64) colorful.Color {
+	h, ch, l := c.Hcl()
+	return colorful.Hcl(h, ch*ratio, l*ratio).Clamped()
 }
 
 // mustHex parses a hex color string or panics. Used by palette constructors.

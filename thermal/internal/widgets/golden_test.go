@@ -234,7 +234,7 @@ func captureSparkline() string {
 		online[i] = true
 	}
 	thresh := &theme.SparkThresholds{Warn: 70, Crit: 90}
-	pair := RenderSparkline(data, online, width, 100, thresh, 0, buf, th)
+	pair := RenderSparkline(data, online, width, 100, thresh, 0, buf, th, false)
 	return fmt.Sprintf("TOP:%s\nBOT:%s\n", pair.Top, pair.Bottom)
 }
 

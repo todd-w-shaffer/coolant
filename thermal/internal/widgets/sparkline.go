@@ -233,14 +233,16 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 // RenderSparkline renders a 2-row sparkline where offline ticks become
 // rainbow dots, reusing pre-allocated interpolation buffers to avoid per-frame
 // allocations. Two samples per character, two stacked characters per column.
-func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme) SparkPair {
-	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th)
+// When dimmed is true, colors render via the theme's dim LUTs so the sparkline
+// recedes behind an overlay but stays visible as live motion.
+func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed)
 }
 
 // renderSparklineCore is the implementation for sparkline rendering.
 // When mask is nil, all samples are treated as online (no rainbow/offline logic).
 // buf must be non-nil — callers allocate once via NewSparkBufs and reuse.
-func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme) SparkPair {
+func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
 	if width <= 0 {
 		return SparkPair{}
 	}
@@ -357,7 +359,12 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		realBotL, realTopL := levelSplit(levL)
 		realBotR, realTopR := levelSplit(levR)
 
-		ansi := th.SeverityColor(colorVal, thresh)
+		var ansi string
+		if dimmed {
+			ansi = th.SeverityColorDimmed(colorVal, thresh)
+		} else {
+			ansi = th.SeverityColor(colorVal, thresh)
+		}
 
 		topBits := leftBits[realTopL] | rightBits[realTopR]
 		botBits := leftBits[realBotL] | rightBits[realBotR] | offlineLBits | offlineRBits

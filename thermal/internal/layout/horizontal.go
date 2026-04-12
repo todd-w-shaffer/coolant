@@ -6,6 +6,8 @@ import (
 	"image/color"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
@@ -134,7 +136,10 @@ func (h *Horizontal) activeView() string {
 	}
 
 	if h.helpMode == HelpFull && h.height >= 5 {
-		lines = append(lines, h.helpView()...)
+		h.gauges.SetDimmed(true)
+		gaugeLines := h.gauges.ViewLines(h.height)
+		h.gauges.SetDimmed(false)
+		lines = append(lines, overlayHelp(h.helpView(), gaugeLines)...)
 	} else if h.height >= 3 {
 		lines = append(lines, h.gauges.ViewLines(h.height)...)
 	}
@@ -144,6 +149,30 @@ func (h *Horizontal) activeView() string {
 	}
 
 	return h.padToHeight(lines)
+}
+
+// overlayHelp composes help lines over dimmed gauge lines using the widest
+// help line as the opacity border: each help row is padded to that width,
+// and dimmed sparkline shows through from that column onward on every row.
+// Gauge rows below the help block render as unmodified dimmed sparklines.
+func overlayHelp(help, gaugeLines []string) []string {
+	if len(gaugeLines) == 0 {
+		return gaugeLines
+	}
+	var border int
+	for _, l := range help {
+		if w := ansi.StringWidth(l); w > border {
+			border = w
+		}
+	}
+	out := make([]string, len(gaugeLines))
+	copy(out, gaugeLines)
+	for i := 0; i < len(help) && i < len(out); i++ {
+		pad := strings.Repeat(" ", border-ansi.StringWidth(help[i]))
+		right := ansi.TruncateLeft(gaugeLines[i], border, "")
+		out[i] = help[i] + pad + right
+	}
+	return out
 }
 
 func (h *Horizontal) helpView() []string {
