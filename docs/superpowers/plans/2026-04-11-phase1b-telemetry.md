@@ -25,19 +25,92 @@ When dispatching tasks B1–B8 via `superpowers:subagent-driven-development`, ea
 | B5 | `scripts/compact.sh`, `tests/compact.bats` | `scripts/common.sh`, `bin/coolant-emit` |
 | B6 | `scripts/session-end.sh`, `tests/session-end.bats` | `scripts/common.sh`, `bin/coolant-emit` |
 | B7 | `scripts/agent-start.sh`, `scripts/agent-stop.sh` (extend both), `tests/agent-start.bats`, `tests/agent-stop.bats` | `scripts/common.sh`, `bin/coolant-emit` |
-| B8 | `skills/coolant/skills/commit/*` or wherever `/commit` lives, its tests | Prometheus OTLP endpoint at query time |
+| B8 | **External to this repo** — `~/.claude/plugins/local/personal-plugins/plugins/commit-skill/skills/commit/SKILL.md` and a new `bin/coolant-trailer.sh` in that plugin | Prometheus OTLP endpoint at query time, JSONL event log for session_id resolution |
 
 **No two tasks write the same file.** B9 is the only task that edits `hooks/hooks.json`.
 
 ---
 
-## Task B0 — `coolant-emit` CLI (SERIAL bootstrap)
+## Task B0 — `coolant-emit` CLI and shared test-helper prep (SERIAL bootstrap)
 
 **Files:**
 - Create: `cmd/coolant-emit/main.go`
 - Create: `cmd/coolant-emit/main_test.go`
+- Modify: `tests/test_helper.bash` (extract reusable `_common_setup` and `_common_teardown`)
 - Modify: `install.sh` (add build step for `coolant-emit`)
 - Modify: `CLAUDE.md` (document the binary in the Quick reference section)
+
+### Step 0: Extract reusable setup/teardown helpers from `tests/test_helper.bash`
+
+The current `tests/test_helper.bash` defines `setup()` and `teardown()` at the top level. Bats calls those automatically for every test that `load 'test_helper'`. But tests in B1–B8 need to *add* behavior to setup (installing a `coolant-emit` stub) without losing the existing env-var exports. Extract the body into reusable helpers.
+
+Open `tests/test_helper.bash`. Current content:
+```bash
+#!/usr/bin/env bash
+# Shared test setup — isolates all coolant state to a temp directory
+# so tests never touch the real /tmp/coolant-* files.
+
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
+
+setup() {
+  TEST_TMPDIR="$(mktemp -d)"
+  export COOLANT_LOCKFILE="${TEST_TMPDIR}/coolant.lock"
+  export COOLANT_COUNTER="${TEST_TMPDIR}/coolant.count"
+  export COOLANT_LOG="${TEST_TMPDIR}/coolant.log"
+  export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
+  export COOLANT_THRESHOLD=3
+  export _COOLANT_NCPU=10
+}
+
+make_pre_tool_use() { ... }  # unchanged
+
+teardown() {
+  rm -rf "$TEST_TMPDIR"
+}
+```
+
+Replace with:
+```bash
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Shared test setup — isolates all coolant state to a temp directory
+# so tests never touch the real /tmp/coolant-* files.
+
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$TESTS_DIR/.." && pwd)"
+
+# Reusable setup body — tests that need extra setup should define:
+#   setup() { _common_setup; ...extra... }
+_common_setup() {
+  TEST_TMPDIR="$(mktemp -d)"
+  export COOLANT_LOCKFILE="${TEST_TMPDIR}/coolant.lock"
+  export COOLANT_COUNTER="${TEST_TMPDIR}/coolant.count"
+  export COOLANT_LOG="${TEST_TMPDIR}/coolant.log"
+  export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
+  export COOLANT_THRESHOLD=3
+  export _COOLANT_NCPU=10
+}
+
+_common_teardown() {
+  rm -rf "$TEST_TMPDIR"
+}
+
+# Default setup/teardown — existing tests that don't override inherit these.
+setup() { _common_setup; }
+teardown() { _common_teardown; }
+
+# Build a PreToolUse stdin JSON payload for testing gate.sh.
+make_pre_tool_use() {
+  printf '{"session_id":"test-s","tool_name":"%s","tool_input":{"command":"%s","description":"test"},"hook_event_name":"PreToolUse"}' "$1" "$2"
+}
+```
+
+Verify existing tests still pass:
+```bash
+bats tests/
+```
+Expected: same pass count as before. No regressions.
 
 ### Step 1: Write the failing test
 
@@ -664,7 +737,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
-EMIT="${COOLANT_EMIT:-coolant-emit}"
+EMIT="${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}"
 
 # Read the hook payload from stdin (JSON, one shot).
 payload=$(cat)
@@ -781,20 +854,25 @@ Expected: the three new tests FAIL; existing tests continue to PASS.
 
 ### Step 3: Extend `preflight.sh`
 
-Open `scripts/preflight.sh`. After the existing preflight logic (worktree warnings etc.), before the final `exit 0`, insert:
+The existing `preflight.sh` reads stdin into a variable named `input` at line 10. It has no final `exit 0` — the script ends naturally. The existing script's structure (for reference):
+
+```
+line 10:  input=$(cat)
+line 13:  coolant_event '"event":"counter.reset"'
+line 15:  cwd=$(echo "$input" | _json_field cwd)
+lines 20-41:  worktree exclusion warnings, emits hookSpecificOutput JSON
+```
+
+Insert the new telemetry block **between line 13 and line 15** (after `counter.reset` event, before the `cwd` extraction). This keeps the session-start counter-reset ordering correct and preserves all existing behavior. The block reuses `$input` — do NOT re-read stdin.
+
+The block to insert:
 
 ```bash
-# ---- Phase 1 telemetry additions ----
+# ---- Phase 1 telemetry: session start metrics + HEAD cache ----
 
-EMIT="${COOLANT_EMIT:-coolant-emit}"
+EMIT="${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}"
 
-# Read stdin payload (if we haven't already consumed it above — if we
-# have, adjust this to reference the existing variable).
-if [ -z "${_preflight_payload:-}" ]; then
-  _preflight_payload=$(cat)
-fi
-
-_session_id=$(printf '%s' "$_preflight_payload" | _json_field session_id)
+_session_id=$(echo "$input" | _json_field session_id)
 
 # Cache HEAD SHA for session-end diff.
 if [ -n "$_session_id" ]; then
@@ -816,10 +894,10 @@ if [ -n "$_session_id" ]; then
 fi
 "$EMIT" counter coolant_session_start_total branch_state="$_branch_state" $_labels || true
 
-unset _preflight_payload _session_id _cache _head _branch_state _labels
+unset _session_id _cache _head _branch_state _labels
 ```
 
-Note: if existing `preflight.sh` already reads stdin into a named variable, use that variable rather than re-reading — stdin is a one-shot stream. If unclear, read the existing script first and adapt.
+Do not modify any other part of `preflight.sh`. The worktree exclusion warnings and `hookSpecificOutput` emission below the insertion point must remain intact.
 
 ### Step 4: Run all preflight tests to verify green
 
@@ -877,20 +955,31 @@ Expected: the new test fails; existing gate tests still pass.
 
 ### Step 3: Extend `gate.sh`
 
-Open `scripts/gate.sh`. Find where the stdin payload is captured (it will already exist since gate.sh does JSON parsing today). Immediately after the stdin capture and before the gate decision logic, add:
+The existing `gate.sh` reads stdin into `input` at line 14, then at line 17 does an early exit for non-Bash tool calls:
+```
+line 14:  input=$(cat)
+line 17:  if [[ "$input" != *'"tool_name"'*'"Bash"'* ]]; then exit 0; fi
+```
+
+Insert the telemetry counter **between line 14 and line 17** so it emits for ALL tool invocations, not just Bash. This captures tool-level observability without changing gate's existing Bash-only gating behavior.
+
+The block to insert between the stdin read and the non-Bash early exit:
 
 ```bash
-# ---- Phase 1 telemetry: tool invocation counter ----
-_tool_name=$(printf '%s' "$_gate_payload" | _json_field tool_name)
-_session_id=$(printf '%s' "$_gate_payload" | _json_field session_id)
+# ---- Phase 1 telemetry: tool invocation counter (all tools) ----
+_tool_name=$(echo "$input" | _json_field tool_name)
+_session_id=$(echo "$input" | _json_field session_id)
 if [ -n "$_tool_name" ]; then
   _emit_labels="tool_name=$_tool_name"
   [ -n "$_session_id" ] && _emit_labels="$_emit_labels session_id=$_session_id"
-  "${COOLANT_EMIT:-coolant-emit}" counter coolant_tool_invocation_total $_emit_labels || true
+  EMIT="${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}"
+  "$EMIT" counter coolant_tool_invocation_total $_emit_labels || true
+  unset _emit_labels EMIT
 fi
+unset _tool_name _session_id
 ```
 
-Substitute `$_gate_payload` with whatever variable name `gate.sh` actually uses for the stdin payload.
+Do not modify any other part of `gate.sh`. The capping and suppression logic below the insertion point must remain untouched — verify by running the existing `bats tests/gate.bats` after the edit and confirming the pre-existing tests still pass.
 
 ### Step 4: Run all gate tests
 
@@ -978,7 +1067,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
-EMIT="${COOLANT_EMIT:-coolant-emit}"
+EMIT="${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}"
 
 payload=$(cat)
 tool_name=$(printf '%s' "$payload" | _json_field tool_name)
@@ -1073,7 +1162,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
-EMIT="${COOLANT_EMIT:-coolant-emit}"
+EMIT="${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}"
 
 payload=$(cat)
 session_id=$(printf '%s' "$payload" | _json_field session_id)
@@ -1201,7 +1290,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./common.sh
 source "$SCRIPT_DIR/common.sh"
 
-EMIT="${COOLANT_EMIT:-coolant-emit}"
+EMIT="${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}"
 
 payload=$(cat)
 session_id=$(printf '%s' "$payload" | _json_field session_id)
@@ -1307,15 +1396,23 @@ Run: `bats tests/agent-start.bats tests/agent-stop.bats` — FAIL on the new tes
 
 ### Step 3: Extend both scripts
 
-In `scripts/agent-start.sh`, after the counter increment and reconciliation logic (preserved verbatim), immediately before `exit 0`, add:
+The existing `agent-start.sh` and `agent-stop.sh` both compute a `next` variable holding the new agent count, then write it to `$COOLANT_COUNTER`, then emit a `coolant_event`, then conditionally print a system message. Neither script has a final `exit 0` — they end naturally.
+
+**In `scripts/agent-start.sh`:** add this block at the **end of the file** (after the final `fi` that closes the threshold-warning block). `$next` is still in scope.
 
 ```bash
 # ---- Phase 1 telemetry: subagent active gauge ----
-_active=$(_read_counter)
-"${COOLANT_EMIT:-coolant-emit}" gauge coolant_subagent_active_gauge "$_active" || true
+"${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}" gauge coolant_subagent_active_gauge "$next" session_id="$_agent_session_id" || true
 ```
 
-In `scripts/agent-stop.sh`, add the same block at the equivalent position (after the decrement and reconciliation).
+**In `scripts/agent-stop.sh`:** add the same block at the **end of the file** (after the final `fi` that closes the auto-disengage block). Same `$next` variable is in scope.
+
+```bash
+# ---- Phase 1 telemetry: subagent active gauge ----
+"${COOLANT_EMIT:-${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR/..}/bin/coolant-emit}" gauge coolant_subagent_active_gauge "$next" session_id="$_agent_session_id" || true
+```
+
+Note: `$_agent_session_id` is populated by the existing `_extract_agent_fields "$input"` call near the top of each script, so no additional parsing is needed. Do not modify any other part of either script.
 
 ### Step 4: Run, pass
 
@@ -1328,119 +1425,168 @@ Expected: all PASS.
 
 ---
 
-## Task B8 — `/commit` skill session trailer
+## Task B8 — `/commit` skill session trailer (CROSS-REPO)
+
+**⚠️ This task modifies a file outside this repo.** The user's `/commit` skill lives at:
+```
+~/.claude/plugins/local/personal-plugins/plugins/commit-skill/skills/commit/SKILL.md
+```
+
+That's a separate personal-plugins plugin with its own git repo (or loose filesystem — the user may not have it under version control yet). All edits go to that file and any supporting scripts alongside it, NOT to this repo. This task's "commit via `/commit`" step therefore produces a commit in the *commit-skill* plugin repo, not in coolant.
 
 **Files:**
-- Modify: `/commit` skill definition (location varies — check `skills/coolant/` or wherever the `/commit` skill's `SKILL.md` currently lives)
-- Create or modify: corresponding bats test
+- Modify: `~/.claude/plugins/local/personal-plugins/plugins/commit-skill/skills/commit/SKILL.md`
+- Possibly create: `~/.claude/plugins/local/personal-plugins/plugins/commit-skill/bin/coolant-trailer.sh` (a helper script the skill calls to generate the trailer)
+- Possibly create: a bats test alongside the plugin repo if it has a test tree; otherwise test manually
 
-The `/commit` skill should query Prometheus at commit time and append a `Coolant-Session-V1:` trailer block to the generated commit message.
+**This task is parallel-safe with B1–B7 because it touches a completely different filesystem tree.** No coordination needed with the parallel hook tasks.
 
-### Step 1: Locate the `/commit` skill
+### Step 1: Inspect the existing `/commit` skill and confirm git status of its containing repo
 
-Run:
 ```bash
-find . -type f -name 'SKILL.md' 2>/dev/null | xargs grep -l -i commit 2>/dev/null
+SKILL="${HOME}/.claude/plugins/local/personal-plugins/plugins/commit-skill/skills/commit/SKILL.md"
+PLUGIN_ROOT="${HOME}/.claude/plugins/local/personal-plugins/plugins/commit-skill"
+
+# Verify the file exists
+[ -f "$SKILL" ] && echo "skill present" || echo "MISSING — abort task"
+
+# Is the plugin directory a git repo?
+git -C "$PLUGIN_ROOT" rev-parse --show-toplevel 2>/dev/null && echo "tracked" || echo "NOT a git repo"
+
+# Read the skill
+cat "$SKILL"
 ```
 
-Or check the typical locations:
-```bash
-ls skills/coolant/ 2>/dev/null
-ls ~/.claude/plugins/local/personal-plugins/plugins/commit-skill/ 2>/dev/null
-```
+Note the skill's workflow structure. Identify the step where the commit message is built and the step where `git commit` is invoked. The trailer block needs to be appended to the message body *before* `git commit` runs.
 
-Note the skill file path; all subsequent steps edit that file.
+If the plugin directory is NOT a git repo, surface this to the user immediately. Modifying ad-hoc plugin files without version control is a reversibility risk — offer to `git init` the plugin dir first or back up the SKILL.md before edits.
 
-### Step 2: Write failing test
+### Step 2: Write the trailer-generation helper
 
-If there is no existing test file, create `tests/commit-trailer.bats`:
+Create `~/.claude/plugins/local/personal-plugins/plugins/commit-skill/bin/coolant-trailer.sh`:
 
 ```bash
-#!/usr/bin/env bats
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Emits a Coolant-Session-V1 trailer block on stdout for use by /commit.
+# Queries Prometheus at commit time for cost and token totals associated
+# with the current session. Silently omits unresolvable fields.
 
-# Verifies the /commit skill emits a Coolant-Session-V1 trailer block
-# on the generated commit message.
+set -u
 
-load 'test_helper'
+# Resolve session_id from the most recent JSONL event (source of truth
+# for the active Claude Code session's ID).
+_events="${COOLANT_EVENTS:-${TMPDIR:-/tmp/}coolant-${USER}.events.jsonl}"
+_sid=""
+if [ -f "$_events" ]; then
+  # Find the most recent event line that carries a session_id.
+  _sid=$(tac "$_events" 2>/dev/null | grep -m1 -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  # macOS lacks `tac`; fallback to awk-reverse if empty.
+  if [ -z "$_sid" ]; then
+    _sid=$(awk '{lines[NR]=$0} END{for(i=NR;i>0;i--) print lines[i]}' "$_events" 2>/dev/null | grep -m1 -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"$/\1/')
+  fi
+fi
 
-@test "commit skill appends Coolant-Session-V1 trailer" {
-  # This is an integration test against the /commit skill's trailer
-  # generation logic. Because the skill runs in a Claude Code context,
-  # we test the trailer-building helper in isolation.
-  #
-  # The skill is expected to expose a function (or script) that, given
-  # a session_id and a Prometheus endpoint, emits the trailer block on
-  # stdout. The exact entrypoint depends on how the skill is structured.
-  # Once located, invoke it here with mock Prometheus responses and
-  # assert the expected trailer format.
+if [ -z "$_sid" ]; then
+  # No session to attribute — emit nothing.
+  exit 0
+fi
 
-  skip "Fill this in once the skill entrypoint for trailer generation is located."
+# Derive Prometheus base URL from the OTLP endpoint.
+_otlp="${OTEL_EXPORTER_OTLP_METRICS_ENDPOINT:-}"
+_prom=""
+if [ -n "$_otlp" ]; then
+  # Strip the OTLP path (/api/v1/otlp/...) to get the base.
+  _prom="${_otlp%/api/v1/otlp*}"
+fi
+
+if [ -z "$_prom" ]; then
+  # No Prometheus to query — emit just the session ID.
+  printf 'Coolant-Session-V1: %s\n' "$_sid"
+  exit 0
+fi
+
+_query() {
+  local q="$1"
+  curl -sf --max-time 2 --data-urlencode "query=$q" "$_prom/api/v1/query" 2>/dev/null \
+    | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(r[0]["value"][1] if r else "")' 2>/dev/null
 }
 
-@test "trailer format has Coolant-Session-V1 followed by optional cost/token lines" {
-  # Parse trailer format spec from skill file and assert shape.
-  skip "See above — depends on skill structure."
-}
+_cost=$(_query "sum(claude_code_cost_usage_USD_total{session_id=\"$_sid\"})")
+_in=$(_query   "sum(claude_code_token_usage_tokens_total{session_id=\"$_sid\",type=\"input\"})")
+_out=$(_query  "sum(claude_code_token_usage_tokens_total{session_id=\"$_sid\",type=\"output\"})")
+_cr=$(_query   "sum(claude_code_token_usage_tokens_total{session_id=\"$_sid\",type=\"cacheRead\"})")
+_cc=$(_query   "sum(claude_code_token_usage_tokens_total{session_id=\"$_sid\",type=\"cacheCreation\"})")
+
+printf 'Coolant-Session-V1: %s\n' "$_sid"
+[ -n "$_cost" ] && [ "$_cost" != "0" ]  && printf 'Coolant-Cost-USD: %s\n' "$_cost"
+[ -n "$_in" ]   && [ "$_in" != "0" ]    && printf 'Coolant-Tokens-Input: %d\n' "${_in%.*}"
+[ -n "$_out" ]  && [ "$_out" != "0" ]   && printf 'Coolant-Tokens-Output: %d\n' "${_out%.*}"
+[ -n "$_cr" ]   && [ "$_cr" != "0" ]    && printf 'Coolant-Tokens-CacheRead: %d\n' "${_cr%.*}"
+[ -n "$_cc" ]   && [ "$_cc" != "0" ]    && printf 'Coolant-Tokens-CacheCreation: %d\n' "${_cc%.*}"
 ```
 
-**Implementer action:** examine the `/commit` skill file found in Step 1 and write concrete tests. The trailer-generation logic should be extractable into a testable shell function or helper script. If the skill is a single `SKILL.md` Markdown file that Claude Code interprets directly, the test can instead verify the skill's generated output via a dry-run invocation.
+Make it executable: `chmod +x "${PLUGIN_ROOT}/bin/coolant-trailer.sh"`.
 
-### Step 3: Run, fail
+### Step 3: Modify `SKILL.md` to invoke the helper
 
-Run: `bats tests/commit-trailer.bats` — FAIL or SKIP pending entrypoint.
+Open the `SKILL.md` at `$SKILL`. Locate the section that builds the commit message body (the skill's workflow step that assembles `Recipe:` and `Changes:` blocks).
 
-### Step 4: Extend the `/commit` skill
+Add, immediately before the step that invokes `git commit`, a new sub-step:
 
-The skill file needs a new section that:
+```markdown
+### Append Coolant session trailer
 
-1. Resolves the current `session_id`. Check in order:
-   - `$CLAUDE_SESSION_ID` if set (not yet confirmed in Claude Code — may be absent)
-   - The most recent `session_id` from the JSONL event log (`tail -n 1 "$COOLANT_EVENTS"` and `_json_field session_id`)
-   - If neither resolves, skip the trailer entirely (emit nothing, not an empty trailer)
+Before running `git commit`, invoke the trailer helper and append its output
+to the commit message body, separated by a blank line:
 
-2. Queries Prometheus at `$OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` (stripping the OTLP path to get the base, e.g., `http://localhost:9090`) for:
-
-   ```
-   sum(claude_code_cost_usage_USD_total{session_id="<SID>"})
-   sum by (type) (claude_code_token_usage_tokens_total{session_id="<SID>"})
-   ```
-
-3. Builds a trailer block. The trailer block is appended to the commit message body, separated by a blank line from the preceding content. Format:
-
-   ```
-   Coolant-Session-V1: <SID>
-   Coolant-Cost-USD: <n>
-   Coolant-Tokens-Input: <n>
-   Coolant-Tokens-Output: <n>
-   Coolant-Tokens-CacheRead: <n>
-   Coolant-Tokens-CacheCreation: <n>
-   ```
-
-   Omit any line whose value is unresolvable or zero. Always include `Coolant-Session-V1:` if a session_id resolved.
-
-Add this behavior as a new step in the skill's workflow, before it invokes `git commit`. Document the behavior in a comment at the top of the skill file.
-
-### Step 5: Fill in the skipped tests and verify they pass
-
-Based on how the skill ends up structured in Step 4, complete the `skip`-stubbed tests in `tests/commit-trailer.bats` with concrete assertions. Run:
 ```bash
-bats tests/commit-trailer.bats
+trailer="$(${HOME}/.claude/plugins/local/personal-plugins/plugins/commit-skill/bin/coolant-trailer.sh)"
+if [ -n "$trailer" ]; then
+  commit_msg="${commit_msg}
+
+${trailer}"
+fi
 ```
-Expected: PASS.
 
-### Step 6: Manual smoke test
+The helper silently emits nothing if it cannot resolve a session ID, so
+this is safe to invoke unconditionally.
+```
 
-With the current repo:
+Adjust variable names (`commit_msg`) to match whatever the skill already uses for its assembled message. Preserve all existing skill behavior.
+
+### Step 4: Smoke test against the live stack
+
+With `dev/otel/start.sh` running and a recent Claude Code session having emitted metrics:
+
 ```bash
-# Make a trivial change
+# Ensure env is sourced
+source /Users/toddwshaffer/Desktop/apps/coolant/dev/otel/env.sh
+# Invoke the helper directly
+"${HOME}/.claude/plugins/local/personal-plugins/plugins/commit-skill/bin/coolant-trailer.sh"
+```
+Expected: output includes `Coolant-Session-V1: <uuid>` and, if Prometheus has data for that session, the cost/token lines.
+
+Make a trivial change to this repo, invoke `/commit`, and inspect the resulting commit:
+```bash
+cd /Users/toddwshaffer/Desktop/apps/coolant
 echo "" >> CLAUDE.md
-# Invoke /commit and verify the commit message body contains the trailer
+# Invoke /commit via Claude Code (this is user-driven, not scripted)
+# After commit succeeds:
+git log -1 --format=%B
 ```
-Expected: last commit's message (via `git log -1`) contains `Coolant-Session-V1: <uuid>` block.
+Expected: commit message body ends with a blank line followed by the `Coolant-Session-V1:` block.
 
-### Step 7: Commit via `/commit` skill
+### Step 5: Commit the skill changes
 
-(Yes, using the skill that was just modified. Ideal dogfood.)
+This commit lands in the commit-skill plugin repo, not coolant. Use `/commit` (the now-modified skill) to commit inside the plugin directory:
+
+```bash
+cd "${HOME}/.claude/plugins/local/personal-plugins/plugins/commit-skill"
+# Then invoke /commit via Claude Code
+```
+
+If the plugin directory is not a git repo, surface this to the user and stop — they need to decide whether to `git init` the plugin directory or track changes some other way. Do NOT delete or rewrite SKILL.md without version control safety.
 
 ---
 

@@ -138,13 +138,19 @@ Run:
 mkdir -p enterprise
 ```
 
-- [ ] **Step 7: Fetch and fill BSL 1.1 template for `enterprise/LICENSE`**
+- [ ] **Step 7: Write the BSL 1.1 `enterprise/LICENSE`**
 
-Fetch the canonical BSL 1.1 template:
-```bash
-curl -sL https://mariadb.com/bsl11/ -o enterprise/LICENSE
-```
-If the MariaDB URL shape has changed, use the canonical HashiCorp template at `https://raw.githubusercontent.com/hashicorp/vault/main/LICENSE`. Then hand-edit `enterprise/LICENSE` to fill in the parameters. Final contents MUST include:
+The BSL 1.1 template is published by MariaDB and has been stable since 2017. Rather than `curl`-fetch at runtime (risking 404s), source the canonical text from one of these known-good copies and save it locally:
+
+- **Primary:** `https://raw.githubusercontent.com/mariadb-corporation/MaxScale/master/LICENSE.TXT` (MariaDB's own canonical copy)
+- **Secondary:** `https://raw.githubusercontent.com/hashicorp/terraform/main/LICENSE` (HashiCorp's BSL 1.1 instance — parameters differ from ours, use only for the template body, not the parameters)
+
+Strategy:
+1. Try the primary URL with `curl -sf --max-time 10 <url> -o /tmp/bsl11.txt`. If it succeeds, verify the file starts with "Business Source License 1.1" via `head -1 /tmp/bsl11.txt`.
+2. If the primary fails, try the secondary.
+3. If both fail, ask the user to paste the canonical BSL 1.1 text into `enterprise/LICENSE` directly. The legal text is publicly available and the user may already have it in a reference repo.
+
+Once the canonical template is in place as `enterprise/LICENSE`, edit the **header parameters block only** at the top of the file. These are the parameters specific to this project and must appear exactly as written:
 
 ```
 Business Source License 1.1
@@ -367,15 +373,26 @@ Open `CLAUDE.md`. In the project-structure tree, change references:
 
 Leave the Go-conventions and testing sections intact.
 
-- [ ] **Step 12: Delete the now-empty `thermal/` directory**
+- [ ] **Step 12: Inspect `thermal/` contents and remove only tracked remnants — NEVER `rm -rf`**
 
-Run:
+**Hard rule (per CLAUDE.md):** never delete files without explicit user permission. The user has untracked binaries in `thermal/` (build artifacts like `thermal/brailletext`, `thermal/sparkdebug`, `thermal/swatch`) that must be preserved.
+
+Run this inspection:
 ```bash
-# Confirm it's empty of tracked files
+# List what's left (tracked + untracked)
 find thermal/ -type f 2>/dev/null
-# Remove — should only contain the old empty subtree
-rm -rf thermal/
+# Separate tracked from untracked
+git -C thermal/ ls-files 2>/dev/null
+git status --porcelain thermal/ 2>/dev/null
 ```
+
+Action rules:
+- Any file listed by `git -C thermal/ ls-files` that still shows a result AFTER the moves above: something didn't move correctly — STOP and debug.
+- Any file shown as `??` (untracked) in `git status --porcelain thermal/`: **leave it alone**. Ask the user what to do with each one.
+- If `find thermal/ -type f` returns only untracked binaries the user wants to keep: offer to move them to `bin/archive/` (which `CLAUDE.md` already documents as the home for compiled binaries from archived experiments). Do not move without explicit user approval per file.
+- If `find thermal/ -type f` returns empty AND `git -C thermal/ ls-files` returns empty: the directory contains only empty subdirectories from the moves. Safe to remove with `find thermal/ -type d -empty -delete`. Run that instead of `rm -rf`.
+
+Do NOT run `rm -rf thermal/` under any circumstance.
 
 - [ ] **Step 13: Run the full test suite**
 
