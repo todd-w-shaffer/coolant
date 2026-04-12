@@ -171,6 +171,30 @@ func TestNarrativeArc(t *testing.T) {
 		}
 	})
 
+	// ── Arc loops: stats stay sane past the end of the 80-tick arc ──
+	// Regression guard for the runaway-coolProgress bug where tick 80+
+	// produced negative cpuPct / memUsed / decomps because the narrative
+	// arc didn't wrap. Run 240 ticks (three arc cycles) and assert every
+	// System stat stays in a physically reasonable range.
+	t.Run("arc loops without going negative", func(t *testing.T) {
+		long, _ := collectDemo(240)
+		for i, s := range long {
+			sys := s.System
+			if sys.CPUPercent < 0 || sys.CPUPercent > 100 {
+				t.Fatalf("tick %d: CPU %.1f%% out of range", i, sys.CPUPercent)
+			}
+			if sys.GPUPercent < 0 || sys.GPUPercent > 100 {
+				t.Fatalf("tick %d: GPU %.1f%% out of range", i, sys.GPUPercent)
+			}
+			if sys.MemUsedBytes < 0 || sys.MemUsedBytes > sys.MemTotalBytes {
+				t.Fatalf("tick %d: mem %d bytes out of range (total %d)", i, sys.MemUsedBytes, sys.MemTotalBytes)
+			}
+			if sys.Decompressions < 0 {
+				t.Fatalf("tick %d: decompressions %d negative", i, sys.Decompressions)
+			}
+		}
+	})
+
 	// ── Agents eventually die (cooldown) ─────────────────────
 	t.Run("agents die in cooldown", func(t *testing.T) {
 		hasStop := false

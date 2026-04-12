@@ -12,6 +12,64 @@ import (
 var testTheme = theme.Classic()
 var testAnim = anim.Default()
 
+// TestRenderSplit_ActiveOnly — all dots active: ghosts are empty, actives
+// contain the entire render.
+func TestRenderSplit_ActiveOnly(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetTarget(3)
+	for i := 0; i < 40; i++ {
+		b.AnimTick()
+	}
+	ghostStr, _, ghostW, activeW := b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	if ghostW != 0 || ghostStr != "" {
+		t.Errorf("all-active: ghost should be empty, got %q (w=%d)", ghostStr, ghostW)
+	}
+	if activeW == 0 {
+		t.Errorf("all-active: expected non-zero active width")
+	}
+	// Expected width: 3 glyphs + 2 separators = 5 cells.
+	if activeW != 5 {
+		t.Errorf("all-active: activeW=%d want 5", activeW)
+	}
+}
+
+// TestRenderSplit_WithStales — 3 active + 2 stale: ghosts carry stales,
+// actives carry live dots, each with its own leading-separator handling.
+func TestRenderSplit_WithStales(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetTarget(5)
+	b.SetStaleCount(2)
+	for i := 0; i < 40; i++ {
+		b.AnimTick()
+	}
+	_, _, ghostW, activeW := b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	if ghostW == 0 {
+		t.Errorf("expected non-zero ghost width with 2 stales")
+	}
+	if activeW == 0 {
+		t.Errorf("expected non-zero active width with 3 actives")
+	}
+}
+
+// TestRenderSplit_Highscore — completed dots route to the ghost side so
+// the highscore KITT trail doesn't push active agents around.
+func TestRenderSplit_Highscore(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetTarget(2)
+	b.SetCompletedCount(3)
+	for i := 0; i < 40; i++ {
+		b.AnimTick()
+	}
+	_, _, ghostW, activeW := b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	if ghostW == 0 {
+		t.Errorf("highscore: expected ghost width > 0 for 3 completed dots")
+	}
+	if activeW == 0 {
+		t.Errorf("highscore: expected non-zero active width for 2 live dots")
+	}
+}
+
 func TestBreatheDotSetTargetSpawn(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetTarget(3)

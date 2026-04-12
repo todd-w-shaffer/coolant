@@ -105,6 +105,92 @@ func (b *BreatheDots) AnimTick() {
 	b.dots = b.dots[:n]
 }
 
+// dotFrame holds per-dot precomputed state: its position among stale/active
+// peers and its live/stale classification. Building these up front avoids
+// O(N²) index lookups inside the render loop.
+type dotFrame struct {
+	dot       *breatheDot
+	staleIdx  int // -1 if active
+	activeIdx int // -1 if stale
+}
+
+// prepareDots returns per-dot frames (skipping dying) and the KITT sweep
+// position. The same slice of frames feeds Render and RenderSplit.
+func (b *BreatheDots) prepareDots(maxDots int) (frames []dotFrame, sweepPos float64, staleCount int) {
+	dots := b.dots
+	if maxDots > 0 && len(dots) > maxDots {
+		dots = dots[:maxDots]
+	}
+	frames = make([]dotFrame, 0, len(dots))
+	for i := range dots {
+		d := &dots[i]
+		if d.dying {
+			continue
+		}
+		f := dotFrame{dot: d, staleIdx: -1, activeIdx: -1}
+		if d.stale {
+			f.staleIdx = staleCount
+			staleCount++
+		} else {
+			f.activeIdx = len(frames) - staleCount
+		}
+		frames = append(frames, f)
+	}
+	kittCount := staleCount
+	if b.highScore {
+		kittCount = b.completedCount
+	}
+	sweepPos = triangleWave(b.staleSweep, kittCount)
+	return frames, sweepPos, staleCount
+}
+
+// computeDot returns the brightness and glyph for one prepared frame.
+func (b *BreatheDots) computeDot(f dotFrame, sweepPos float64, hasStales bool, glyphHollow, glyphMid, glyphFilled string) (glyph string, brightness float64) {
+	d := f.dot
+	var wave float64
+	switch {
+	case d.stale && !b.highScore && hasStales:
+		if f.staleIdx >= 0 {
+			dist := math.Abs(float64(f.staleIdx) - sweepPos)
+			brightness = d.alive * b.anim.BreatheStaleDim * b.kittGaussian(dist)
+		}
+	case d.stale && b.highScore:
+		brightness = d.alive * b.anim.BreatheStaleDim * sinNorm(d.phase)
+	default:
+		wave = sinNorm(b.tidalPhase - float64(f.activeIdx)*b.anim.TidalPhaseSpread)
+		mixed := b.anim.TidalWaveMix*wave + b.anim.TidalBreathMix*sinNorm(d.phase)
+		brightness = d.alive * (b.anim.TidalBrightFloor + b.anim.TidalBrightFloor*mixed)
+	}
+
+	if brightness < 0 {
+		brightness = 0
+	}
+	if brightness > 1 {
+		brightness = 1
+	}
+
+	glyph = glyphHollow
+	if !d.stale {
+		switch {
+		case wave > b.anim.GlyphFilledThresh:
+			glyph = glyphFilled
+		case wave > b.anim.GlyphMidThresh:
+			glyph = glyphMid
+		}
+	}
+	return glyph, brightness
+}
+
+// highscoreCompletedBrightness computes the KITT brightness for the ci'th
+// completed-agent dot rendered in highscore mode.
+func (b *BreatheDots) highscoreCompletedBrightness(ci int, sweepPos float64) float64 {
+	if b.completedCount == 1 {
+		return b.anim.BreatheStaleDim * b.anim.KITTSingleBright
+	}
+	dist := math.Abs(float64(ci) - sweepPos)
+	return b.anim.BreatheStaleDim * b.kittGaussian(dist)
+}
+
 // Render produces the styled dot string and its visible cell width.
 // glyphHollow and glyphFilled alternate based on the breathing phase —
 // the dot "fills up" at peak brightness and "empties" at the trough.
@@ -115,114 +201,60 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 		return "", 0
 	}
 
-	dots := b.dots
-	if maxDots > 0 && len(dots) > maxDots {
-		dots = dots[:maxDots]
-	}
-
+	frames, sweepPos, staleCount := b.prepareDots(maxDots)
 	var buf strings.Builder
 	visWidth := 0
 
-	// Build index mappings for stale and active dots
-	var staleIndices []int
-	var activeIndices []int
-	for i, d := range dots {
-		if d.dying {
-			continue
-		}
-		if d.stale {
-			staleIndices = append(staleIndices, i)
-		} else {
-			activeIndices = append(activeIndices, i)
-		}
+	for idx, f := range frames {
+		glyph, brightness := b.computeDot(f, sweepPos, staleCount > 0, glyphHollow, glyphMid, glyphFilled)
+		b.writeDot(&buf, &visWidth, glyph, brightness, bg, idx > 0)
 	}
 
-	// KITT sweep — used for stale dots (default mode) or completed dots (highscore mode)
-	kittCount := len(staleIndices)
-	if b.highScore {
-		kittCount = b.completedCount
-	}
-	sweepPos := triangleWave(b.staleSweep, kittCount)
-
-	for i, d := range dots {
-		var brightness float64
-		var wave float64
-
-		if d.stale && !d.dying && !b.highScore && len(staleIndices) > 0 {
-			// Default mode: KITT scanner on stale/ghost dots
-			staleIdx := -1
-			for si, idx := range staleIndices {
-				if idx == i {
-					staleIdx = si
-					break
-				}
-			}
-			if staleIdx >= 0 {
-				dist := math.Abs(float64(staleIdx) - sweepPos)
-				brightness = d.alive * b.anim.BreatheStaleDim * b.kittGaussian(dist)
-			}
-		} else if d.stale && !d.dying && b.highScore {
-			// Highscore mode: stale dots dim-breathe (no KITT)
-			brightness = d.alive * b.anim.BreatheStaleDim * sinNorm(d.phase)
-		} else if !d.dying {
-			// Tidal wave: slow rolling swell tuned for 3-5 visible dots.
-			// Phase spread set by profile — wide enough for clear direction even with 3.
-			// Narrow brightness range keeps all dots visible — the
-			// glyph swap (⬡→⏣→⬢) is the primary visual signal.
-			activeIdx := 0
-			for ai, idx := range activeIndices {
-				if idx == i {
-					activeIdx = ai
-					break
-				}
-			}
-			wave = sinNorm(b.tidalPhase - float64(activeIdx)*b.anim.TidalPhaseSpread)
-			individualBreath := sinNorm(d.phase)
-			mixed := b.anim.TidalWaveMix*wave + b.anim.TidalBreathMix*individualBreath
-			brightness = d.alive * (b.anim.TidalBrightFloor + b.anim.TidalBrightFloor*mixed)
-		}
-
-		if brightness < 0 {
-			brightness = 0
-		}
-		if brightness > 1 {
-			brightness = 1
-		}
-
-		// Glyph: three states track the tidal wave.
-		// Peak → filled, shoulder → benzene, trough → hollow.
-		// Stale dots stay hollow always.
-		glyph := glyphHollow
-		if !d.stale && !d.dying {
-			switch {
-			case wave > b.anim.GlyphFilledThresh:
-				glyph = glyphFilled
-			case wave > b.anim.GlyphMidThresh:
-				glyph = glyphMid
-			}
-		}
-
-		b.writeDot(&buf, &visWidth, glyph, brightness, bg, i > 0)
-	}
-
-	// Highscore mode: append completed agent KITT dots after active/stale dots
 	if b.highScore && b.completedCount > 0 {
-		hasPrior := len(dots) > 0
+		hasPrior := len(frames) > 0
 		for ci := 0; ci < b.completedCount; ci++ {
-			var brightness float64
-			if b.completedCount == 1 {
-				brightness = b.anim.BreatheStaleDim * b.anim.KITTSingleBright
-			} else {
-				dist := math.Abs(float64(ci) - sweepPos)
-				brightness = b.anim.BreatheStaleDim * b.kittGaussian(dist)
-			}
-
+			brightness := b.highscoreCompletedBrightness(ci, sweepPos)
 			needSep := hasPrior || ci > 0
 			b.writeDot(&buf, &visWidth, glyphFilled, brightness, bg, needSep)
 		}
 	}
 
 	return buf.String(), visWidth
+}
+
+// RenderSplit renders active dots and ghost dots (stale + highscore completed)
+// into two independent strings so layout code can place them in different
+// columns. Each side handles its own first-dot separator so the fragments
+// stand alone.
+func (b *BreatheDots) RenderSplit(glyphHollow, glyphMid, glyphFilled string, bg color.Color, maxDots int) (ghostStr, activeStr string, ghostWidth, activeWidth int) {
+	if len(b.dots) == 0 && (!b.highScore || b.completedCount == 0) {
+		return "", "", 0, 0
+	}
+
+	frames, sweepPos, staleCount := b.prepareDots(maxDots)
+	var ghostBuf, activeBuf strings.Builder
+	ghostSeen, activeSeen := false, false
+
+	for _, f := range frames {
+		glyph, brightness := b.computeDot(f, sweepPos, staleCount > 0, glyphHollow, glyphMid, glyphFilled)
+		if f.dot.stale {
+			b.writeDot(&ghostBuf, &ghostWidth, glyph, brightness, bg, ghostSeen)
+			ghostSeen = true
+		} else {
+			b.writeDot(&activeBuf, &activeWidth, glyph, brightness, bg, activeSeen)
+			activeSeen = true
+		}
+	}
+
+	if b.highScore && b.completedCount > 0 {
+		for ci := 0; ci < b.completedCount; ci++ {
+			brightness := b.highscoreCompletedBrightness(ci, sweepPos)
+			b.writeDot(&ghostBuf, &ghostWidth, glyphFilled, brightness, bg, ghostSeen)
+			ghostSeen = true
+		}
+	}
+
+	return ghostBuf.String(), activeBuf.String(), ghostWidth, activeWidth
 }
 
 // writeDot appends a single styled dot to the buffer and updates visWidth.
