@@ -2,8 +2,18 @@
 """Rewrite Grafana dashboard colors to the Catppuccin Frappe palette.
 
 Mirrors thermal/internal/theme/frappe.go so terminal + browser feel like
-one theme. Operates as text substitution to preserve the hand-tuned
-compact JSON formatting. Re-runnable: already-Frappe hex passes through.
+one theme. Three passes, all text-based to preserve the hand-tuned
+compact JSON formatting:
+
+  1. Name/hex substitution (named colors → Frappe hex, literal hex
+     remaps, continuous-* → thresholds).
+  2. Model-keyed overrides — injects byRegexp overrides mapping
+     opus/sonnet/haiku/claude-3 families to Frappe accents, for panels
+     whose series are keyed by the Prometheus `model` label.
+  3. Bare-default fix — sets a sensible color.mode on panels whose
+     fieldConfig.defaults has no color block.
+
+Re-runnable: idempotent on already-Frappe input.
 """
 from __future__ import annotations
 
@@ -12,7 +22,6 @@ import re
 import sys
 from pathlib import Path
 
-# Named Grafana colors → Frappe hex
 NAMED = {
     "red":      "#e78284",
     "green":    "#a6d189",
@@ -39,30 +48,48 @@ NAMED = {
     "dark-red":     "#e78284",
 }
 
-# Literal hex in-the-wild → Frappe hex
 HEX_REMAP = {
     "#FFB86C": "#ef9f76",
     "#EAB839": "#e5c890",
 }
 
-# Continuous palettes → thresholds (so Frappe step colors drive the gradient).
 CONTINUOUS = {
-    "continuous-GrYlRd",
-    "continuous-RdYlGr",
-    "continuous-BlYlRd",
-    "continuous-BlPu",
-    "continuous-blues",
-    "continuous-greens",
-    "continuous-reds",
-    "continuous-purples",
-    "continuous-YlBl",
+    "continuous-GrYlRd", "continuous-RdYlGr", "continuous-BlYlRd",
+    "continuous-BlPu", "continuous-blues", "continuous-greens",
+    "continuous-reds", "continuous-purples", "continuous-YlBl",
     "continuous-YlRd",
 }
 
+# Model family → Frappe accent. Regex matched against full series name.
+MODEL_OVERRIDES = [
+    (".*opus.*",     "#ca9ee6"),  # mauve — premium/heavy
+    (".*sonnet.*",   "#babbf1"),  # lavender — balanced
+    (".*haiku.*",    "#81c8be"),  # teal — fast/light
+    (".*claude-3.*", "#f4b8e4"),  # pink — legacy 3.x fallback
+]
 
-def frappify(text: str) -> str:
-    # fixedColor: "<name>" and color: "<name>" — match quoted names only.
-    # Order: longest keys first to avoid e.g. "semi-dark-red" matching "red".
+# Panels keyed by Prometheus `model` label. (filename, panel id).
+MODEL_KEYED_PANELS = {
+    ("claude-models.json", 500),
+    ("claude-models.json", 501),
+    ("claude-models.json", 502),
+    ("claude-models.json", 530),
+    ("claude-models.json", 531),
+    ("claude-spend.json",  20),
+}
+
+# Panels whose fieldConfig.defaults lacks any color block. Set a default
+# mode so byName overrides engage cleanly and the audit reads clean.
+BARE_COLOR_PANELS = {
+    ("claude-cfo.json",      301): "palette-classic-by-name",
+    ("claude-insights.json", 531): "palette-classic-by-name",
+    # Model Mix table — every data column has per-column threshold colors
+    # via overrides. Default mode is cosmetic here.
+    ("claude-models.json",   540): "thresholds",
+}
+
+
+def pass1_text(text: str) -> str:
     for name in sorted(NAMED, key=len, reverse=True):
         text = re.sub(rf'"{re.escape(name)}"', f'"{NAMED[name]}"', text)
     for old, new in HEX_REMAP.items():
@@ -72,20 +99,185 @@ def frappify(text: str) -> str:
     return text
 
 
+def find_panel_span(text: str, panel_id: int) -> tuple[int, int] | None:
+    """Locate the outer `{...}` span of the panel object with the given id."""
+    for m in re.finditer(rf'"id":\s*{panel_id}\b', text):
+        # Walk back to the enclosing `{`
+        i = m.start()
+        depth = 0
+        while i >= 0:
+            c = text[i]
+            if c == '}':
+                depth += 1
+            elif c == '{':
+                if depth == 0:
+                    break
+                depth -= 1
+            i -= 1
+        if i < 0:
+            continue
+        # Balance forward to find matching `}`
+        depth = 0
+        in_str = False
+        esc = False
+        for j in range(i, len(text)):
+            c = text[j]
+            if esc:
+                esc = False
+                continue
+            if c == '\\':
+                esc = True
+                continue
+            if c == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    # Sanity check: this block must contain a top-level
+                    # `"type": "..."` (panels always do); skip nested matches.
+                    block = text[i:j + 1]
+                    if '"type":' in block and '"gridPos"' in block:
+                        return (i, j + 1)
+                    break
+    return None
+
+
+def render_model_overrides(indent: str) -> str:
+    lines = []
+    for pattern, color in MODEL_OVERRIDES:
+        lines.append(
+            f'{indent}{{ "matcher": {{ "id": "byRegexp", "options": "{pattern}" }}, '
+            f'"properties": [{{ "id": "color", "value": {{ "fixedColor": "{color}", "mode": "fixed" }} }}] }}'
+        )
+    return ",\n".join(lines)
+
+
+def inject_model_overrides(text: str, panel_id: int) -> tuple[str, bool]:
+    span = find_panel_span(text, panel_id)
+    if not span:
+        return text, False
+    start, end = span
+    block = text[start:end]
+
+    # Short-circuit if byRegexp for opus already present (idempotent).
+    if '"byRegexp"' in block and '".*opus.*"' in block:
+        return text, False
+
+    # Case A: existing empty `"overrides": []` inside this block.
+    empty = re.search(r'"overrides":\s*\[\s*\]', block)
+    if empty:
+        body = render_model_overrides("          ")
+        replacement = f'"overrides": [\n{body}\n        ]'
+        new_block = block[:empty.start()] + replacement + block[empty.end():]
+        return text[:start] + new_block + text[end:], True
+
+    # Case B: no overrides key — insert after the `"defaults": {...}` block
+    # inside fieldConfig. Match `"defaults": {` and brace-balance to its close.
+    defaults_m = re.search(r'"defaults":\s*\{', block)
+    if not defaults_m:
+        return text, False
+    i = defaults_m.end() - 1  # position of the opening `{`
+    depth = 0
+    in_str = False
+    esc = False
+    close_idx = None
+    for j in range(i, len(block)):
+        c = block[j]
+        if esc:
+            esc = False
+            continue
+        if c == '\\':
+            esc = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == '{':
+            depth += 1
+        elif c == '}':
+            depth -= 1
+            if depth == 0:
+                close_idx = j
+                break
+    if close_idx is None:
+        return text, False
+
+    body = render_model_overrides("          ")
+    insertion = f',\n        "overrides": [\n{body}\n        ]'
+    new_block = block[:close_idx + 1] + insertion + block[close_idx + 1:]
+    return text[:start] + new_block + text[end:], True
+
+
+def set_default_color_mode(text: str, panel_id: int, mode: str) -> tuple[str, bool]:
+    span = find_panel_span(text, panel_id)
+    if not span:
+        return text, False
+    start, end = span
+    block = text[start:end]
+
+    if re.search(rf'"color":\s*\{{\s*"mode":\s*"{re.escape(mode)}"', block):
+        return text, False  # already set
+
+    defaults_m = re.search(r'"defaults":\s*\{', block)
+    if not defaults_m:
+        return text, False
+    insert_at = defaults_m.end()  # right after the `{`
+    # If defaults is non-empty the next non-ws char will be `"`. Inject a
+    # color line + comma after the brace.
+    # Find the indentation of the next content line.
+    tail = block[insert_at:]
+    indent_m = re.match(r'(\s*)', tail)
+    indent = indent_m.group(1) if indent_m else "\n          "
+    insertion = f'{indent}"color": {{ "mode": "{mode}" }},'
+    new_block = block[:insert_at] + insertion + block[insert_at:]
+    return text[:start] + new_block + text[end:], True
+
+
+def process(path: Path) -> list[str]:
+    changes = []
+    text = path.read_text()
+
+    new_text = pass1_text(text)
+    if new_text != text:
+        changes.append("text")
+    text = new_text
+
+    for fname, pid in MODEL_KEYED_PANELS:
+        if fname != path.name:
+            continue
+        text, ch = inject_model_overrides(text, pid)
+        if ch:
+            changes.append(f"model#{pid}")
+
+    for (fname, pid), mode in BARE_COLOR_PANELS.items():
+        if fname != path.name:
+            continue
+        text, ch = set_default_color_mode(text, pid, mode)
+        if ch:
+            changes.append(f"bare#{pid}")
+
+    json.loads(text)  # validate
+    if changes:
+        path.write_text(text)
+    return changes
+
+
 def main():
     root = Path(__file__).resolve().parent.parent / "dashboards"
     files = sorted(root.glob("*.json"))
     if not files:
         sys.exit(f"no dashboards at {root}")
     for path in files:
-        original = path.read_text()
-        updated = frappify(original)
-        json.loads(updated)  # validate
-        if updated != original:
-            path.write_text(updated)
-            print(f"frappified {path.name}")
-        else:
-            print(f"unchanged  {path.name}")
+        changes = process(path)
+        tag = ",".join(changes) if changes else "unchanged"
+        print(f"{path.name:<28} {tag}")
 
 
 if __name__ == "__main__":

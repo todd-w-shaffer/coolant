@@ -793,6 +793,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+          "color": { "mode": "palette-classic-by-name" },
           "unit": "short",
           "custom": {
             "drawStyle": "bars",
