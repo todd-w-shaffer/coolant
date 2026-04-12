@@ -1,0 +1,270 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 2,
+  "links": [],
+  "panels": [
+    {
+      "id": 100,
+      "title": "Cost per Line Added — by Repo",
+      "description": "Dollar cost Claude incurred per net line of code added, grouped by repo. High bars = expensive codebases (large context, lots of rework, heavy models). This is the raw tech-debt signal: where are we paying the most per unit of output?",
+      "type": "bargauge",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (repo) (claude_code_cost_usage_USD_total) / sum by (repo) (claude_code_lines_of_code_count_total{type=\"added\"}))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "color": { "mode": "continuous-GrYlRd" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 101,
+      "title": "Cache Hit Rate — by Repo",
+      "description": "Share of input tokens served from prompt cache (cacheRead / (input + cacheRead)). LOW bars are BAD — ascending sort so the worst offenders sit at the top. Repos with large, churning context or short-lived sessions burn fresh tokens needlessly. Anything under ~60% means the cache strategy is leaving money on the table.",
+      "type": "bargauge",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sort(sum by (repo) (claude_code_token_usage_tokens_total{type=\"cacheRead\"}) / (sum by (repo) (claude_code_token_usage_tokens_total{type=\"cacheRead\"}) + sum by (repo) (claude_code_token_usage_tokens_total{type=\"input\"})))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "continuous-RdYlGr" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "green", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 200,
+      "title": "Think-to-Ship Ratio — by Repo",
+      "description": "Input + cacheRead tokens consumed per line of code added. Measures how much thinking (reading, planning, retrying) Claude does per line it ships. High values signal codebases where Claude is flailing — bad context, unclear requirements, architectural drag, or overly large files. This is your tech-debt radar.",
+      "type": "bargauge",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        {
+          "expr": "sort_desc((sum by (repo) (claude_code_token_usage_tokens_total{type=\"input\"}) + sum by (repo) (claude_code_token_usage_tokens_total{type=\"cacheRead\"})) / sum by (repo) (claude_code_lines_of_code_count_total{type=\"added\"}))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "continuous-GrYlRd" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 201,
+      "title": "Edit Rejection Rate — by Repo",
+      "description": "Fraction of Edit/Write tool calls the user rejected, grouped by repo. The claude_code_code_edit_tool_decision_total metric carries a 'decision' label with values 'accept' (and presumably 'reject' — only 'accept' is present in this environment so far, so reject-heavy repos will surface once data arrives). High rejection = Claude is misreading intent or the codebase is hostile to generation.",
+      "type": "bargauge",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (repo) (claude_code_code_edit_tool_decision_total{decision=\"reject\"}) / sum by (repo) (claude_code_code_edit_tool_decision_total))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.15 },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "valueMode": "text"
+      },
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 300,
+      "title": "Total Spend — by Repo",
+      "description": "Cumulative Claude spend per repo over the selected time range. Gradient cells flag the expensive codebases at a glance. Read alongside the Think-to-Ship ratio: high spend + high ratio = where to invest in refactoring; high spend + low ratio = where Claude is productive and throughput is working.",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "expr": "sort_desc(sum by (repo) (claude_code_cost_usage_USD_total))",
+          "legendFormat": "",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "color-background",
+              "mode": "gradient"
+            }
+          },
+          "color": { "mode": "continuous-GrYlRd" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "repo" },
+            "properties": [
+              { "id": "custom.width", "value": 260 },
+              { "id": "custom.cellOptions", "value": { "type": "auto" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Time" },
+            "properties": [
+              { "id": "custom.hidden", "value": true }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "Cost", "desc": true }],
+        "cellHeight": "sm",
+        "footer": {
+          "show": true,
+          "reducer": ["sum"],
+          "countRows": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "renameByName": { "repo": "Repo", "Value": "Cost" }
+          }
+        }
+      ],
+      "datasource": { "type": "prometheus" }
+    },
+    {
+      "id": 301,
+      "title": "Cost per Line Added — Daily Trend",
+      "description": "Daily cost-per-line-added, one series per repo. Rising lines = a codebase is getting more expensive to modify (tech debt accumulating). Falling lines = refactors paying off. Stacked makes the total visually weighted by repo so the dominant contributors pop.",
+      "type": "timeseries",
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 18 },
+      "targets": [
+        {
+          "expr": "sum by (repo) (increase(claude_code_cost_usage_USD_total[1d])) / sum by (repo) (increase(claude_code_lines_of_code_count_total{type=\"added\"}[1d]))",
+          "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 4,
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 40,
+            "lineWidth": 2,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "showPoints": "never",
+            "stacking": { "mode": "normal", "group": "A" },
+            "axisBorderShow": false,
+            "scaleDistribution": { "type": "linear" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": { "displayMode": "table", "placement": "right", "values": ["last", "max"] }
+      },
+      "datasource": { "type": "prometheus" }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["claude-code", "coolant", "techdebt"],
+  "templating": { "list": [] },
+  "time": { "from": "now-30d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Claude Code — Tech Debt",
+  "uid": "coolant-techdebt",
+  "version": 1
+}
