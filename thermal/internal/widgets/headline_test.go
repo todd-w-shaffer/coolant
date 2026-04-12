@@ -241,6 +241,83 @@ func TestHeadline_GhostsAlignUnderSessionsWhenNoActives(t *testing.T) {
 	}
 }
 
+// TestHeadline_GhostsFlowIntoPartialSessionSlack — when sessions outnumber
+// active agents, the active row has left-slack inside the stack cell. The
+// ghost trail must absorb that slack so ghost+active render as one
+// contiguous ribbon on the bot row (no interior gap), matching the
+// full-absorb behavior that already fires at activeWidth==0.
+func TestHeadline_GhostsFlowIntoPartialSessionSlack(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+
+	// Build a 4-session snapshot so sessionWidth (=4) exceeds the single
+	// active agent's width (=1). Combined with 2 ghosts this produces a
+	// 3-glyph bot ribbon that should render contiguously.
+	state := model.NewAppState()
+	state.Update(collector.Snapshot{
+		Sessions: []collector.SessionTree{
+			{RootPID: 1000, RootComm: "claude"},
+			{RootPID: 2000, RootComm: "claude"},
+			{RootPID: 3000, RootComm: "claude"},
+			{RootPID: 4000, RootComm: "claude"},
+		},
+		Online: true,
+	})
+	h.Update(state)
+
+	// 3 dots total, 2 of them stale → 1 active + 2 ghosts.
+	h.agents.SetTarget(3)
+	h.agents.SetStaleCount(2)
+	for i := 0; i < 60; i++ {
+		h.agents.AnimTick()
+	}
+
+	lines := h.ViewLines()
+	bot := ansi.Strip(lines[1])
+
+	isGlyph := func(r rune) bool {
+		return string(r) == ui.AgentGlyphHollow ||
+			string(r) == ui.AgentGlyphMid ||
+			string(r) == ui.AgentGlyphFilled
+	}
+	runes := []rune(bot)
+	first, last := -1, -1
+	glyphCount := 0
+	for i, r := range runes {
+		if isGlyph(r) {
+			if first < 0 {
+				first = i
+			}
+			last = i
+			glyphCount++
+		}
+	}
+	if glyphCount != 3 {
+		t.Fatalf("expected 3 glyphs (2 ghost + 1 active), got %d: %q", glyphCount, bot)
+	}
+
+	// Ribbon must be exactly "G S G S G" — alternating glyph/space, where
+	// S is a single bg cell. This catches both bg-padding gaps (too wide)
+	// and missing separators between ghost-right and active-left (glyphs
+	// visually colliding).
+	span := runes[first : last+1]
+	want := 2*glyphCount - 1
+	if len(span) != want {
+		t.Fatalf("ribbon span len=%d want %d (expected alternating G/S/G/S/G): %q\nbot: %q",
+			len(span), want, string(span), bot)
+	}
+	for i, r := range span {
+		if i%2 == 0 && !isGlyph(r) {
+			t.Errorf("span idx %d expected glyph, got %q: %q", i, r, string(span))
+		}
+		if i%2 == 1 && r != ' ' {
+			t.Errorf("span idx %d expected separator space, got %q: %q", i, r, string(span))
+		}
+	}
+}
+
 // TestHeadline_SessionsAboveAgents — sessions diamonds on top row, agent
 // hex glyphs on bottom row, at approximately the same column range.
 func TestHeadline_SessionsAboveAgents(t *testing.T) {

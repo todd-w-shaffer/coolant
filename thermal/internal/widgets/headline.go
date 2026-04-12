@@ -306,10 +306,13 @@ func (h *Headline) ViewLines() []string {
 	appendFrag(buildShell)
 	appendFrag(lcd)
 
-	// When there are no active agents but the sessions/agents cell still
-	// occupies space (sessions > 0), rebuild the bot row so the ghost
-	// trail absorbs the sep + empty stack-bot cells to its right.
-	absorbStackBot := activeWidth == 0 && sessAgents.visWidth > 0
+	// Ghost trail absorbs the stack cell's left-slack on the bot row so
+	// ghost→active reads as one continuous ribbon. Zero when actives meet
+	// or exceed sessions; equals sessionWidth in the full-absorb case.
+	absorbWidth := sessionWidth - activeWidth
+	if absorbWidth < 0 {
+		absorbWidth = 0
+	}
 
 	// Left combined width = quip zone + runtime zone, sharing the bot row for
 	// the ghost tail. Ghosts right-anchor within this width so they visually
@@ -351,14 +354,17 @@ func (h *Headline) ViewLines() []string {
 	}
 	runtimeTop := runtimeCells.String()
 
-	// Ghost tail right-anchored so it ends flush against the active-agents
-	// cell. When no active agents exist, the anchor extends right by
-	// sep + sessionWidth so ghosts sit under the sessions column instead
-	// of at the empty stack-bot's left edge. Overflow (when ghost count
-	// exceeds the budget) silently extends leftward.
+	// Ghost tail right-anchored. When absorbing, the area extends right by
+	// sep + absorbWidth; one of those cells is reserved as a ribbon
+	// separator when both halves are present so their glyphs don't
+	// collide. Overflow silently extends leftward.
+	needRibbonSep := absorbWidth > 0 && ghostWidth > 0 && activeWidth > 0
 	ghostArea := leftCombined
-	if absorbStackBot {
-		ghostArea += 1 + sessAgents.visWidth
+	if absorbWidth > 0 {
+		ghostArea += 1 + absorbWidth
+		if needRibbonSep {
+			ghostArea--
+		}
 	}
 	ghostPadLeft := ghostArea - ghostWidth
 	if ghostPadLeft < 0 {
@@ -373,24 +379,19 @@ func (h *Headline) ViewLines() []string {
 
 	topLine := leftTop + runtimeTop + sep + rightTop.String()
 
-	// For the bot row, if we absorbed the stack-cell's bot into the ghost
-	// area, skip that fragment + its leading sep in the right cluster.
-	botRight := rightBot.String()
-	botSep := sep
-	if absorbStackBot {
-		// Strip the sessAgents bot (which is `sessAgents.visWidth` bg cells)
-		// plus the divider that precedes the NEXT fragment. Since sessAgents
-		// was the first fragment (no leading divider) and buildShell/lcd are
-		// appended with leading dividers, we emit botRight starting from the
-		// buildShell fragment — which already carries its own leading sep.
-		botRight = h.rebuildBotRight(buildShell, lcd, divider)
-		// botSep (between ghostArea and right cluster) is unchanged: still a
-		// single divider because ghostArea absorbed sessAgents.visWidth cells
-		// plus the pre-existing sep *between* leftCombined and rightBot. The
-		// divider before buildShell (inside rightBot) becomes the new boundary.
-		botSep = ""
+	// When absorbing, active glyphs render directly after the ghost trail
+	// (no divider — same ribbon) with an optional single-cell separator,
+	// then the remaining fragments append via rebuildBotRight.
+	var botLine string
+	if absorbWidth > 0 {
+		ribbonSep := ""
+		if needRibbonSep {
+			ribbonSep = bgPad(iconBg, 1)
+		}
+		botLine = botLeft + ribbonSep + activeStr + h.rebuildBotRight(buildShell, lcd, divider)
+	} else {
+		botLine = botLeft + sep + rightBot.String()
 	}
-	botLine := botLeft + botSep + botRight
 
 	margin := bgPad(iconBg, headlineRightMargin)
 	topLine += margin
@@ -399,9 +400,9 @@ func (h *Headline) ViewLines() []string {
 }
 
 // rebuildBotRight composes the bot row's right-cluster starting from the
-// buildShell fragment (sessAgents bot is absorbed into the ghost trail).
-// Each fragment is preceded by a divider — the first divider is the
-// ghost-area/right-cluster boundary, subsequent ones separate fragments.
+// buildShell fragment (used when the sessAgents cell is absorbed or
+// partially absorbed into the ghost trail). Each fragment is preceded
+// by a divider — the first is the ghost-area/right-cluster boundary.
 func (h *Headline) rebuildBotRight(buildShell, lcd rowPair, divider string) string {
 	var sb strings.Builder
 	write := func(f rowPair) {
