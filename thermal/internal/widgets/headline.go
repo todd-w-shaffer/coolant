@@ -14,18 +14,22 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// Headline renders the unified thermal bar:
-// [ Claude's humming along  ◆ ◆ ◆ | test:004 | build:008 | run:018 | search:005 | shell:004 ]
+// Headline renders the unified thermal bar. It is a 2-row strip when online
+// (top row: quip + LCD readout + agent icons + session diamonds + category
+// cells; bottom row: readout continuation) and a 1-row strip when offline
+// or idle.
 type Headline struct {
 	width  int
 	state  *model.AppState
 	agents *BreatheDots
+	temp   *SegmentReadout
 	theme  *theme.Theme
 }
 
 func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
 	return &Headline{
 		agents: NewBreatheDots(th, ap),
+		temp:   NewSegmentReadout(th, ap),
 		theme:  th,
 	}
 }
@@ -102,9 +106,19 @@ func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidt
 		Render(padded)
 }
 
+// View returns the headline's rendered strip, with rows joined by '\n' when
+// in 2-row mode. Callers that need per-row access use ViewLines.
 func (h *Headline) View() string {
+	return strings.Join(h.ViewLines(), "\n")
+}
+
+// ViewLines returns the headline as a slice of rendered rows — 2 rows online
+// and active, 1 row offline. The 2-row form is additive: the top row still
+// shows everything the 1-row legacy form showed; the bottom row paints the
+// LCD readout's lower half and bg-fills the remainder.
+func (h *Headline) ViewLines() []string {
 	if h.state == nil {
-		return ""
+		return []string{""}
 	}
 
 	// Split categories into dynamic (left) and fixed (right-anchored)
@@ -117,13 +131,8 @@ func (h *Headline) View() string {
 		}
 	}
 
-	// Layout: [quip + agents | ...dynamic... | fixed | fixed ]
-	// Fixed cells are compact and right-anchored
 	fixedTotalWidth := len(fixed) * fixedCellWidth
 	dynamicCount := len(dynamic)
-
-	// Overall cell gets what's left after fixed and dynamic
-	// Dynamic cells are compact — just the label, no count (e.g. " node " = 8 chars)
 	dynamicCellWidth := 0
 	if dynamicCount > 0 {
 		dynamicCellWidth = 8
@@ -135,54 +144,70 @@ func (h *Headline) View() string {
 		overallWidth = 20
 	}
 
-	// Render agent icons
-	var iconBg color.Color
+	twoRow := h.state.Online
+
+	var iconBg, fg color.Color
+	var quip string
+	level := 0
 	if !h.state.Online {
 		iconBg = h.theme.OfflineBg
+		fg = h.theme.OfflineFg
+		quip = model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
 	} else {
-		overallLevel := threatToThermal(h.state.ThreatLevel)
-		iconBg = h.theme.OverallGradient[overallLevel].Bg
+		level = threatToThermal(h.state.ThreatLevel)
+		iconBg = h.theme.OverallGradient[level].Bg
+		fg = h.theme.OverallGradient[level].Fg
+		quip = h.state.StableQuip()
 	}
+
 	iconStr, iconVisWidth := h.agents.Render(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
 
-	// Render session phase diamonds
 	var sessions []collector.SessionTree
 	if h.state.Current != nil {
 		sessions = h.state.Current.Sessions
 	}
 	sessionStr, sessionVisWidth := renderSessionDiamonds(sessions, iconBg, h.theme)
 
-	// Build overall cell
-	var overallCell string
-	if !h.state.Online {
-		quip := model.OfflineMessage(h.state.OfflineDuration, h.state.IdleCycle)
-		overallCell = h.buildOverallCell(quip, h.theme.OfflineFg, h.theme.OfflineBg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
-	} else {
-		overallLevel := threatToThermal(h.state.ThreatLevel)
-		overallThermal := h.theme.OverallGradient[overallLevel]
-		quip := h.state.StableQuip()
-		overallCell = h.buildOverallCell(quip, overallThermal.Fg, overallThermal.Bg, iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
+	tempTop, tempBot, tempVisWidth := "", "", 0
+	if twoRow {
+		h.temp.Update(model.OverallTemperature(h.state), level)
+		tempTop, tempBot, tempVisWidth = h.temp.Render(iconBg)
 	}
 
-	// Render dynamic cells (left of fixed, grow leftward)
+	topCell, botCell := h.buildOverallCell(quip, fg, iconBg,
+		tempTop, tempBot, tempVisWidth,
+		iconStr, iconVisWidth, sessionStr, sessionVisWidth, overallWidth)
+
 	var dynamicCells []string
 	for _, cat := range dynamic {
 		dynamicCells = append(dynamicCells, renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth, h.theme))
 	}
-
-	// Render fixed cells (right-anchored, compact)
 	var fixedCells []string
 	for _, cat := range fixed {
 		fixedCells = append(fixedCells, renderCatCell(cat, h.state.SmoothedCats, fixedCellWidth, h.theme))
 	}
+	catsTop := strings.Join(dynamicCells, "") + strings.Join(fixedCells, "")
+	catsWidth := dynamicTotalWidth + fixedTotalWidth
 
-	return overallCell + strings.Join(dynamicCells, "") + strings.Join(fixedCells, "")
+	topLine := topCell + catsTop
+	if !twoRow {
+		return []string{topLine}
+	}
+	botLine := botCell + strings.Repeat(" ", catsWidth)
+	return []string{topLine, botLine}
 }
 
-// buildOverallCell constructs the overall headline cell with quip left-aligned,
-// agent icons and session diamonds right-aligned, all sharing the same background.
-func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr string, iconVisWidth int, sessionStr string, sessionVisWidth int, totalWidth int) string {
-	// Margins between sections
+// buildOverallCell builds the quip/readout/icons/sessions zone and returns
+// the top and bottom rows of the overall cell. botLine is "" in 1-row
+// (offline) mode.
+func (h *Headline) buildOverallCell(quip string, fg, bg color.Color,
+	tempTop, tempBot string, tempVisWidth int,
+	iconStr string, iconVisWidth int,
+	sessionStr string, sessionVisWidth int, totalWidth int) (topLine, botLine string) {
+	tempMargin := 0
+	if tempVisWidth > 0 {
+		tempMargin = 1
+	}
 	iconMargin := 0
 	if iconVisWidth > 0 {
 		iconMargin = 1
@@ -192,7 +217,7 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr str
 		sessionMargin = 1
 	}
 
-	rightWidth := iconVisWidth + iconMargin + sessionVisWidth + sessionMargin
+	rightWidth := tempVisWidth + tempMargin + iconVisWidth + iconMargin + sessionVisWidth + sessionMargin
 	maxQuip := totalWidth - 2 - rightWidth
 	if maxQuip < 0 {
 		maxQuip = 0
@@ -205,7 +230,6 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr str
 	bgStyle := lipgloss.NewStyle().Background(bg)
 
 	left := baseStyle.Render(" " + quip)
-
 	padWidth := totalWidth - 1 - len(quip) - rightWidth
 	if padWidth < 0 {
 		padWidth = 0
@@ -213,6 +237,10 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr str
 	pad := bgStyle.Render(strings.Repeat(" ", padWidth))
 
 	var right strings.Builder
+	if tempVisWidth > 0 {
+		right.WriteString(tempTop)
+		right.WriteString(bgStyle.Render(" "))
+	}
 	if iconVisWidth > 0 {
 		right.WriteString(iconStr)
 	}
@@ -226,7 +254,15 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color, iconStr str
 		right.WriteString(bgStyle.Render(" "))
 	}
 
-	return left + pad + right.String()
+	topLine = left + pad + right.String()
+	if tempVisWidth == 0 {
+		return topLine, ""
+	}
+
+	leftBotWidth := 1 + len(quip) + padWidth
+	rightAfterTemp := rightWidth - tempVisWidth // trailing bg after the readout
+	botLine = bgStyle.Render(strings.Repeat(" ", leftBotWidth)) + tempBot + bgStyle.Render(strings.Repeat(" ", rightAfterTemp))
+	return topLine, botLine
 }
 
 // renderSessionDiamonds renders phase-colored ⌬ icons for each session,

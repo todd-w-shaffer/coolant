@@ -63,7 +63,7 @@ func (h *Horizontal) State() *model.AppState {
 func (h *Horizontal) SetSize(w, height int) {
 	h.width = w
 	h.height = height
-	h.headline.SetSize(w, 1)
+	h.headline.SetSize(w, 2)
 	h.gauges.SetSize(w, 6)
 	h.rates.SetSize(w, 1)
 	h.alerts.SetSize(w, 2)
@@ -132,19 +132,19 @@ func (h *Horizontal) activeView() string {
 	}
 
 	if h.height >= 1 {
-		lines = append(lines, h.headline.View())
+		lines = append(lines, h.headline.ViewLines()...)
 	}
 
-	if h.helpMode == HelpFull && h.height >= 5 {
+	if h.helpMode == HelpFull && h.height >= 6 {
 		h.gauges.SetDimmed(true)
-		gaugeLines := h.gauges.ViewLines(h.height)
+		gaugeLines := h.gauges.ViewLines(h.height - 1)
 		h.gauges.SetDimmed(false)
 		lines = append(lines, overlayHelp(h.helpView(), gaugeLines)...)
-	} else if h.height >= 3 {
-		lines = append(lines, h.gauges.ViewLines(h.height)...)
+	} else if h.height >= 4 {
+		lines = append(lines, h.gauges.ViewLines(h.height-1)...)
 	}
 
-	if h.height >= 8 {
+	if h.height >= 9 {
 		lines = append(lines, h.rates.View())
 	}
 
