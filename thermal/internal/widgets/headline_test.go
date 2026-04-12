@@ -472,6 +472,38 @@ func TestHeadline_OfflineNoLCDNoStacks(t *testing.T) {
 	}
 }
 
+// TestHeadline_RightMarginProtectsLCDDegreeGlyph — the LCD's degree glyph
+// is the rightmost visible content on the headline and some terminals
+// clip the final column. Reserve at least one cell of right-side bg
+// padding so the degree always renders unclipped.
+func TestHeadline_RightMarginProtectsLCDDegreeGlyph(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+	// Pump ticks so the readout settles out of ghost/flash states.
+	for i := 0; i < 8; i++ {
+		h.AnimTick()
+	}
+
+	lines := h.ViewLines()
+	isBraille := func(r rune) bool { return r >= 0x2800 && r <= 0x28FF }
+
+	for rowIdx, line := range lines {
+		stripped := ansi.Strip(line)
+		runes := []rune(stripped)
+		if len(runes) == 0 {
+			t.Fatalf("row %d empty", rowIdx)
+		}
+		last := runes[len(runes)-1]
+		if isBraille(last) && last != 0x2800 {
+			t.Errorf("row %d last rune %U is a filled braille cell — LCD content flush against right edge, will be clipped:\n%q",
+				rowIdx, last, stripped)
+		}
+	}
+}
+
 // TestHeadline_NarrowTerminalDoesNotPanic — small widths must not panic and
 // must still produce two equal-width rows.
 func TestHeadline_NarrowTerminalDoesNotPanic(t *testing.T) {

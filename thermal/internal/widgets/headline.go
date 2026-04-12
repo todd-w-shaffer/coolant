@@ -175,6 +175,11 @@ func (h *Headline) renderBuildShellStack(smoothed map[string]float64) rowPair {
 // "build:002" = 9 chars + 1 padding each side = 11
 const fixedCellWidth = 11
 
+// headlineRightMargin reserves trailing bg cells on both rows so styled
+// glyphs at the right edge (the LCD's degree sign today, anything else
+// tomorrow) have unstyled slack before the terminal column.
+const headlineRightMargin = 2
+
 // visibleCategories returns categories that should appear in the headline:
 // fixed categories (build, shell) always, dynamic runtimes only when count >= 0.5.
 func visibleCategories(smoothed map[string]float64) []collector.Category {
@@ -309,7 +314,7 @@ func (h *Headline) ViewLines() []string {
 	// Left combined width = quip zone + runtime zone, sharing the bot row for
 	// the ghost tail. Ghosts right-anchor within this width so they visually
 	// extend leftward from the stack cell under the runtimes.
-	leftCombined := h.width - rightVis
+	leftCombined := h.width - rightVis - headlineRightMargin
 	if rightVis > 0 {
 		leftCombined--
 	}
@@ -386,6 +391,10 @@ func (h *Headline) ViewLines() []string {
 		botSep = ""
 	}
 	botLine := botLeft + botSep + botRight
+
+	margin := bgPad(iconBg, headlineRightMargin)
+	topLine += margin
+	botLine += margin
 	return []string{topLine, botLine}
 }
 
