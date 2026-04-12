@@ -120,6 +120,7 @@ thermal/
 │   │   ├── projection.go     # memory weight classes, headroom estimation
 │   │   ├── personality.go    # idle messages, threat quips (loaded from CSV)
 │   │   ├── ring.go           # generic RingBuffer[T] — O(1) push, used by history/alerts/rates
+│   │   ├── temperature.go    # OverallTemperature formula + severity→brightness curves for the LCD readout
 │   │   └── data/
 │   │       └── messages.csv  # embedded status bar messages per threat level
 │   ├── anim/
@@ -137,7 +138,9 @@ thermal/
 │   │   └── registry.go       # theme registry: Get(), Names(), --theme flag lookup
 │   ├── widgets/
 │   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char), themed severity color
-│   │   ├── headline.go       # thermal bar: overall temp + dynamic process categories
+│   │   ├── headline.go       # 2-row thermal bar: quip + runtimes over right-anchored sessions/agents/build-shell/LCD cluster
+│   │   ├── segmentreadout.go # LCD-style temperature readout (continuous gradient, ghost trail, meltdown pulse)
+│   │   ├── segmentfont.go    # 7-segment bitmap font for segmentreadout digits and degree glyph
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   ├── alerts.go         # scrolling alert log
