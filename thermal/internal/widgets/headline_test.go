@@ -1,10 +1,74 @@
 package widgets
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
+
+// TestHeadline_ViewLinesTwoRowsWhenOnline — online+active state returns two
+// lines of equal visible width, so the headline paints a 2-row strip.
+func TestHeadline_ViewLinesTwoRowsWhenOnline(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	lines := h.ViewLines()
+	if len(lines) != 2 {
+		t.Fatalf("online active: got %d line(s), want 2", len(lines))
+	}
+	w0 := ansi.StringWidth(lines[0])
+	w1 := ansi.StringWidth(lines[1])
+	if w0 != w1 {
+		t.Errorf("row widths differ: top=%d bot=%d", w0, w1)
+	}
+	if w0 == 0 {
+		t.Errorf("top row empty")
+	}
+}
+
+// TestHeadline_ViewLinesOneRowWhenOffline — offline fallback stays 1 row so
+// the offline path is untouched.
+func TestHeadline_ViewLinesOneRowWhenOffline(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	state := fixtureState()
+	state.Online = false
+	h.Update(state)
+
+	lines := h.ViewLines()
+	if len(lines) != 1 {
+		t.Errorf("offline: got %d line(s), want 1", len(lines))
+	}
+}
+
+// TestHeadline_TwoRowPreservesTopContent — the 2-row growth is additive. The
+// top row must still contain the quip text and the fixed category labels
+// that the 1-row headline shows today. If this fails the refactor removed
+// user-visible content.
+func TestHeadline_TwoRowPreservesTopContent(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+	h.Update(fixtureState())
+
+	lines := h.ViewLines()
+	top := ansi.Strip(lines[0])
+	for _, want := range []string{"build", "shell"} {
+		if !strings.Contains(top, want) {
+			t.Errorf("top row missing category label %q:\n%s", want, top)
+		}
+	}
+}
 
 func TestVisibleCategoriesFixedAlwaysPresent(t *testing.T) {
 	smoothed := map[string]float64{} // all zero
