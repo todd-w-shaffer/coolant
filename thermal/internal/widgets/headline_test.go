@@ -34,9 +34,10 @@ func TestHeadline_ViewLinesTwoRowsWhenOnline(t *testing.T) {
 	}
 }
 
-// TestHeadline_ViewLinesOneRowWhenOffline — offline fallback stays 1 row so
-// the offline path is untouched.
-func TestHeadline_ViewLinesOneRowWhenOffline(t *testing.T) {
+// TestHeadline_ViewLinesAlwaysTwoRows — offline path still returns two rows
+// so the layout below never reflows when the readout flashes off. The
+// bottom row is bg-filled space but present.
+func TestHeadline_ViewLinesAlwaysTwoRows(t *testing.T) {
 	th := theme.Classic()
 	th.Init()
 	h := NewHeadline(th, anim.Default())
@@ -46,8 +47,12 @@ func TestHeadline_ViewLinesOneRowWhenOffline(t *testing.T) {
 	h.Update(state)
 
 	lines := h.ViewLines()
-	if len(lines) != 1 {
-		t.Errorf("offline: got %d line(s), want 1", len(lines))
+	if len(lines) != 2 {
+		t.Errorf("offline: got %d line(s), want 2 (no-reflow contract)", len(lines))
+	}
+	if ansi.StringWidth(lines[0]) != ansi.StringWidth(lines[1]) {
+		t.Errorf("offline: row widths differ top=%d bot=%d",
+			ansi.StringWidth(lines[0]), ansi.StringWidth(lines[1]))
 	}
 }
 

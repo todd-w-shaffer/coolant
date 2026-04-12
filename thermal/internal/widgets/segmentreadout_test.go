@@ -131,6 +131,67 @@ func TestSegmentReadout_GhostDimmerThanNormal(t *testing.T) {
 	}
 }
 
+// TestSegmentReadout_RapidOscillationSettles — snapshots arrive at a
+// faster cadence than the ghost window, so Update is called repeatedly
+// with small value deltas. The readout must still spend most of its time
+// showing the CURRENT value, not permanently ghosting the previous one.
+// Reproduces the live-demo bug where the LCD never settled.
+func TestSegmentReadout_RapidOscillationSettles(t *testing.T) {
+	s := newTestSegment(t)
+	bg := color.RGBA{0, 0, 0, 255}
+	// Establish baseline.
+	s.Update(50, 2)
+	_, _, _ = s.Render(bg)
+
+	// 20 snapshots, each one AnimTick apart, each bumping value by 1 or 2
+	// points — the natural jitter of a smoothed live signal. The readout
+	// must show the CURRENT value in at least half the renders; otherwise
+	// the ghost trail is stuck permanently re-arming.
+	currentHits := 0
+	for i := 0; i < 20; i++ {
+		v := 50 + (i%3)*2 // 50, 52, 54, 50, 52, ...
+		s.Update(v, 2)
+		top, _, _ := s.Render(bg)
+		curHead, _ := digitToBraille(segmentDigits[v%10])
+		if strings.ContainsRune(top, curHead[0]) {
+			currentHits++
+		}
+		s.AnimTick()
+	}
+	if currentHits < 10 {
+		t.Errorf("rapid oscillation: current value shown in only %d/20 renders — ghost is stuck", currentHits)
+	}
+}
+
+// TestSegmentReadout_OfflineOnlineCycle — a long offline gap (no updates)
+// followed by resuming with a different value must not trap the readout
+// in permanent ghost mode. After the ghost window completes the current
+// value must render.
+func TestSegmentReadout_OfflineOnlineCycle(t *testing.T) {
+	s := newTestSegment(t)
+	bg := color.RGBA{0, 0, 0, 255}
+	s.Update(50, 2)
+	_, _, _ = s.Render(bg)
+	// Simulate offline window: no Update calls, only AnimTicks.
+	for i := 0; i < 10; i++ {
+		s.AnimTick()
+	}
+	// Resume online with a new value.
+	s.Update(85, 3)
+	// Burn through ghost window.
+	for i := 0; i < ghostTickCount+1; i++ {
+		s.AnimTick()
+	}
+	// Now a few normal snapshots with stable value.
+	s.Update(85, 3)
+	top, _, _ := s.Render(bg)
+	want8, _ := digitToBraille(segmentDigits[8])
+	want5, _ := digitToBraille(segmentDigits[5])
+	if !strings.ContainsRune(top, want8[0]) || !strings.ContainsRune(top, want5[0]) {
+		t.Errorf("after offline→online cycle, readout should show 85 head runes; got %q", ansi.Strip(top))
+	}
+}
+
 // TestSegmentReadout_GhostExpires — after enough AnimTicks the new value
 // takes over.
 func TestSegmentReadout_GhostExpires(t *testing.T) {
