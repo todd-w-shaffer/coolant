@@ -12,6 +12,18 @@ cd "$SCRIPT_DIR"
 command -v prometheus >/dev/null 2>&1 || { echo "brew install prometheus"; exit 1; }
 command -v grafana    >/dev/null 2>&1 || { echo "brew install grafana"; exit 1; }
 
+# Port-in-use guard — prevents a second start.sh from clobbering a stack
+# already running in another terminal.
+for port_check in "3000:Grafana" "9090:Prometheus"; do
+    port="${port_check%%:*}"
+    service="${port_check##*:}"
+    if lsof -i ":$port" >/dev/null 2>&1; then
+        echo "⚠  Port $port is already in use — $service is likely running in another terminal."
+        echo "   Ctrl-C the other terminal first if you want to restart here."
+        exit 1
+    fi
+done
+
 # Version drift check — last validated against this Grafana.
 # Bump GRAFANA_VALIDATED_VERSION when we've sanity-checked dashboards
 # on a newer release. Warns but does not block.
