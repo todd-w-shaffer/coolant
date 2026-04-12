@@ -30,11 +30,11 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "color": { "fixedColor": "#ca9ee6", "mode": "fixed" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "purple", "value": null }
+              { "color": "#ca9ee6", "value": null }
             ]
           }
         },
@@ -67,11 +67,11 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "fixedColor": "green", "mode": "fixed" },
+          "color": { "fixedColor": "#a6d189", "mode": "fixed" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null }
+              { "color": "#a6d189", "value": null }
             ]
           }
         },
@@ -106,13 +106,13 @@
           "min": 0,
           "max": 1,
           "decimals": 1,
-          "color": { "mode": "continuous-RdYlGr" },
+          "color": { "mode": "thresholds" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "yellow", "value": 0.3 },
-              { "color": "green", "value": 0.6 }
+              { "color": "#e78284", "value": null },
+              { "color": "#e5c890", "value": 0.3 },
+              { "color": "#a6d189", "value": 0.6 }
             ]
           }
         },
@@ -153,11 +153,11 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "color": { "fixedColor": "#ef9f76", "mode": "fixed" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "orange", "value": null }
+              { "color": "#ef9f76", "value": null }
             ]
           }
         },
@@ -189,11 +189,11 @@
         "defaults": {
           "unit": "short",
           "decimals": 2,
-          "color": { "fixedColor": "blue", "mode": "fixed" },
+          "color": { "fixedColor": "#8caaee", "mode": "fixed" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "blue", "value": null }
+              { "color": "#8caaee", "value": null }
             ]
           }
         },
@@ -225,11 +225,11 @@
         "defaults": {
           "unit": "short",
           "decimals": 1,
-          "color": { "fixedColor": "super-light-blue", "mode": "fixed" },
+          "color": { "fixedColor": "#99d1db", "mode": "fixed" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "super-light-blue", "value": null }
+              { "color": "#99d1db", "value": null }
             ]
           }
         },
@@ -261,13 +261,13 @@
         "defaults": {
           "unit": "short",
           "decimals": 2,
-          "color": { "mode": "continuous-GrYlRd" },
+          "color": { "mode": "thresholds" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 3 },
-              { "color": "red", "value": 6 }
+              { "color": "#a6d189", "value": null },
+              { "color": "#e5c890", "value": 3 },
+              { "color": "#e78284", "value": 6 }
             ]
           }
         },
@@ -336,13 +336,13 @@
               "mode": "gradient"
             }
           },
-          "color": { "mode": "continuous-GrYlRd" },
+          "color": { "mode": "thresholds" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 50 },
-              { "color": "red", "value": 200 }
+              { "color": "#a6d189", "value": null },
+              { "color": "#e5c890", "value": 50 },
+              { "color": "#e78284", "value": 200 }
             ]
           }
         },
@@ -452,7 +452,7 @@
         "defaults": {
           "unit": "short",
           "decimals": 2,
-          "color": { "fixedColor": "orange", "mode": "fixed" },
+          "color": { "fixedColor": "#ef9f76", "mode": "fixed" },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 25,
@@ -491,7 +491,7 @@
           "min": 0,
           "max": 1,
           "decimals": 2,
-          "color": { "fixedColor": "green", "mode": "fixed" },
+          "color": { "fixedColor": "#a6d189", "mode": "fixed" },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 25,
@@ -507,7 +507,7 @@
             "mode": "absolute",
             "steps": [
               { "color": "transparent", "value": null },
-              { "color": "yellow", "value": 0.5 }
+              { "color": "#e5c890", "value": 0.5 }
             ]
           }
         },
@@ -544,7 +544,7 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "color": { "fixedColor": "#ca9ee6", "mode": "fixed" },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 25,
@@ -586,13 +586,13 @@
             "align": "auto",
             "cellOptions": { "type": "auto" }
           },
-          "color": { "mode": "continuous-GrYlRd" },
+          "color": { "mode": "thresholds" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 5 },
-              { "color": "red", "value": 25 }
+              { "color": "#a6d189", "value": null },
+              { "color": "#e5c890", "value": 5 },
+              { "color": "#e78284", "value": 25 }
             ]
           }
         },
@@ -675,7 +675,7 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "fixedColor": "purple", "mode": "fixed" },
+          "color": { "fixedColor": "#ca9ee6", "mode": "fixed" },
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 30,
@@ -712,11 +712,11 @@
         "defaults": {
           "unit": "short",
           "decimals": 0,
-          "color": { "mode": "continuous-BlPu" },
+          "color": { "mode": "thresholds" },
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "blue", "value": null }
+              { "color": "#8caaee", "value": null }
             ]
           }
         },
