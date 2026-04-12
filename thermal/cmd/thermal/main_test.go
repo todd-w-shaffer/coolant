@@ -19,18 +19,10 @@ func newTestModel(t *testing.T) model {
 	return newModel(true, th, anim.Default())
 }
 
-// pressKey simulates a tea.KeyPressMsg with the given key string and runs
-// it through the model's Update.
 func pressKey(t *testing.T, m model, k string) (model, tea.Cmd) {
 	t.Helper()
-	var key tea.Key
-	switch k {
-	case "ctrl+c":
-		key = tea.Key{Code: tea.KeyTab, Mod: tea.ModCtrl} // placeholder; not used by test below
-	default:
-		runes := []rune(k)
-		key = tea.Key{Code: rune(runes[0]), Text: k}
-	}
+	runes := []rune(k)
+	key := tea.Key{Code: rune(runes[0]), Text: k}
 	out, cmd := m.Update(tea.KeyPressMsg(key))
 	return out.(model), cmd
 }

@@ -17,24 +17,31 @@ func mustTheme(t *testing.T, name string) *theme.Theme {
 	return th
 }
 
-func TestHelpShortViewContainsAllLabels(t *testing.T) {
+func newHelpAtWidth(t *testing.T, th *theme.Theme, w int) *HelpRenderer {
+	t.Helper()
+	hr := NewHelpRenderer(th)
+	hr.SetWidth(w)
+	return hr
+}
+
+func TestHelpShortContainsAllLabels(t *testing.T) {
 	th := mustTheme(t, "classic")
-	out := HelpShortView(th, keys.Default(), 200)
+	out := newHelpAtWidth(t, th, 200).Short(keys.Default())
 	for _, want := range []string{"help", "quit", "collapse sessions", "purge stale agents"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("HelpShortView output missing %q\nfull output: %q", want, out)
+			t.Errorf("Short output missing %q\nfull output: %q", want, out)
 		}
 	}
 }
 
-func TestHelpShortViewDegradesBelowMinWidth(t *testing.T) {
+func TestHelpShortDegradesBelowMinWidth(t *testing.T) {
 	th := mustTheme(t, "classic")
-	out := HelpShortView(th, keys.Default(), 40)
+	out := newHelpAtWidth(t, th, 40).Short(keys.Default())
 	if !strings.Contains(out, "[?]") {
-		t.Errorf("HelpShortView at width=40 should contain %q, got %q", "[?]", out)
+		t.Errorf("Short at width=40 should contain %q, got %q", "[?]", out)
 	}
 	if strings.Contains(out, "collapse sessions") {
-		t.Errorf("HelpShortView at width=40 should NOT include full descriptions, got %q", out)
+		t.Errorf("Short at width=40 should NOT include full descriptions, got %q", out)
 	}
 }
 
@@ -45,7 +52,7 @@ func TestRatesViewFullModeReturnsHelpOnly(t *testing.T) {
 	r.SetSize(200, 1)
 	r.Update(state)
 	out := r.View()
-	if !strings.Contains(out, "press any key to dismiss") {
+	if !strings.Contains(out, helpDismissHint) {
 		t.Errorf("full-mode View() should contain dismiss hint, got %q", out)
 	}
 	if strings.Contains(out, "CPU:") {
@@ -53,12 +60,12 @@ func TestRatesViewFullModeReturnsHelpOnly(t *testing.T) {
 	}
 }
 
-func TestHelpFullViewIncludesAllGroups(t *testing.T) {
+func TestHelpFullIncludesAllGroups(t *testing.T) {
 	th := mustTheme(t, "classic")
-	out := HelpFullView(th, keys.Default(), 200)
-	for _, want := range []string{"help", "quit", "collapse sessions", "purge stale agents", "press any key to dismiss"} {
+	out := newHelpAtWidth(t, th, 200).Full(keys.Default())
+	for _, want := range []string{"help", "quit", "collapse sessions", "purge stale agents", helpDismissHint} {
 		if !strings.Contains(out, want) {
-			t.Errorf("HelpFullView output missing %q\nfull output: %q", want, out)
+			t.Errorf("Full output missing %q\nfull output: %q", want, out)
 		}
 	}
 }
