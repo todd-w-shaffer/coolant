@@ -174,12 +174,9 @@ After Task 4 offline is "works but ugly". Tighten.
 - **Verify:** `COLUMNS=40 ./bin/thermo --demo` (or resize manually).
 - **Commit:** "feat(headline): drop runtimes first on narrow terminals".
 
-### Task 7 — Golden test (optional, if visual stability matters)
+### Task 7 — Golden test (deferred to backlog)
 
-- Add `captureHeadline()` to `golden_test.go` returning `h.View()` with a pinned fixture + fixed tick count.
-- Run with `UPDATE_GOLDEN=1` to generate `testdata/headline.golden`.
-- Add to `TestCaptureGoldenFiles` + `TestClassicMatchesGolden` table.
-- **Commit:** "test(headline): add golden for restacked layout".
+**Deferred 2026-04-12** until the headline layout stabilizes enough that a frozen frame is worth more than the iteration friction a golden creates. Enriched analysis, fixture proposal, tick-sensitivity prework, and ready-to-lock checklist live in `docs/backlog/headline-golden.md`. Pick it up from there.
 
 ## Edge Cases (flag for implementing engineer)
 
