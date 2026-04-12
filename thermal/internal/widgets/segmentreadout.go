@@ -14,6 +14,12 @@ import (
 // enough to read as a trail, short enough not to delay the new reading.
 const ghostTickCount = 5
 
+// ghostDeltaThreshold is the minimum value change that arms the ghost
+// trail. Small jitter from EMA smoothing (1–2 points) must NOT trigger a
+// ghost, otherwise the readout re-arms every snapshot and is stuck
+// permanently in the dimmed prev-value state.
+const ghostDeltaThreshold = 3
+
 // SegmentReadout renders the 7-segment-style temperature number for the
 // headline. It owns value + level + a sub-second ghost-trail state machine
 // and a single-tick threshold flash that fires on upward level transitions.
@@ -48,9 +54,18 @@ func (s *SegmentReadout) Update(value, level int) {
 	if level > 4 {
 		level = 4
 	}
-	if s.hasPrev && value != s.value {
-		s.prevValue = s.value
-		s.ghostTicks = ghostTickCount
+	// Arm the ghost only on a MEANINGFUL jump AND only when no ghost is
+	// already running. Sub-threshold jitter is ignored so the readout
+	// actually reaches the new value instead of re-arming every snapshot.
+	if s.hasPrev && s.ghostTicks == 0 {
+		delta := value - s.value
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta >= ghostDeltaThreshold {
+			s.prevValue = s.value
+			s.ghostTicks = ghostTickCount
+		}
 	}
 	if s.hasLevel && level > s.prevLevel {
 		s.flashTicks = 1

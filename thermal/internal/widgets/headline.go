@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
@@ -59,6 +60,13 @@ func (h *Headline) Update(state *model.AppState) {
 	h.agents.SetStaleCount(state.StaleAgentCount())
 	h.agents.SetCompletedCount(state.CompletedAgentCount())
 	h.meltdown = state.Online && state.ThreatLevel == model.ThreatMeltdown
+
+	// Drive the readout from data-update cadence, not render cadence. If we
+	// updated inside ViewLines() the ghost trail would re-arm on every
+	// sub-second oscillation and the readout would stay permanently dimmed.
+	if state.Online {
+		h.temp.Update(model.OverallTemperature(state), threatToThermal(state.ThreatLevel))
+	}
 }
 
 // SetHighScoreMode toggles KITT-as-highscore on the agent dot display.
@@ -191,7 +199,6 @@ func (h *Headline) ViewLines() []string {
 
 	tempTop, tempBot, tempVisWidth := "", "", 0
 	if twoRow {
-		h.temp.Update(model.OverallTemperature(h.state), level)
 		pulseScale := 1.0
 		if h.meltdown {
 			pulseScale = 0.6 + 0.4*(math.Sin(h.pulsePhase)+1)/2
@@ -214,9 +221,15 @@ func (h *Headline) ViewLines() []string {
 	catsTop := strings.Join(dynamicCells, "") + strings.Join(fixedCells, "")
 	catsWidth := dynamicTotalWidth + fixedTotalWidth
 
+	// Always emit two rows so the downstream layout never reflows when the
+	// LCD flashes off (e.g., demo's offline cycles). When the readout is
+	// hidden, botCell is empty and the bottom row is just bg-filled space
+	// of the same width as the overall cell, plus plain-space padding for
+	// the category region.
 	topLine := topCell + catsTop
-	if !twoRow {
-		return []string{topLine}
+	if botCell == "" {
+		bgStyle := lipgloss.NewStyle().Background(iconBg)
+		botCell = bgStyle.Render(strings.Repeat(" ", overallWidth))
 	}
 	botLine := botCell + strings.Repeat(" ", catsWidth)
 	return []string{topLine, botLine}
@@ -247,15 +260,19 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color,
 	if maxQuip < 0 {
 		maxQuip = 0
 	}
-	if len(quip) > maxQuip {
-		quip = quip[:maxQuip]
+	// Quip widths must be counted in runes, not bytes — offline messages
+	// contain em-dashes (3 bytes, 1 cell) and a byte count would throw
+	// the pad math off by 2 cells per multi-byte rune.
+	if utf8.RuneCountInString(quip) > maxQuip {
+		quip = truncRunes(quip, maxQuip)
 	}
+	quipWidth := utf8.RuneCountInString(quip)
 
 	baseStyle := lipgloss.NewStyle().Foreground(fg).Background(bg)
 	bgStyle := lipgloss.NewStyle().Background(bg)
 
 	left := baseStyle.Render(" " + quip)
-	padWidth := totalWidth - 1 - len(quip) - rightWidth
+	padWidth := totalWidth - 1 - quipWidth - rightWidth
 	if padWidth < 0 {
 		padWidth = 0
 	}
@@ -284,7 +301,7 @@ func (h *Headline) buildOverallCell(quip string, fg, bg color.Color,
 		return topLine, ""
 	}
 
-	leftBotWidth := 1 + len(quip) + padWidth
+	leftBotWidth := 1 + quipWidth + padWidth
 	rightAfterTemp := rightWidth - tempVisWidth // trailing bg after the readout
 	botLine = bgStyle.Render(strings.Repeat(" ", leftBotWidth)) + tempBot + bgStyle.Render(strings.Repeat(" ", rightAfterTemp))
 	return topLine, botLine
@@ -317,6 +334,20 @@ func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color, th 
 		visWidth++
 	}
 	return sb.String(), visWidth
+}
+
+// truncRunes returns s truncated to at most n runes (not bytes) so
+// multibyte characters don't get split mid-codepoint.
+func truncRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	i, count := 0, 0
+	for ; i < len(s) && count < n; count++ {
+		_, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+	}
+	return s[:i]
 }
 
 func threatToThermal(t model.ThreatLevel) int {

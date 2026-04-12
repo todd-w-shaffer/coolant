@@ -63,7 +63,13 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 		case <-ticker.C:
 		}
 
-		phase := phaseAt(tick)
+		// Loop the 20-second arc indefinitely. Raw tick still drives
+		// independent oscillators (offline cycle, agent IDs); phase and
+		// per-phase progress use arcTick so coolProgress never exceeds 1.0
+		// and the synthetic stats don't go negative post-arc.
+		arcLen := phaseBoundaries[len(phaseBoundaries)-1]
+		arcTick := tick % arcLen
+		phase := phaseAt(arcTick)
 
 		// ── Agent count per phase ────────────────────────────
 		var agentCount int
@@ -72,7 +78,7 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			agentCount = 1
 		case phaseSpawn:
 			// Ramp from 1 to 3 over the phase
-			progress := tick - phaseBoundaries[phaseSpawn]
+			progress := arcTick - phaseBoundaries[phaseSpawn]
 			phaseDur := phaseBoundaries[phaseSpawn+1] - phaseBoundaries[phaseSpawn]
 			if progress < phaseDur/2 {
 				agentCount = 2
@@ -83,7 +89,7 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			agentCount = 3
 		case phaseCooldown:
 			// Ramp from 3 to 1
-			progress := tick - phaseBoundaries[phaseCooldown]
+			progress := arcTick - phaseBoundaries[phaseCooldown]
 			phaseDur := phaseBoundaries[phaseCooldown+1] - phaseBoundaries[phaseCooldown]
 			third := phaseDur / 3
 			switch {
@@ -239,7 +245,7 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 
 		case phaseShell:
 			// Ramp within the shell phase itself
-			shellProgress := float64(tick-phaseBoundaries[phaseShell]) / float64(phaseBoundaries[phaseShell+1]-phaseBoundaries[phaseShell])
+			shellProgress := float64(arcTick-phaseBoundaries[phaseShell]) / float64(phaseBoundaries[phaseShell+1]-phaseBoundaries[phaseShell])
 			cpuPct = 50.0 + shellProgress*50.0 + float64(rand.Intn(5))
 			if cpuPct > 100 {
 				cpuPct = 100
@@ -257,7 +263,7 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			}
 
 		case phaseCooldown:
-			coolProgress := float64(tick-phaseBoundaries[phaseCooldown]) / float64(phaseBoundaries[phaseCooldown+1]-phaseBoundaries[phaseCooldown])
+			coolProgress := float64(arcTick-phaseBoundaries[phaseCooldown]) / float64(phaseBoundaries[phaseCooldown+1]-phaseBoundaries[phaseCooldown])
 			cpuPct = 80.0 - coolProgress*60.0 + float64(rand.Intn(5))
 			memUsed = totalMem - int64(coolProgress*float64(totalMem-baseMem))
 			decomps = 30000 - int64(coolProgress*28000) + int64(rand.Intn(2000))
