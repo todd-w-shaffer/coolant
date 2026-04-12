@@ -7,9 +7,9 @@
 - ⚪ default: 10
 
 
-- 🌈 classic-palette: 3
+- 🌈 classic-palette: 2
 
-- ✅ themed: 79
+- ✅ themed: 80
 
 ## claude-cfo.json
 
@@ -106,7 +106,7 @@
 | 200 | Think-to-Ship Ratio — by Repo | ✅ themed | `thresholds` | — |
 | 201 | Edit Rejection Rate — by Repo | ✅ themed | `thresholds` | — |
 | 300 | Total Spend — by Repo | ✅ themed | `thresholds` | — |
-| 301 | Cost per Line Added — Daily Trend | 🌈 classic-palette | `palette-classic-by-name` | mode=palette-classic-by-name |
+| 301 | Cost per Line Added — Daily Trend | ✅ themed | `palette-classic-by-name` | — |
 
 ## claude-vpeng.json
 
