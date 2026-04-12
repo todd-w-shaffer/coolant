@@ -80,17 +80,17 @@ func TestRenderTemperature_Formatting(t *testing.T) {
 		value   int
 		wantLen int
 	}{
-		{0, 13},
-		{7, 13},
-		{42, 13},
-		{99, 13},
-		{-5, 13},
-		{150, 13},
+		{0, 9},
+		{7, 9},
+		{42, 9},
+		{99, 9},
+		{-5, 9},
+		{150, 9},
 	}
 	for _, tc := range cases {
 		top, bot, w := RenderTemperature(tc.value)
-		if w != 13 {
-			t.Errorf("value=%d visWidth=%d, want 13", tc.value, w)
+		if w != 9 {
+			t.Errorf("value=%d visWidth=%d, want 9", tc.value, w)
 		}
 		if n := utf8.RuneCountInString(top); n != tc.wantLen {
 			t.Errorf("value=%d top rune count=%d, want %d", tc.value, n, tc.wantLen)
@@ -102,19 +102,19 @@ func TestRenderTemperature_Formatting(t *testing.T) {
 }
 
 // TestRenderTemperature_DigitSelection — the digits rendered in the top row
-// reflect the zero-padded value. Compares the three digit-head runes
-// (positions 0, 4, 8) against each digit's canonical head rune.
+// reflect the zero-padded value. Compares the two digit-head runes
+// (positions 0, 4) against each digit's canonical head rune.
 func TestRenderTemperature_DigitSelection(t *testing.T) {
 	cases := []struct {
 		value int
-		want  [3]int // digit values
+		want  [2]int // digit values (tens, ones)
 	}{
-		{0, [3]int{0, 0, 0}},
-		{7, [3]int{0, 0, 7}},
-		{42, [3]int{0, 4, 2}},
-		{99, [3]int{0, 9, 9}},
-		{-5, [3]int{0, 0, 0}},
-		{150, [3]int{0, 9, 9}},
+		{0, [2]int{0, 0}},
+		{7, [2]int{0, 7}},
+		{42, [2]int{4, 2}},
+		{99, [2]int{9, 9}},
+		{-5, [2]int{0, 0}},
+		{150, [2]int{9, 9}},
 	}
 	for _, tc := range cases {
 		top, _, _ := RenderTemperature(tc.value)

@@ -20,23 +20,23 @@ func newTestSegment(t *testing.T) *SegmentReadout {
 }
 
 // TestSegmentReadout_RenderShape — both rows render, contain braille runes,
-// and visible width is the constant 13.
+// and visible width is the constant 9.
 func TestSegmentReadout_RenderShape(t *testing.T) {
 	s := newTestSegment(t)
 	s.Update(87, 3)
 	top, bot, w := s.Render(color.RGBA{0, 0, 0, 255})
 
-	if w != 13 {
-		t.Errorf("visWidth=%d, want 13", w)
+	if w != 9 {
+		t.Errorf("visWidth=%d, want 9", w)
 	}
-	if ansi.StringWidth(top) != 13 {
-		t.Errorf("top visual width=%d, want 13 (stripped: %q)", ansi.StringWidth(top), ansi.Strip(top))
+	if ansi.StringWidth(top) != 9 {
+		t.Errorf("top visual width=%d, want 9 (stripped: %q)", ansi.StringWidth(top), ansi.Strip(top))
 	}
-	if ansi.StringWidth(bot) != 13 {
-		t.Errorf("bot visual width=%d, want 13 (stripped: %q)", ansi.StringWidth(bot), ansi.Strip(bot))
+	if ansi.StringWidth(bot) != 9 {
+		t.Errorf("bot visual width=%d, want 9 (stripped: %q)", ansi.StringWidth(bot), ansi.Strip(bot))
 	}
-	// Top row must contain the head rune of each selected digit (0, 8, 7).
-	for _, d := range []int{0, 8, 7} {
+	// Top row must contain the head rune of each selected digit (8, 7).
+	for _, d := range []int{8, 7} {
 		wantTop, _ := digitToBraille(segmentDigits[d])
 		if !strings.ContainsRune(top, wantTop[0]) {
 			t.Errorf("top does not contain digit %d head rune %#x", d, wantTop[0])
@@ -147,13 +147,19 @@ func TestSegmentReadout_RapidOscillationSettles(t *testing.T) {
 	// points — the natural jitter of a smoothed live signal. The readout
 	// must show the CURRENT value in at least half the renders; otherwise
 	// the ghost trail is stuck permanently re-arming.
+	// A "current hit" means the ones-digit head rune of v appears at its
+	// expected slot (position 4 — after the tens digit + gap). Substring
+	// containment isn't sufficient: the tens digit stays at 5 across the
+	// oscillation, and ghost frames rendering a prev value with the same
+	// tens digit would falsely register.
 	currentHits := 0
 	for i := 0; i < 20; i++ {
-		v := 50 + (i%3)*2 // 50, 52, 54, 50, 52, ...
+		v := 50 + (i % 3) // 50, 51, 52, 50, 51, ... — jitter below the ghost threshold
 		s.Update(v, 2)
 		top, _, _ := s.Render(bg)
-		curHead, _ := digitToBraille(segmentDigits[v%10])
-		if strings.ContainsRune(top, curHead[0]) {
+		stripped := []rune(ansi.Strip(top))
+		onesHead, _ := digitToBraille(segmentDigits[v%10])
+		if len(stripped) > 4 && stripped[4] == onesHead[0] {
 			currentHits++
 		}
 		s.AnimTick()
