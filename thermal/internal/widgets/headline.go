@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"math"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
@@ -37,6 +38,17 @@ type Headline struct {
 	// headline throbs together.
 	pulsePhase float64
 	meltdown   bool
+
+	// Directional heat rails for the stacked build/shell cells. Each cell's
+	// rail rides CategoryGradient for live warming and eases back to
+	// iconBg over BuildShellEmberDecay after its count drops.
+	buildRail railState
+	shellRail railState
+
+	// now is the wall-clock source for ember decay. Tests inject a fixed
+	// clock to capture deterministic mid-decay goldens; production runs
+	// leave it defaulted to time.Now.
+	now func() time.Time
 }
 
 func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
@@ -45,6 +57,7 @@ func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
 		temp:   NewSegmentReadout(th, ap),
 		bloom:  NewHeatBloom(th, ap),
 		theme:  th,
+		now:    time.Now,
 	}
 }
 
@@ -201,14 +214,78 @@ func init() {
 	}
 }
 
-// renderBuildShellStack stacks build:NNN (top) over shell:NNN (bottom),
-// each as an independent thermal-colored cell at fixedCellWidth.
-func (h *Headline) renderBuildShellStack(smoothed map[string]float64) rowPair {
+// buildRailGlyph paints the top edge of the build cell; shellRailGlyph
+// paints the bottom edge of the shell cell. One-eighth blocks sit at the
+// cell edge bordering the row separator, so the rail reads as a directional
+// origin line rather than a box outline.
+const (
+	buildRailGlyph = '▔' // U+2594 UPPER ONE EIGHTH BLOCK
+	shellRailGlyph = '▁' // U+2581 LOWER ONE EIGHTH BLOCK
+)
+
+// renderBuildShellStack stacks build:NNN (top) over shell:NNN (bottom).
+// The cell backdrop is pinned to iconBg for both rows; activity pressure
+// is signalled by a heat-colored rail on each cell's origin edge (top
+// for build, bottom for shell). The rail Fg rides CategoryGradient for
+// warming and eases back to iconBg over BuildShellEmberDecay when the
+// count drops, so a burst reads as a directional ember trail instead of
+// a full-cell bg paint that would fight the heatbloom for the same
+// visual channel.
+func (h *Headline) renderBuildShellStack(smoothed map[string]float64, iconBg color.Color) rowPair {
+	now := h.now()
+	buildLevel := thermalLevelFor(buildCat.Name, int(math.Round(smoothed[buildCat.Name])))
+	shellLevel := thermalLevelFor(shellCat.Name, int(math.Round(smoothed[shellCat.Name])))
+	h.buildRail.update(buildLevel, now, config.BuildShellEmberDecay)
+	h.shellRail.update(shellLevel, now, config.BuildShellEmberDecay)
+
 	return rowPair{
-		top:      renderCatCell(buildCat, smoothed, fixedCellWidth, h.theme),
-		bot:      renderCatCell(shellCat, smoothed, fixedCellWidth, h.theme),
+		top:      renderRailCell(buildCat, smoothed, fixedCellWidth, h.theme, iconBg, h.buildRail, h.buildRail.decayAt(now, config.BuildShellEmberDecay), buildRailGlyph),
+		bot:      renderRailCell(shellCat, smoothed, fixedCellWidth, h.theme, iconBg, h.shellRail, h.shellRail.decayAt(now, config.BuildShellEmberDecay), shellRailGlyph),
 		visWidth: fixedCellWidth,
 	}
+}
+
+// renderRailCell renders a build/shell cell with iconBg across the full
+// width, pinned-Fg text for "name:NNN", and rail glyphs in the padding
+// slots. Rail Fg comes from railColor(th, peakLevel, iconBg, decay) so
+// idle cells emit a row of iconBg-on-iconBg glyphs (invisible) and peak
+// cells emit CategoryGradient[level].Fg. Text color is pinned to
+// CategoryGradient[1].Fg (calm baseline) so legibility is constant
+// regardless of heat level — the old path had digits go dark-red on
+// dark-red at critical.
+func renderRailCell(cat collector.Category, smoothed map[string]float64,
+	cellWidth int, th *theme.Theme, iconBg color.Color, rs railState,
+	decay float64, edge rune) string {
+	s := smoothed[cat.Name]
+	count := int(math.Round(s))
+
+	var content string
+	if collector.FixedCategories[cat.Name] {
+		content = fmt.Sprintf("%s:%03d", cat.Label, count)
+	} else {
+		content = cat.Label
+	}
+
+	padTotal := cellWidth - len(content)
+	padLeft := padTotal / 2
+	padRight := padTotal - padLeft
+	if padLeft < 0 {
+		padLeft = 0
+	}
+	if padRight < 0 {
+		padRight = 0
+	}
+
+	railFg := railColor(th, rs.peakLevel, iconBg, decay)
+	railStyle := lipgloss.NewStyle().Foreground(railFg).Background(iconBg)
+	textStyle := lipgloss.NewStyle().
+		Foreground(th.CategoryGradient[1].Fg).
+		Background(iconBg)
+
+	edgeRun := strings.Repeat(string(edge), padLeft)
+	trailRun := strings.Repeat(string(edge), padRight)
+
+	return railStyle.Render(edgeRun) + textStyle.Render(content) + railStyle.Render(trailRun)
 }
 
 // fixedCellWidth is the compact width for always-visible category boxes.
@@ -301,7 +378,7 @@ func (h *Headline) ViewLines() []string {
 	}
 	lcd := h.renderLCDFrag(iconBg, pulseScale)
 
-	buildShell := h.renderBuildShellStack(h.state.SmoothedCats)
+	buildShell := h.renderBuildShellStack(h.state.SmoothedCats, iconBg)
 
 	var sessions []collector.SessionTree
 	if h.state.Current != nil {

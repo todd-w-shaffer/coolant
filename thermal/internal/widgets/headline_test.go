@@ -495,7 +495,8 @@ func TestRenderBuildShellStack_BothRowsFixedWidth(t *testing.T) {
 	th.Init()
 	h := NewHeadline(th, anim.Default())
 	smoothed := map[string]float64{"build": 2, "shell": 1}
-	rp := h.renderBuildShellStack(smoothed)
+	iconBg := th.OverallGradient[1].Bg
+	rp := h.renderBuildShellStack(smoothed, iconBg)
 	if rp.visWidth != fixedCellWidth {
 		t.Errorf("visWidth=%d want %d", rp.visWidth, fixedCellWidth)
 	}
@@ -514,7 +515,8 @@ func TestRenderBuildShellStack_TopIsBuildBotIsShell(t *testing.T) {
 	th.Init()
 	h := NewHeadline(th, anim.Default())
 	smoothed := map[string]float64{"build": 2, "shell": 1}
-	rp := h.renderBuildShellStack(smoothed)
+	iconBg := th.OverallGradient[1].Bg
+	rp := h.renderBuildShellStack(smoothed, iconBg)
 	if !strings.Contains(ansi.Strip(rp.top), "build:") {
 		t.Errorf("top missing build: %q", ansi.Strip(rp.top))
 	}

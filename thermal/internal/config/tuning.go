@@ -178,6 +178,13 @@ const (
 // degrades from a full key·desc list to a compact "[?]" token.
 const HelpShortMinWidth = 80
 
+// ── Build/shell ember rails ───────────────────────────────
+// BuildShellEmberDecay is the time over which the directional heat rail
+// above `build:NNN` (and below `shell:NNN`) cools from its peak
+// CategoryGradient fg back to the pinned headline bg after the smoothed
+// count drops below the level that set the peak.
+const BuildShellEmberDecay = 2 * time.Second
+
 // ── Heat bloom ───────────────────────────────────────────
 // Motion and geometry for the thermographic accent layer rendered behind
 // the headline's left zone. Endpoints interpolate linearly across the
