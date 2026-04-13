@@ -166,9 +166,9 @@ func (s *SegmentReadout) RenderWithPulse(bg color.Color, pulseScale float64) (to
 
 	bgStyle := lipgloss.NewStyle().Background(bg)
 	gap := bgStyle.Render(" ")
-	top = paintFg(bgStyle, tensFg, string(tensTop[:])) + gap + paintFg(bgStyle, onesFg, string(onesTop[:])) + paintFg(bgStyle, degFg, string(degTop[:]))
-	bot = paintFg(bgStyle, tensFg, string(tensBot[:])) + gap + paintFg(bgStyle, onesFg, string(onesBot[:])) + paintFg(bgStyle, degFg, string(degBot[:]))
-	visWidth = 9
+	top = paintFg(bgStyle, tensFg, string(tensTop[:])) + gap + paintFg(bgStyle, onesFg, string(onesTop[:])) + gap + paintFg(bgStyle, degFg, string(degTop[:]))
+	bot = paintFg(bgStyle, tensFg, string(tensBot[:])) + gap + paintFg(bgStyle, onesFg, string(onesBot[:])) + gap + paintFg(bgStyle, degFg, string(degBot[:]))
+	visWidth = 10
 	return
 }
 
