@@ -44,6 +44,14 @@ const (
 	SpringDamping = 1.0 // critically damped
 )
 
+// Spring physics for the LCD temperature readout. Kept separate from
+// gauge spring so the focal readout can be tuned independently.
+const (
+	LCDSpringFreq    = 5.0  // harmonica frequency
+	LCDSpringDamping = 1.0  // critically damped — no overshoot
+	LCDBoundaryHyst  = 0.15 // dead-zone radius around each integer step
+)
+
 // Agent icon breathing animation.
 const (
 	BreatheMinBright = 0.25  // dimmest point of breathing cycle
