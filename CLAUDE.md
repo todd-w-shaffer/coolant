@@ -139,13 +139,14 @@ thermal/
 │   ├── widgets/
 │   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char), themed severity color
 │   │   ├── headline.go       # 2-row thermal bar: quip + runtimes over right-anchored sessions/agents/build-shell/LCD cluster
-│   │   ├── segmentreadout.go # LCD-style temperature readout (continuous gradient, ghost trail, meltdown pulse)
+│   │   ├── segmentreadout.go # LCD-style temperature readout (spring-smoothed value, per-digit styled spans, meltdown pulse)
 │   │   ├── segmentfont.go    # 7-segment bitmap font for segmentreadout digits and degree glyph
 │   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   ├── alerts.go         # scrolling alert log
 │   │   ├── breathedots.go    # agent indicators: tidal wave (active), KITT scanner (stale or highscore), 3-state glyphs (⬡⏣⬢)
 │   │   ├── heatbloom.go      # thermographic accent behind headline left zone: HCL-blended bloom driven by composite heat
+│   │   ├── rail.go           # directional heat rails (dotted underlines above/below build/shell counts) with ember decay
 │   │   ├── braillefont.go    # 4×8 bitmap font for gauge labels (CPU/MEM/SWAP)
 │   │   ├── thermal.go        # category heat-level threshold logic (returns gradient index)
 │   │   ├── golden_test.go    # golden capture/match tests for render regression detection
