@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
@@ -124,6 +125,24 @@ func TestCaptureGoldenFiles(t *testing.T) {
 	t.Run("gauges", func(t *testing.T) {
 		writeGolden(t, "gauges", captureGauges())
 	})
+
+	t.Run("headline_rails_idle", func(t *testing.T) {
+		writeGolden(t, "headline_rails_idle", captureHeadlineRails(0, 0, 0))
+	})
+
+	t.Run("headline_rails_warm", func(t *testing.T) {
+		writeGolden(t, "headline_rails_warm", captureHeadlineRails(2, 0, 0))
+	})
+
+	t.Run("headline_rails_critical", func(t *testing.T) {
+		writeGolden(t, "headline_rails_critical", captureHeadlineRails(9, 4, 0))
+	})
+
+	t.Run("headline_rails_ember", func(t *testing.T) {
+		// Seed: build warms to peak level (count=5 → critical), then drops
+		// to zero halfway through the ember window. Use a fixed decay=0.5.
+		writeGolden(t, "headline_rails_ember", captureHeadlineRailsEmber())
+	})
 }
 
 // ── Match golden files ───────────────────────────────────────
@@ -140,6 +159,10 @@ func TestClassicMatchesGolden(t *testing.T) {
 		{"alerts_line", captureAlertsLine},
 		{"breathedots", captureBreatheDots},
 		{"gauges", captureGauges},
+		{"headline_rails_idle", func() string { return captureHeadlineRails(0, 0, 0) }},
+		{"headline_rails_warm", func() string { return captureHeadlineRails(2, 0, 0) }},
+		{"headline_rails_critical", func() string { return captureHeadlineRails(9, 4, 0) }},
+		{"headline_rails_ember", captureHeadlineRailsEmber},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -236,6 +259,50 @@ func captureSparkline() string {
 	thresh := &theme.SparkThresholds{Warn: 70, Crit: 90}
 	pair := RenderSparkline(data, online, width, 100, thresh, 0, buf, th, false)
 	return fmt.Sprintf("TOP:%s\nBOT:%s\n", pair.Top, pair.Bottom)
+}
+
+// captureHeadlineRails renders renderBuildShellStack at a fixed wall
+// clock (no ember decay in-flight — first update arms peak at the given
+// level). Returns "TOP:...\nBOT:...\n" so diffs line up readably.
+func captureHeadlineRails(buildCount, shellCount int, _ int) string {
+	th := testTheme
+	ap := testAnim
+	h := NewHeadline(th, ap)
+	t0 := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
+	h.now = func() time.Time { return t0 }
+	iconBg := th.OverallGradient[1].Bg
+	smoothed := map[string]float64{
+		"build": float64(buildCount),
+		"shell": float64(shellCount),
+	}
+	rp := h.renderBuildShellStack(smoothed, iconBg)
+	return fmt.Sprintf("TOP:%s\nBOT:%s\n", rp.top, rp.bot)
+}
+
+// captureHeadlineRailsEmber warms the build rail to its critical peak,
+// then drops live count to zero and advances the injected clock to half
+// the ember duration so the captured rail color sits at decay=0.5.
+func captureHeadlineRailsEmber() string {
+	th := testTheme
+	ap := testAnim
+	h := NewHeadline(th, ap)
+	t0 := time.Date(2026, 4, 13, 12, 0, 0, 0, time.UTC)
+	wallclock := t0
+	h.now = func() time.Time { return wallclock }
+	iconBg := th.OverallGradient[1].Bg
+
+	// Tick 1: warm build to 5 (critical level for build thresholds [1,3]).
+	h.renderBuildShellStack(map[string]float64{"build": 5, "shell": 0}, iconBg)
+
+	// Tick 2: count drops to 0 — arms decayStart at wallclock.
+	wallclock = t0.Add(1 * time.Millisecond)
+	h.renderBuildShellStack(map[string]float64{"build": 0, "shell": 0}, iconBg)
+
+	// Tick 3: advance clock to decayStart + half emberDuration for
+	// decay==0.5. Render the final stack at this moment.
+	wallclock = t0.Add(1*time.Millisecond + config.BuildShellEmberDecay/2)
+	rp := h.renderBuildShellStack(map[string]float64{"build": 0, "shell": 0}, iconBg)
+	return fmt.Sprintf("TOP:%s\nBOT:%s\n", rp.top, rp.bot)
 }
 
 // captureThermalLevels renders renderCatCell for "build" at counts 0, 1, 3, 5, 10.
