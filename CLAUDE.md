@@ -145,6 +145,7 @@ thermal/
 │   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
 │   │   ├── alerts.go         # scrolling alert log
 │   │   ├── breathedots.go    # agent indicators: tidal wave (active), KITT scanner (stale or highscore), 3-state glyphs (⬡⏣⬢)
+│   │   ├── heatbloom.go      # thermographic accent behind headline left zone: HCL-blended bloom driven by composite heat
 │   │   ├── braillefont.go    # 4×8 bitmap font for gauge labels (CPU/MEM/SWAP)
 │   │   ├── thermal.go        # category heat-level threshold logic (returns gradient index)
 │   │   ├── golden_test.go    # golden capture/match tests for render regression detection
