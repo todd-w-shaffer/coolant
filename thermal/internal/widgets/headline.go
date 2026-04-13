@@ -29,6 +29,7 @@ type Headline struct {
 	state  *model.AppState
 	agents *BreatheDots
 	temp   *SegmentReadout
+	bloom  *HeatBloom
 	theme  *theme.Theme
 
 	// pulsePhase is the single meltdown oscillator; the segment readout
@@ -42,6 +43,7 @@ func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
 	return &Headline{
 		agents: NewBreatheDots(th, ap),
 		temp:   NewSegmentReadout(th, ap),
+		bloom:  NewHeatBloom(th, ap),
 		theme:  th,
 	}
 }
@@ -67,6 +69,7 @@ func (h *Headline) Update(state *model.AppState) {
 	if state.Online {
 		h.temp.Update(model.OverallTemperature(state), threatToThermal(state.ThreatLevel))
 	}
+	h.bloom.Update(state)
 }
 
 // SetHighScoreMode toggles KITT-as-highscore on the agent dot display.
@@ -79,6 +82,7 @@ func (h *Headline) SetHighScoreMode(on bool) {
 func (h *Headline) AnimTick() {
 	h.agents.AnimTick()
 	h.temp.AnimTick()
+	h.bloom.AnimTick()
 	if h.meltdown {
 		h.pulsePhase += meltdownPhaseStep
 		if h.pulsePhase > 2*math.Pi {
@@ -101,6 +105,23 @@ func bgPad(bg color.Color, n int) string {
 		return ""
 	}
 	return lipgloss.NewStyle().Background(bg).Render(strings.Repeat(" ", n))
+}
+
+// bloomedBgPad renders n cells starting at startCol on the given row,
+// painting each cell with the HeatBloom's BgAt contribution (falling
+// back to iconBg past the bloom's right-boundary or where alpha is zero).
+// Each cell is emitted as a single styled space so lipgloss re-uses its
+// cached escape sequences where possible.
+func (h *Headline) bloomedBgPad(iconBg color.Color, startCol, n, row int) string {
+	if n <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i := 0; i < n; i++ {
+		c := h.bloom.BgAt(startCol+i, row, iconBg)
+		sb.WriteString(lipgloss.NewStyle().Background(c).Render(" "))
+	}
+	return sb.String()
 }
 
 // renderLCDFrag wraps the segment readout as a rowPair. Returns a zero
@@ -250,10 +271,10 @@ func (h *Headline) ViewLines() []string {
 		return h.offlineViewLines()
 	}
 
-	level := threatToThermal(h.state.ThreatLevel)
-	iconBg := h.theme.OverallGradient[level].Bg
-	fg := h.theme.OverallGradient[level].Fg
-	quip := h.state.StableQuip()
+	// Pin the headline backdrop to the calm-baseline bg — temperature is now
+	// communicated by the thermographic bloom alone. Letting iconBg drift
+	// across OverallGradient levels fought the bloom for the same channel.
+	iconBg := h.theme.OverallGradient[1].Bg
 
 	pulseScale := 1.0
 	if h.meltdown {
@@ -329,23 +350,17 @@ func (h *Headline) ViewLines() []string {
 		leftWidth = 0
 	}
 
-	maxQuip := leftWidth - 1
-	if maxQuip < 0 {
-		maxQuip = 0
-	}
-	if utf8.RuneCountInString(quip) > maxQuip {
-		quip = truncRunes(quip, maxQuip)
-	}
-	quipWidth := utf8.RuneCountInString(quip)
+	// Configure the bloom for this frame's left-zone dimensions. Width is
+	// the full left-combined area so the bloom's right-boundary guard can
+	// reason about the same coordinate space the ghost ribbon inhabits.
+	h.bloom.SetSize(leftCombined, 2)
 
-	quipStyle := lipgloss.NewStyle().Foreground(fg).Background(iconBg)
+	// Top-row-left is intentionally blank text — the thermographic bloom
+	// paints cell-varying backgrounds here as the dashboard's atmospheric
+	// accent. Future content overlays will compose over it.
 	leftTop := ""
 	if leftWidth > 0 {
-		padAfterQuip := leftWidth - 1 - quipWidth
-		if padAfterQuip < 0 {
-			padAfterQuip = 0
-		}
-		leftTop = quipStyle.Render(" "+quip) + bgPad(iconBg, padAfterQuip)
+		leftTop = h.bloomedBgPad(iconBg, 0, leftWidth, 0)
 	}
 
 	var runtimeCells strings.Builder
@@ -370,7 +385,7 @@ func (h *Headline) ViewLines() []string {
 	if ghostPadLeft < 0 {
 		ghostPadLeft = 0
 	}
-	botLeft := bgPad(iconBg, ghostPadLeft) + ghostStr
+	botLeft := h.bloomedBgPad(iconBg, 0, ghostPadLeft, 1) + ghostStr
 
 	sep := ""
 	if rightVis > 0 {

@@ -177,3 +177,44 @@ const (
 // HelpShortMinWidth is the minimum strip width before the short help hint
 // degrades from a full key·desc list to a compact "[?]" token.
 const HelpShortMinWidth = 80
+
+// ── Heat bloom ───────────────────────────────────────────
+// Motion and geometry for the thermographic accent layer rendered behind
+// the headline's left zone. Endpoints interpolate linearly across the
+// composite heat scalar; anim.Profile variants scale these defaults.
+
+// Breathe period (seconds) — slow at idle, fast at meltdown.
+const (
+	BloomBreatheSecCool = 4.5
+	BloomBreatheSecHot  = 1.6
+)
+
+// Scale amplitude — the ± fractional ellipse-radius expansion per breath.
+const (
+	BloomScaleAmpCool = 0.02
+	BloomScaleAmpHot  = 0.08
+)
+
+// Opacity envelope — (min, max) alpha range sampled across each breath.
+const (
+	BloomOpacityMinCool = 0.72
+	BloomOpacityMaxCool = 0.88
+	BloomOpacityMinHot  = 0.85
+	BloomOpacityMaxHot  = 1.00
+)
+
+// Spring physics governing heat-target easing. ~400ms settle, minor overshoot.
+const (
+	BloomSpringFreq    = 3.0
+	BloomSpringDamping = 0.9
+)
+
+// Geometry — all values are fractions of the left-zone's bounding box.
+const (
+	BloomAnchorX       = 0.12 // bloom center, left-anchored
+	BloomAnchorY       = 0.5  // vertical center
+	BloomRadiusX       = 0.55 // horizontal ellipse radius
+	BloomRadiusY       = 1.1  // vertical ellipse radius (oversized — softens top/bottom)
+	BloomFalloffExp    = 1.8  // gaussian-ish falloff exponent
+	BloomRightBoundary = 0.90 // bloom alpha must be 0 past this fraction of left-zone
+)

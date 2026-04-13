@@ -91,6 +91,14 @@ func Iron() *Theme {
 		SpawnColor: lipgloss.Color("208"), // amber
 		DeathColor: lipgloss.Color("99"),  // medium purple
 		NetColor:   lipgloss.Color("248"), // light gray
+
+		// Heat bloom ramp — FLIR blackbody aesthetic.
+		BloomRamp: [4]BloomRampStop{
+			{Core: mustHex("#4c1d95"), Edge: mustHex("#1e1b4b")}, // COOL: deep violet
+			{Core: mustHex("#c026d3"), Edge: mustHex("#6b21a8")}, // WARM: magenta
+			{Core: mustHex("#f97316"), Edge: mustHex("#9a3412")}, // HOT: amber
+			{Core: mustHex("#fcd34d"), Edge: mustHex("#d97706")}, // MELTDOWN: white-hot yellow
+		},
 	}
 
 	t.Init()

@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
@@ -120,6 +121,61 @@ func TestClassifyMeltdown(t *testing.T) {
 	got := Classify(&snap, 0)
 	if got != ThreatMeltdown {
 		t.Errorf("crit mem + crit CPU: got %v, want ThreatMeltdown", got)
+	}
+}
+
+func TestCompositeHeatMatchesClassify(t *testing.T) {
+	cases := []struct {
+		name     string
+		snap     collector.Snapshot
+		spawn    float64
+		wantBand ThreatLevel
+	}{
+		{"idle", testSnap(t), 0, ThreatCool},
+		{"warm mem+cpu+swap", testSnap(t,
+			withCPU(float64(config.C.CPU.WarmPct)+1),
+			withMem(pctToBytes(float64(config.C.Memory.WarmPct)+1), testMemTotal),
+			withSwap(config.C.Swap.WarmBytes+1),
+		), 0, ThreatHot},
+		{"crit combo", testSnap(t,
+			withCPU(float64(config.C.CPU.CritPct)+1),
+			withMem(pctToBytes(float64(config.C.Memory.CritPct)+1), testMemTotal),
+		), 0, ThreatMeltdown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scalar := CompositeHeatFor(&tc.snap, tc.spawn)
+			if scalar < 0 || scalar > 1 {
+				t.Fatalf("scalar %v out of [0,1]", scalar)
+			}
+			got := Classify(&tc.snap, tc.spawn)
+			if got != tc.wantBand {
+				t.Fatalf("Classify=%v want %v", got, tc.wantBand)
+			}
+		})
+	}
+}
+
+func TestCompositeHeatClamp(t *testing.T) {
+	snap := testSnap(t, withCPU(-100))
+	v := CompositeHeatFor(&snap, 0)
+	if v < 0 || v > 1 {
+		t.Fatalf("scalar %v not clamped to [0,1]", v)
+	}
+	if v := CompositeHeatFor(nil, 0); v != 0 {
+		t.Errorf("nil snapshot: got %v, want 0", v)
+	}
+}
+
+func TestAppStateCompositeHeat(t *testing.T) {
+	s := NewAppState()
+	if got := s.CompositeHeat(); got != 0 {
+		t.Errorf("uninit AppState: got %v, want 0", got)
+	}
+	snap := testSnap(t, withCPU(float64(config.C.CPU.CritPct)+1))
+	s.Current = &snap
+	if got := s.CompositeHeat(); got <= 0 {
+		t.Errorf("CPU-hot snapshot: got %v, want > 0", got)
 	}
 }
 

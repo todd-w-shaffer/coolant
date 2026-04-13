@@ -31,13 +31,17 @@ func (t ThreatLevel) String() string {
 	}
 }
 
-// Classify determines threat level from a snapshot and spawn rate.
-func Classify(snap *collector.Snapshot, spawnRate float64) ThreatLevel {
+// compositeHeatRaw returns the unbounded integer score that drives both
+// Classify's bucketing and the CompositeHeatFor scalar. Kept private so
+// external callers funnel through one of the two supported views.
+func compositeHeatRaw(snap *collector.Snapshot, spawnRate float64) int {
+	if snap == nil {
+		return 0
+	}
 	mem := snap.System.MemPercent()
 	cpu := snap.System.CPUPercent
 	swapUsed := snap.System.SwapUsedBytes
 
-	// Score-based: multiple moderate signals can escalate together
 	score := 0
 
 	// Memory pressure
@@ -73,6 +77,31 @@ func Classify(snap *collector.Snapshot, spawnRate float64) ThreatLevel {
 		score += 1
 	}
 
+	return score
+}
+
+// CompositeHeatFor returns the composite pressure scalar in [0.0, 1.0]
+// derived from the same signals Classify uses. 0 = fully idle,
+// 1 = score >= Meltdown threshold. The HeatBloom widget consumes this
+// as a continuous heat target, while Classify buckets it for threat UI.
+func CompositeHeatFor(snap *collector.Snapshot, spawnRate float64) float64 {
+	if config.C.Score.Meltdown <= 0 {
+		return 0
+	}
+	score := compositeHeatRaw(snap, spawnRate)
+	scalar := float64(score) / float64(config.C.Score.Meltdown)
+	if scalar < 0 {
+		return 0
+	}
+	if scalar > 1 {
+		return 1
+	}
+	return scalar
+}
+
+// Classify determines threat level from a snapshot and spawn rate.
+func Classify(snap *collector.Snapshot, spawnRate float64) ThreatLevel {
+	score := compositeHeatRaw(snap, spawnRate)
 	switch {
 	case score >= config.C.Score.Meltdown:
 		return ThreatMeltdown

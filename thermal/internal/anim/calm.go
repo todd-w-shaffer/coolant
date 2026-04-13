@@ -31,5 +31,16 @@ func Calm() *Profile {
 		SpringDamping: 1.0, // still critically damped
 
 		PeakDecayRate: 0.990, // slower peak decay (~2.3s half-life at 30fps)
+
+		BloomBreatheSecCool: config.BloomBreatheSecCool * 1.25, // longer breath
+		BloomBreatheSecHot:  config.BloomBreatheSecHot * 1.25,
+		BloomScaleAmpCool:   config.BloomScaleAmpCool * 0.75, // softer swell
+		BloomScaleAmpHot:    config.BloomScaleAmpHot * 0.75,
+		BloomOpacityMinCool: config.BloomOpacityMinCool,
+		BloomOpacityMaxCool: config.BloomOpacityMaxCool * 0.9, // gentler peak
+		BloomOpacityMinHot:  config.BloomOpacityMinHot,
+		BloomOpacityMaxHot:  config.BloomOpacityMaxHot * 0.9,
+		BloomSpringFreq:     config.BloomSpringFreq * 0.7, // lazier heat tracking
+		BloomSpringDamping:  config.BloomSpringDamping,
 	}
 }

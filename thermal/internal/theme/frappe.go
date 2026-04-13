@@ -119,6 +119,14 @@ func Frappe() *Theme {
 		SpawnColor: frPeach,    // warm = spawning
 		DeathColor: frSapphire, // cool = dying
 		NetColor:   frText,     // neutral
+
+		// Heat bloom ramp — Catppuccin accents, cool→hot across 4 stops.
+		BloomRamp: [4]BloomRampStop{
+			{Core: mustHex("#8caaee"), Edge: mustHex("#babbf1")}, // COOL: blue → lavender
+			{Core: mustHex("#e5c890"), Edge: mustHex("#ef9f76")}, // WARM: yellow → peach
+			{Core: mustHex("#ef9f76"), Edge: mustHex("#e78284")}, // HOT:  peach → red
+			{Core: mustHex("#e78284"), Edge: mustHex("#ea999c")}, // MELTDOWN: red → maroon
+		},
 	}
 
 	t.Init()

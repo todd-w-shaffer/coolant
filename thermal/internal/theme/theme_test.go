@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+func TestAllThemesProvideBloomRamp(t *testing.T) {
+	var zero BloomRampStop
+	for _, name := range Names() {
+		th, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		for i, stop := range th.BloomRamp {
+			if stop == zero {
+				t.Errorf("theme %q BloomRamp[%d] is zero", name, i)
+			}
+		}
+		// LUT endpoints must round-trip through BloomColor.
+		low := th.BloomColor(0, 0)
+		if low.R == 0 && low.G == 0 && low.B == 0 {
+			t.Errorf("theme %q BloomColor(0,0) is pure black — LUT likely unpopulated", name)
+		}
+		hot := th.BloomColor(1, 0)
+		if hot.R == 0 && hot.G == 0 && hot.B == 0 {
+			t.Errorf("theme %q BloomColor(1,0) is pure black — LUT likely unpopulated", name)
+		}
+	}
+}
+
 func TestClassicInit(t *testing.T) {
 	th := Classic()
 

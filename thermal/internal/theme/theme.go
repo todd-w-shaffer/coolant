@@ -52,6 +52,13 @@ type Theme struct {
 	// -- Category thermal gradient (category boxes) --
 	CategoryGradient [5]ThermalLevel
 
+	// -- Heat bloom --
+	// BloomRamp defines four heat stops (COOL/WARM/HOT/MELTDOWN). Each stop
+	// holds a Core→Edge gradient. Init pre-computes a (heat × radial) LUT
+	// for O(1) lookup at render time.
+	BloomRamp    [4]BloomRampStop
+	bloomCoreLUT [100][100]colorful.Color
+
 	// -- Threat colors (alerts, status indicators) --
 	ThreatColors [4]color.Color // indexed by ThreatLevel (Cool/Warm/Hot/Meltdown)
 
@@ -87,6 +94,14 @@ type Theme struct {
 type ThermalLevel struct {
 	Fg color.Color
 	Bg color.Color
+}
+
+// BloomRampStop defines one heat-level stop in the HeatBloom color gradient.
+// Core is the ellipse-center color (peak alpha); Edge is the outer falloff
+// color (alpha approaches 0). Both participate in HCL-blended interpolation.
+type BloomRampStop struct {
+	Core colorful.Color
+	Edge colorful.Color
 }
 
 // SessionPhaseColors holds the 5 escalation states.
@@ -169,6 +184,45 @@ func (t *Theme) Init() {
 		t.overallTempLUT[v] = truecolorFg(blended)
 		t.overallTempDimLUT[v] = truecolorFg(dimColorful(blended, GhostOverlayRatio))
 	}
+
+	// Heat-bloom LUT: 100 heat rows × 100 radial columns. Between the four
+	// BloomRamp stops we have 3 segments; within each segment, HCL-blend
+	// both Core and Edge anchors, then HCL-blend Core→Edge across radial.
+	for hi := 0; hi < 100; hi++ {
+		heat := float64(hi) / 99.0
+		pos := heat * 3.0
+		seg := int(pos)
+		if seg >= 3 {
+			seg = 2
+		}
+		segRatio := pos - float64(seg)
+		core := t.BloomRamp[seg].Core.BlendHcl(t.BloomRamp[seg+1].Core, segRatio).Clamped()
+		edge := t.BloomRamp[seg].Edge.BlendHcl(t.BloomRamp[seg+1].Edge, segRatio).Clamped()
+		for ri := 0; ri < 100; ri++ {
+			radial := float64(ri) / 99.0
+			t.bloomCoreLUT[hi][ri] = core.BlendHcl(edge, radial).Clamped()
+		}
+	}
+}
+
+// BloomColor returns the bloom's pre-blended color for a given heat scalar
+// in [0,1] and radial distance in [0,1] (0=core, 1=edge). The returned
+// colorful.Color is ready for alpha-blend compositing against a fallback.
+func (t *Theme) BloomColor(heat, radial float64) colorful.Color {
+	hi := bloomLUTIndex(heat)
+	ri := bloomLUTIndex(radial)
+	return t.bloomCoreLUT[hi][ri]
+}
+
+// bloomLUTIndex clamps a [0,1] ratio to a 0..99 LUT index.
+func bloomLUTIndex(r float64) int {
+	if r <= 0 {
+		return 0
+	}
+	if r >= 1 {
+		return 99
+	}
+	return int(r * 99)
 }
 
 // GhostOverlayRatio scales the temperature color for the ghost-trail frame

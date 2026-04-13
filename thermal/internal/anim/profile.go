@@ -36,4 +36,16 @@ type Profile struct {
 
 	// -- Gauge --
 	PeakDecayRate float64
+
+	// -- Heat bloom --
+	BloomBreatheSecCool float64 // breathe period seconds at heat=0
+	BloomBreatheSecHot  float64 // breathe period seconds at heat=1
+	BloomScaleAmpCool   float64 // scale amplitude at heat=0
+	BloomScaleAmpHot    float64 // scale amplitude at heat=1
+	BloomOpacityMinCool float64
+	BloomOpacityMaxCool float64
+	BloomOpacityMinHot  float64
+	BloomOpacityMaxHot  float64
+	BloomSpringFreq     float64 // harmonica spring frequency for heat target
+	BloomSpringDamping  float64
 }
