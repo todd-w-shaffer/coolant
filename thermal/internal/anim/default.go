@@ -31,5 +31,16 @@ func Default() *Profile {
 		SpringDamping: config.SpringDamping,
 
 		PeakDecayRate: config.PeakDecayRate,
+
+		BloomBreatheSecCool: config.BloomBreatheSecCool,
+		BloomBreatheSecHot:  config.BloomBreatheSecHot,
+		BloomScaleAmpCool:   config.BloomScaleAmpCool,
+		BloomScaleAmpHot:    config.BloomScaleAmpHot,
+		BloomOpacityMinCool: config.BloomOpacityMinCool,
+		BloomOpacityMaxCool: config.BloomOpacityMaxCool,
+		BloomOpacityMinHot:  config.BloomOpacityMinHot,
+		BloomOpacityMaxHot:  config.BloomOpacityMaxHot,
+		BloomSpringFreq:     config.BloomSpringFreq,
+		BloomSpringDamping:  config.BloomSpringDamping,
 	}
 }

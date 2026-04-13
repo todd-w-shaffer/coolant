@@ -91,6 +91,14 @@ func Mono() *Theme {
 		SpawnColor: lipgloss.Color("222"), // bright (spawns = heat)
 		DeathColor: lipgloss.Color("137"), // dim (deaths = cooling)
 		NetColor:   lipgloss.Color("179"), // medium
+
+		// Heat bloom ramp — single-hue amber brightness curve.
+		BloomRamp: [4]BloomRampStop{
+			{Core: mustHex("#404040"), Edge: mustHex("#1a1a1a")}, // COOL: neutral dim
+			{Core: mustHex("#a16207"), Edge: mustHex("#451a03")}, // WARM: faint amber
+			{Core: mustHex("#d97706"), Edge: mustHex("#7c2d12")}, // HOT: amber
+			{Core: mustHex("#fbbf24"), Edge: mustHex("#b45309")}, // MELTDOWN: bright amber
+		},
 	}
 
 	t.Init()

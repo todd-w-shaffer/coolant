@@ -90,6 +90,14 @@ func Classic() *Theme {
 		SpawnColor: lipgloss.Color("208"), // orange
 		DeathColor: lipgloss.Color("6"),   // cyan
 		NetColor:   lipgloss.Color("7"),   // white
+
+		// Heat bloom ramp — traffic-light aesthetic, Classic palette.
+		BloomRamp: [4]BloomRampStop{
+			{Core: mustHex("#3b82f6"), Edge: mustHex("#1e3a8a")}, // COOL: blue
+			{Core: mustHex("#eab308"), Edge: mustHex("#92400e")}, // WARM: amber
+			{Core: mustHex("#f97316"), Edge: mustHex("#b45309")}, // HOT: orange
+			{Core: mustHex("#ef4444"), Edge: mustHex("#7f1d1d")}, // MELTDOWN: red
+		},
 	}
 
 	t.Init()

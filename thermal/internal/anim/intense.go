@@ -31,5 +31,16 @@ func Intense() *Profile {
 		SpringDamping: 0.8, // slightly underdamped — subtle overshoot
 
 		PeakDecayRate: 0.970, // faster peak decay (~0.75s half-life at 30fps)
+
+		BloomBreatheSecCool: config.BloomBreatheSecCool * 0.75, // shorter breath
+		BloomBreatheSecHot:  config.BloomBreatheSecHot * 0.6,
+		BloomScaleAmpCool:   config.BloomScaleAmpCool * 1.3, // sharper swell
+		BloomScaleAmpHot:    config.BloomScaleAmpHot * 1.3,
+		BloomOpacityMinCool: config.BloomOpacityMinCool,
+		BloomOpacityMaxCool: config.BloomOpacityMaxCool,
+		BloomOpacityMinHot:  config.BloomOpacityMinHot,
+		BloomOpacityMaxHot:  config.BloomOpacityMaxHot,
+		BloomSpringFreq:     config.BloomSpringFreq * 1.4, // snappier heat tracking
+		BloomSpringDamping:  config.BloomSpringDamping,
 	}
 }

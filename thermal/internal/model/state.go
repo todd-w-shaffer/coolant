@@ -353,6 +353,16 @@ func (s *AppState) LastDeaths() int {
 	return s.recentDeaths.Peek()
 }
 
+// CompositeHeat returns the weighted CPU/MEM/SWAP+spawn pressure scalar
+// in [0.0, 1.0]. The HeatBloom widget consumes this as its heat target;
+// it is the same underlying score Classify buckets into threat levels.
+func (s *AppState) CompositeHeat() float64 {
+	if s == nil || s.Current == nil {
+		return 0
+	}
+	return CompositeHeatFor(s.Current, s.SpawnRate)
+}
+
 func (s *AppState) addAlert(a AlertEntry) {
 	s.Alerts.Push(a)
 }
