@@ -2,10 +2,14 @@ package widgets
 
 import (
 	"image/color"
+	"math"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/harmonica"
+
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
@@ -26,7 +30,6 @@ const ghostDeltaThreshold = 3
 type SegmentReadout struct {
 	value      int // 0..99, clamped
 	prevValue  int
-	hasPrev    bool
 	ghostTicks int
 
 	level      int // 0..4
@@ -34,13 +37,27 @@ type SegmentReadout struct {
 	hasLevel   bool
 	flashTicks int
 
+	// Spring-smoothed numeric position. rawTarget is the latest value passed
+	// to Update (clamped to 0..99); tempPos/tempVel are advanced by AnimTick
+	// via a critically-damped spring. The displayed int (s.value) lags the
+	// raw target by ~200ms, eliminating boundary flicker on EMA jitter.
+	tempSpring harmonica.Spring
+	tempPos    float64
+	tempVel    float64
+	rawTarget  float64
+	seeded     bool
+
 	theme *theme.Theme
 	anim  *anim.Profile
 }
 
 // NewSegmentReadout constructs a SegmentReadout wired to the given theme.
 func NewSegmentReadout(th *theme.Theme, ap *anim.Profile) *SegmentReadout {
-	return &SegmentReadout{theme: th, anim: ap}
+	return &SegmentReadout{
+		theme:      th,
+		anim:       ap,
+		tempSpring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), config.LCDSpringFreq, config.LCDSpringDamping),
+	}
 }
 
 // Update sets the temperature value and the overall thermal level. Arms
@@ -54,31 +71,52 @@ func (s *SegmentReadout) Update(value, level int) {
 	if level > 4 {
 		level = 4
 	}
-	// Arm the ghost only on a MEANINGFUL jump AND only when no ghost is
-	// already running. Sub-threshold jitter is ignored so the readout
-	// actually reaches the new value instead of re-arming every snapshot.
-	if s.hasPrev && s.ghostTicks == 0 {
-		delta := value - s.value
-		if delta < 0 {
-			delta = -delta
-		}
-		if delta >= ghostDeltaThreshold {
-			s.prevValue = s.value
-			s.ghostTicks = ghostTickCount
-		}
+	if value < 0 {
+		value = 0
 	}
+	if value > 99 {
+		value = 99
+	}
+	s.rawTarget = float64(value)
+	if !s.seeded {
+		// First Update: jump spring state and committed value to target so
+		// cold start displays immediately with no easing from zero.
+		s.tempPos = s.rawTarget
+		s.tempVel = 0
+		s.value = value
+		s.seeded = true
+	}
+	// Ghost-trail arming was removed: spring smoothing now does the easing
+	// the ghost was approximating, and the dim→snap transition fought the
+	// spring's continuous walk. ghostTicks/prevValue/ghost render branch
+	// remain as dead code paths pending a post-merge cleanup pass.
 	if s.hasLevel && level > s.prevLevel {
 		s.flashTicks = 1
 	}
-	s.value = value
 	s.level = level
 	s.prevLevel = level
-	s.hasPrev = true
 	s.hasLevel = true
 }
 
-// AnimTick advances ghost and flash countdowns; called once per frame.
+// AnimTick advances the spring toward the raw target, then updates the
+// displayed integer with boundary hysteresis (ghost may fire when the
+// displayed int crosses ghostDeltaThreshold). Flash/ghost countdowns tick
+// last so a freshly-armed ghost gets its full window.
 func (s *SegmentReadout) AnimTick() {
+	if s.seeded {
+		s.tempPos, s.tempVel = s.tempSpring.Update(s.tempPos, s.tempVel, s.rawTarget)
+		diff := s.tempPos - float64(s.value)
+		switch {
+		case math.Abs(diff) > 1.0:
+			// Big jump: snap to rounded spring position so large deltas
+			// don't take ~100 ticks to converge one integer at a time.
+			s.value = int(math.Round(s.tempPos))
+		case diff >= 0.5+config.LCDBoundaryHyst:
+			s.value++
+		case diff <= -(0.5 + config.LCDBoundaryHyst):
+			s.value--
+		}
+	}
 	if s.ghostTicks > 0 {
 		s.ghostTicks--
 	}
@@ -112,10 +150,26 @@ func (s *SegmentReadout) RenderWithPulse(bg color.Color, pulseScale float64) (to
 		rawTop, rawBot, w := RenderTemperature(s.value)
 		return style.Render(rawTop), style.Render(rawBot), w
 	}
-	rawTop, rawBot, w := RenderTemperature(s.value)
-	fgEsc := s.theme.OverallTemperaturePulsedFg(s.value, pulseScale)
+	// Three per-digit styled spans so cells stay byte-identical when only
+	// part of the readout changes. Tens span is colored by its band anchor
+	// (value/10 * 10) so it's stable across any in-band ones change. Degree
+	// is colored by threat level so it only repaints on a band transition.
+	tens := s.value / 10
+	ones := s.value % 10
+	tensTop, tensBot := digitToBraille(segmentDigits[tens])
+	onesTop, onesBot := digitToBraille(segmentDigits[ones])
+	degTop, degBot := degreeToBraille()
+
+	tensFg := s.theme.OverallTemperaturePulsedFg(tens*10, pulseScale)
+	onesFg := s.theme.OverallTemperaturePulsedFg(s.value, pulseScale)
+	degFg := s.theme.OverallLevelFg(s.level)
+
 	bgStyle := lipgloss.NewStyle().Background(bg)
-	return paintFg(bgStyle, fgEsc, rawTop), paintFg(bgStyle, fgEsc, rawBot), w
+	gap := bgStyle.Render(" ")
+	top = paintFg(bgStyle, tensFg, string(tensTop[:])) + gap + paintFg(bgStyle, onesFg, string(onesTop[:])) + paintFg(bgStyle, degFg, string(degTop[:]))
+	bot = paintFg(bgStyle, tensFg, string(tensBot[:])) + gap + paintFg(bgStyle, onesFg, string(onesBot[:])) + paintFg(bgStyle, degFg, string(degBot[:]))
+	visWidth = 9
+	return
 }
 
 // paintFg composes a truecolor fg ANSI escape with a lipgloss bg style.

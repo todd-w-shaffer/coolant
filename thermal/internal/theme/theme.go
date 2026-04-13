@@ -48,6 +48,7 @@ type Theme struct {
 	overallTempLUT    [100]string
 	overallTempDimLUT [100]string         // HCL-dimmed variant for the ghost-trail frame
 	overallTempColors [100]colorful.Color // cached blend results for dynamic pulse modulation
+	overallLevelLUT   [5]string           // band-anchor fg ANSI; stable within a threat level
 
 	// -- Category thermal gradient (category boxes) --
 	CategoryGradient [5]ThermalLevel
@@ -185,6 +186,12 @@ func (t *Theme) Init() {
 		t.overallTempDimLUT[v] = truecolorFg(dimColorful(blended, GhostOverlayRatio))
 	}
 
+	// Per-level fg LUT: the LCD's degree glyph reads from this so its color
+	// only changes on band transitions, not on every value step.
+	for i := range t.OverallGradient {
+		t.overallLevelLUT[i] = truecolorFg(colorfulFromColor(t.OverallGradient[i].Fg))
+	}
+
 	// Heat-bloom LUT: 100 heat rows × 100 radial columns. Between the four
 	// BloomRamp stops we have 3 segments; within each segment, HCL-blend
 	// both Core and Edge anchors, then HCL-blend Core→Edge across radial.
@@ -240,6 +247,19 @@ func (t *Theme) OverallTemperatureFg(value int) string {
 // continuous gradient entry for value, used by the ghost-trail frame.
 func (t *Theme) OverallTemperatureFgDimmed(value int) string {
 	return t.overallTempDimLUT[clampTemp(value)]
+}
+
+// OverallLevelFg returns the truecolor fg ANSI escape for a threat level
+// (0..4). The LCD degree glyph uses this so it only repaints when the
+// level transitions — not on every value step.
+func (t *Theme) OverallLevelFg(level int) string {
+	if level < 0 {
+		level = 0
+	}
+	if level > 4 {
+		level = 4
+	}
+	return t.overallLevelLUT[level]
 }
 
 // OverallTemperaturePulsedFg returns a truecolor fg escape for value,
