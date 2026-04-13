@@ -12,6 +12,9 @@ graphify-out/
 # Local OTEL dogfood data (Prometheus TSDB, Grafana state)
 dev/otel/data/
 
+# git worktrees used for parallel/preview work
+.worktrees/
+
 # Archived artifacts — historical, not in use
 docs/archive/
 scripts/archive/
