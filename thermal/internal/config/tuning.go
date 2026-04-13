@@ -223,5 +223,5 @@ const (
 	BloomRadiusX       = 0.55 // horizontal ellipse radius
 	BloomRadiusY       = 1.1  // vertical ellipse radius (oversized — softens top/bottom)
 	BloomFalloffExp    = 1.8  // gaussian-ish falloff exponent
-	BloomRightBoundary = 0.90 // bloom alpha must be 0 past this fraction of left-zone
+	BloomRightBoundary = 1.00 // bloom alpha must be 0 past this fraction of left-zone
 )
