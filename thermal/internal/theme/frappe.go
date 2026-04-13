@@ -68,6 +68,12 @@ func Frappe() *Theme {
 			{Fg: frRed, Bg: frSurface2},    // critical: red
 		},
 
+		// Rail-only critical override — frRed solo on iconBg reads a
+		// touch too saturated next to the softer peach/yellow warming
+		// stops. frMaroon is Catppuccin's native softer red — same
+		// alarm register, lower amplitude, stays on-palette.
+		RailCriticalOverride: frMaroon,
+
 		// Threat colors
 		ThreatColors: [4]color.Color{
 			frBlue,   // Cool: calm blue

@@ -52,6 +52,16 @@ type Theme struct {
 	// -- Category thermal gradient (category boxes) --
 	CategoryGradient [5]ThermalLevel
 
+	// RailCriticalOverride, when non-nil, replaces CategoryGradient[4].Fg
+	// as the peak color for the headline's build/shell heat-rail
+	// underlines. CategoryGradient Fgs were designed as half of an Fg+Bg
+	// pair; stripped of their paired Bg, a few themes' critical Fgs
+	// (Iron's 229 cream-white, Mono's 230 near-white) read as flashbulb
+	// harsh when used as a solo accent on the pinned iconBg. Themes
+	// that prefer an ember tone in the same hue family set this field;
+	// themes that leave it nil retain legacy CategoryGradient behavior.
+	RailCriticalOverride color.Color
+
 	// -- Heat bloom --
 	// BloomRamp defines four heat stops (COOL/WARM/HOT/MELTDOWN). Each stop
 	// holds a Core→Edge gradient. Init pre-computes a (heat × radial) LUT

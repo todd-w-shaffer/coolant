@@ -62,6 +62,55 @@ func TestRailColor_IdleLevelCollapsesToIconBg(t *testing.T) {
 	}
 }
 
+// TestRailColor_CriticalOverrideHonored — when the theme supplies a
+// RailCriticalOverride, railColor at level 4 must use it instead of
+// CategoryGradient[4].Fg so themes can soften harsh flashbulb-white
+// critical Fgs (Iron's 229, Mono's 230) that read poorly as solo
+// underlines on the pinned iconBg. Override only applies at level 4;
+// other levels still use their CategoryGradient Fg.
+func TestRailColor_CriticalOverrideHonored(t *testing.T) {
+	th := theme.Classic()
+	iconBg := th.OverallGradient[1].Bg
+
+	orig := th.RailCriticalOverride
+	defer func() { th.RailCriticalOverride = orig }()
+
+	th.RailCriticalOverride = color.RGBA{R: 0x11, G: 0x22, B: 0x33, A: 0xFF}
+
+	got := railColor(th, 4, iconBg, 1.0)
+	if !colorsApproxEqual(got, th.RailCriticalOverride) {
+		gr, gg, gb, _ := got.RGBA()
+		t.Errorf("level=4 with override: got rgb(%d,%d,%d), want rgb(17,34,51)",
+			gr>>8, gg>>8, gb>>8)
+	}
+
+	// Level 3 must still use CategoryGradient[3].Fg (no override leak).
+	got3 := railColor(th, 3, iconBg, 1.0)
+	if !colorsApproxEqual(got3, th.CategoryGradient[3].Fg) {
+		t.Errorf("level=3 must ignore override and use CategoryGradient[3].Fg")
+	}
+}
+
+// TestRailColor_CriticalNoOverrideFallsBackToGradientFg — when the
+// override is nil (default), critical-level railColor must fall back
+// to CategoryGradient[4].Fg (backward-compat with existing themes).
+func TestRailColor_CriticalNoOverrideFallsBackToGradientFg(t *testing.T) {
+	th := theme.Classic()
+	iconBg := th.OverallGradient[1].Bg
+
+	orig := th.RailCriticalOverride
+	defer func() { th.RailCriticalOverride = orig }()
+	th.RailCriticalOverride = nil
+
+	got := railColor(th, 4, iconBg, 1.0)
+	if !colorsApproxEqual(got, th.CategoryGradient[4].Fg) {
+		gr, gg, gb, _ := got.RGBA()
+		wr, wg, wb, _ := th.CategoryGradient[4].Fg.RGBA()
+		t.Errorf("level=4 no override: got rgb(%d,%d,%d), want rgb(%d,%d,%d)",
+			gr>>8, gg>>8, gb>>8, wr>>8, wg>>8, wb>>8)
+	}
+}
+
 // TestRailColor_ZeroDecayIsIconBg — decay=0.0 must collapse to the
 // pinned headline bg so a fully cooled rail blends invisibly with the
 // cell backdrop.

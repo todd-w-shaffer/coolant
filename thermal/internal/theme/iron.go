@@ -40,6 +40,14 @@ func Iron() *Theme {
 			{Fg: lipgloss.Color("229"), Bg: lipgloss.Color("130")}, // critical: white on burnt orange
 		},
 
+		// Rail-only critical override — the paired critical Fg (229, a
+		// cream-white) reads as flashbulb-harsh when used as a solo
+		// underline color on iconBg. 130 is the burnt orange that
+		// served as critical's paired Bg; solo on iconBg it lands as
+		// the FLIR blackbody ember tone the whole theme is built
+		// around.
+		RailCriticalOverride: lipgloss.Color("130"),
+
 		// Threat colors (indexed by ThreatLevel)
 		ThreatColors: [4]color.Color{
 			lipgloss.Color("99"),  // Cool: medium purple (visible on dark bg)
