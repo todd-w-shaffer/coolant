@@ -86,10 +86,10 @@ func degreeToBraille() (top, bot [2]rune) {
 }
 
 // RenderTemperature formats value as a zero-padded 2-digit number followed
-// by a degree glyph. Returns the two raw braille rows (no ANSI) and the
-// constant visible width of 9 cells. Values outside 0–99 clamp to range —
-// machines rarely exceed 100 °C without failing, so a pinned 99 reads
-// the same as any larger number: "you're cooked".
+// by a one-cell gap and a degree glyph. Returns the two raw braille rows
+// (no ANSI) and the constant visible width of 10 cells. Values outside
+// 0–99 clamp to range — machines rarely exceed 100 °C without failing, so
+// a pinned 99 reads the same as any larger number: "you're cooked".
 func RenderTemperature(value int) (top, bot string, visWidth int) {
 	if value < 0 {
 		value = 0
@@ -100,8 +100,8 @@ func RenderTemperature(value int) (top, bot string, visWidth int) {
 	digits := [2]int{value / 10, value % 10}
 
 	var topB, botB strings.Builder
-	topB.Grow(9 * 4)
-	botB.Grow(9 * 4)
+	topB.Grow(10 * 4)
+	botB.Grow(10 * 4)
 
 	for i, d := range digits {
 		t, b := digitToBraille(segmentDigits[d])
@@ -116,10 +116,12 @@ func RenderTemperature(value int) (top, bot string, visWidth int) {
 			botB.WriteByte(' ')
 		}
 	}
+	topB.WriteByte(' ')
+	botB.WriteByte(' ')
 	dt, db := degreeToBraille()
 	topB.WriteRune(dt[0])
 	topB.WriteRune(dt[1])
 	botB.WriteRune(db[0])
 	botB.WriteRune(db[1])
-	return topB.String(), botB.String(), 9
+	return topB.String(), botB.String(), 10
 }

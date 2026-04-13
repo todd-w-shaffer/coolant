@@ -74,23 +74,23 @@ func TestDegreeToBraille(t *testing.T) {
 	}
 }
 
-// TestRenderTemperature_Formatting — clamp, zero-pad, and constant 12-cell width.
+// TestRenderTemperature_Formatting — clamp, zero-pad, and constant 10-cell width.
 func TestRenderTemperature_Formatting(t *testing.T) {
 	cases := []struct {
 		value   int
 		wantLen int
 	}{
-		{0, 9},
-		{7, 9},
-		{42, 9},
-		{99, 9},
-		{-5, 9},
-		{150, 9},
+		{0, 10},
+		{7, 10},
+		{42, 10},
+		{99, 10},
+		{-5, 10},
+		{150, 10},
 	}
 	for _, tc := range cases {
 		top, bot, w := RenderTemperature(tc.value)
-		if w != 9 {
-			t.Errorf("value=%d visWidth=%d, want 9", tc.value, w)
+		if w != 10 {
+			t.Errorf("value=%d visWidth=%d, want 10", tc.value, w)
 		}
 		if n := utf8.RuneCountInString(top); n != tc.wantLen {
 			t.Errorf("value=%d top rune count=%d, want %d", tc.value, n, tc.wantLen)
