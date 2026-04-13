@@ -39,6 +39,13 @@ func Mono() *Theme {
 			{Fg: lipgloss.Color("230"), Bg: lipgloss.Color("94")},
 		},
 
+		// Rail-only critical override — 230 is blazing near-white; solo
+		// on iconBg it spikes too bright for a single-hue theme whose
+		// identity is "amber at different intensities." 166 is a deep
+		// orange that reads clearly as "hotter than the 222 hot step"
+		// while staying in the amber/ember hue register.
+		RailCriticalOverride: lipgloss.Color("166"),
+
 		// Threat colors — brightness only
 		ThreatColors: [4]color.Color{
 			lipgloss.Color("137"), // Cool: dim

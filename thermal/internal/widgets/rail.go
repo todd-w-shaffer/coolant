@@ -68,13 +68,20 @@ func railColor(th *theme.Theme, level int, iconBg color.Color, decay float64) co
 	if level == 0 {
 		return iconBg
 	}
+	peakFg := th.CategoryGradient[level].Fg
+	// Critical-level override lets themes swap a harsh flashbulb-white
+	// Fg (Iron 229, Mono 230) for an ember tone in the same hue family
+	// without touching the paired CategoryGradient entry used elsewhere.
+	if level == 4 && th.RailCriticalOverride != nil {
+		peakFg = th.RailCriticalOverride
+	}
 	if decay >= 1.0 {
-		return th.CategoryGradient[level].Fg
+		return peakFg
 	}
 	if decay <= 0.0 {
 		return iconBg
 	}
-	fg := colorfulFromColor(th.CategoryGradient[level].Fg)
+	fg := colorfulFromColor(peakFg)
 	bg := colorfulFromColor(iconBg)
 	blended := bg.BlendHcl(fg, decay).Clamped()
 	r, g, b := blended.RGB255()
