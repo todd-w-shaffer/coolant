@@ -7,9 +7,9 @@
 - ⚪ default: 10
 
 
-- 🌈 classic-palette: 2
+- 🌈 classic-palette: 1
 
-- ✅ themed: 80
+- ✅ themed: 81
 
 ## claude-cfo.json
 
@@ -25,7 +25,7 @@
 | 300 | Daily Spend Burn Curve | ✅ themed | `fixed` | — |
 | 301 | Cumulative Spend vs. Budget Line | ✅ themed | `palette-classic-by-name` | — |
 | 400 | Cost by Engineer | ✅ themed | `thresholds` | — |
-| 401 | Cost by Organization | 🌈 classic-palette | `palette-classic-by-name` | mode=palette-classic-by-name |
+| 401 | Cost by Organization | ✅ themed | `palette-classic-by-name` | — |
 | 500 | Model Spend Mix | ✅ themed | `thresholds` | — |
 | 501 | Cost per Engineer per Day | ✅ themed | `fixed` | — |
 | 502 | Projected Annual Spend | ✅ themed | `thresholds` | — |
