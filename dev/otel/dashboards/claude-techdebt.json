@@ -253,7 +253,9 @@
           { "matcher": { "id": "byName", "options": "claude-code" }, "properties": [{ "id": "color", "value": { "fixedColor": "#babbf1", "mode": "fixed" } }] },
           { "matcher": { "id": "byName", "options": "marketplace" }, "properties": [{ "id": "color", "value": { "fixedColor": "#81c8be", "mode": "fixed" } }] },
           { "matcher": { "id": "byName", "options": "personal-plugins" }, "properties": [{ "id": "color", "value": { "fixedColor": "#85c1dc", "mode": "fixed" } }] },
-          { "matcher": { "id": "byName", "options": "shootsfilm" }, "properties": [{ "id": "color", "value": { "fixedColor": "#ef9f76", "mode": "fixed" } }] }
+          { "matcher": { "id": "byName", "options": "shootsfilm" }, "properties": [{ "id": "color", "value": { "fixedColor": "#ef9f76", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "keynote" }, "properties": [{ "id": "color", "value": { "fixedColor": "#a6d189", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "one-pager" }, "properties": [{ "id": "color", "value": { "fixedColor": "#99d1db", "mode": "fixed" } }] }
         ]
       },
       "options": {
