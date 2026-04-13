@@ -172,14 +172,42 @@ def render_model_overrides(indent: str) -> str:
 
 
 def _splice_overrides(text: str, start: int, end: int, body: str) -> tuple[str, bool]:
-    """Replace an empty `"overrides": []` inside text[start:end] with body,
-    or insert a new overrides key after the `"defaults": {...}` block."""
+    """Replace the panel's `"overrides": [...]` array body with `body`
+    (whether empty or non-empty), or insert a new overrides key after
+    the `"defaults": {...}` block when no overrides key exists."""
     block = text[start:end]
 
-    empty = re.search(r'"overrides":\s*\[\s*\]', block)
-    if empty:
+    arr_m = re.search(r'"overrides":\s*\[', block)
+    if arr_m:
+        i = arr_m.end() - 1  # position of the opening `[`
+        depth = 0
+        in_str = False
+        esc = False
+        close_idx = None
+        for j in range(i, len(block)):
+            c = block[j]
+            if esc:
+                esc = False
+                continue
+            if c == '\\':
+                esc = True
+                continue
+            if c == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if c == '[':
+                depth += 1
+            elif c == ']':
+                depth -= 1
+                if depth == 0:
+                    close_idx = j
+                    break
+        if close_idx is None:
+            return text, False
         replacement = f'"overrides": [\n{body}\n        ]'
-        new_block = block[:empty.start()] + replacement + block[empty.end():]
+        new_block = block[:arr_m.start()] + replacement + block[close_idx + 1:]
         return text[:start] + new_block + text[end:], True
 
     defaults_m = re.search(r'"defaults":\s*\{', block)

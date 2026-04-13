@@ -444,7 +444,7 @@
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 19 },
       "targets": [
         {
-          "expr": "sum by (organization_id) (claude_code_cost_usage_USD_total)",
+          "expr": "sum by (organization_id) (\n  label_replace(\n    label_replace(\n      label_replace(\n        label_replace(\n          claude_code_cost_usage_USD_total,\n          \"organization_id\", \"coolant\", \"repo\", \"(coolant|marketplace|personal-plugins|claude-code)\"\n        ),\n        \"organization_id\", \"shootsfilm\", \"repo\", \"shootsfilm\"\n      ),\n      \"organization_id\", \"amazon\", \"repo\", \"(keynote|one-pager)\"\n    ),\n    \"organization_id\", \"coolant\", \"organization_id\", \"[0-9a-f-]{36}\"\n  )\n)",
           "legendFormat": "{{organization_id}}",
           "refId": "A"
         }
@@ -455,7 +455,12 @@
           "decimals": 2,
           "color": { "mode": "palette-classic-by-name" }
         },
-        "overrides": []
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "coolant" }, "properties": [{ "id": "color", "value": { "fixedColor": "#e78284", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "shootsfilm" }, "properties": [{ "id": "color", "value": { "fixedColor": "#ca9ee6", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "amazon" }, "properties": [{ "id": "color", "value": { "fixedColor": "#ef9f76", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "unattributed" }, "properties": [{ "id": "color", "value": { "fixedColor": "#737994", "mode": "fixed" } }] }
+        ]
       },
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"] },
