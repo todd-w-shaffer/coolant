@@ -110,18 +110,37 @@ func bgPad(bg color.Color, n int) string {
 // bloomedBgPad renders n cells starting at startCol on the given row,
 // painting each cell with the HeatBloom's BgAt contribution (falling
 // back to iconBg past the bloom's right-boundary or where alpha is zero).
-// Each cell is emitted as a single styled space so lipgloss re-uses its
-// cached escape sequences where possible.
+// Emits truecolor bg escapes directly and coalesces equal-color runs so
+// the 30fps left-zone repaint doesn't allocate a lipgloss.Style per cell.
 func (h *Headline) bloomedBgPad(iconBg color.Color, startCol, n, row int) string {
 	if n <= 0 {
 		return ""
 	}
 	var sb strings.Builder
+	var prev string
 	for i := 0; i < n; i++ {
 		c := h.bloom.BgAt(startCol+i, row, iconBg)
-		sb.WriteString(lipgloss.NewStyle().Background(c).Render(" "))
+		esc := truecolorBg(c)
+		if esc != prev {
+			if prev != "" {
+				sb.WriteString("\x1b[0m")
+			}
+			sb.WriteString(esc)
+			prev = esc
+		}
+		sb.WriteByte(' ')
+	}
+	if prev != "" {
+		sb.WriteString("\x1b[0m")
 	}
 	return sb.String()
+}
+
+// truecolorBg emits \033[48;2;R;G;Bm for any color.Color. Kept local to
+// the bloom hot path so the 30fps repaint skips lipgloss.NewStyle allocs.
+func truecolorBg(c color.Color) string {
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r>>8, g>>8, b>>8)
 }
 
 // renderLCDFrag wraps the segment readout as a rowPair. Returns a zero
