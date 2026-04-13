@@ -271,7 +271,7 @@ func renderRailCell(cat collector.Category, smoothed map[string]float64,
 	textStyle := lipgloss.NewStyle().
 		Foreground(th.CategoryGradient[1].Fg).
 		Background(iconBg).
-		Underline(true).
+		UnderlineStyle(lipgloss.UnderlineDotted).
 		UnderlineColor(railFg)
 
 	return padStyle.Render(strings.Repeat(" ", padLeft)) +
