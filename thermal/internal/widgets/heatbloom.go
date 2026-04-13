@@ -158,7 +158,6 @@ func (b *HeatBloom) radialAt(col, row int) float64 {
 }
 
 // blendColors composites fg over bg with the given alpha in [0,1].
-// Declared here so Task 8's alphaAt+BgAt can use it without another edit.
 func blendColors(fg colorful.Color, bg color.Color, alpha float64) color.Color {
 	if alpha >= 1 {
 		r, g, bl := fg.RGB255()
