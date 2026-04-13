@@ -14,6 +14,7 @@ Format: problem → approach sketch → open questions → references. Keep stub
 ## Grafana theming (2026-04-12)
 
 - [grafana-chrome-theming.md](grafana-chrome-theming.md) — Frappe the sidebar, navbar, panel headers, menus — eliminate stock Grafana colors around the (now-themed) panel interiors
+- [grafana-continuous-gradients.md](grafana-continuous-gradients.md) — audit "by X" panels for ranking vs identity; flip ranking panels to continuous-BlPu gradient, resolves insights #400
 
 ## Test coverage (2026-04-12)
 
