@@ -6,11 +6,14 @@ Format: problem → approach sketch → open questions → references. Keep stub
 
 ## Visual / TUI library ideas (2026-04-11)
 
-- [bubbles-help.md](bubbles-help.md) — real `bubbles/help` component for the `[h]` hint
-- [segment-display-temp.md](segment-display-temp.md) — 7-segment LCD digits for overall temp readout (termdash)
 - [freeze-screenshot-pipeline.md](freeze-screenshot-pipeline.md) — automate marketing screenshots with charm `freeze`
-- [rasterm-graphics.md](rasterm-graphics.md) — real pixel graphics (Kitty protocol) for Iron gradient / logo
 - [bubblezone-click-regions.md](bubblezone-click-regions.md) — clickable categories and widgets via bubblezone
+- [threat-transition-smoothing.md](threat-transition-smoothing.md) — color blend + time hysteresis on headline threat-state changes
+- [headline-top-row-content.md](headline-top-row-content.md) — what fills the headline top-row real estate once quips are retired
+
+## Grafana theming (2026-04-12)
+
+- [grafana-chrome-theming.md](grafana-chrome-theming.md) — Frappe the sidebar, navbar, panel headers, menus — eliminate stock Grafana colors around the (now-themed) panel interiors
 
 ## Test coverage (2026-04-12)
 
