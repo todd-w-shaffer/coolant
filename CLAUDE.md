@@ -113,7 +113,7 @@ Thermal dashboard rendered via bubbletea; runs as a bottom tmux strip or standal
 Plugin and dashboard ship separately. The plugin installs via Claude Code's marketplace system; the dashboard is a prebuilt binary on GitHub Releases.
 
 - **Marketplace:** `todd-w-shaffer/marketplace` repo hosts the plugin manifest. Coolant is a git submodule under `plugins/coolant`. A GitHub Action (`.github/workflows/notify-marketplace.yml`) fires `repository_dispatch` on every push to main, triggering the marketplace repo to auto-update the submodule.
-- **Binaries:** `thermo-darwin-arm64` and `thermo-darwin-amd64` attached to GitHub Releases. Build both with: `GOARCH=arm64 go build -o bin/thermo-darwin-arm64 ./cmd/thermal/ && GOARCH=amd64 go build -o bin/thermo-darwin-amd64 ./cmd/thermal/` (from `thermal/`).
+- **Binaries:** `thermo-darwin-arm64` and `thermo-darwin-amd64` attached to GitHub Releases. Cut automatically by `.github/workflows/auto-release.yml` on every push to `main` that touches `thermal/**` — bumps minor semver (seeded at v0.4.0), cross-compiles both arches with `CGO_ENABLED=1` on macos-latest, and runs `gh release create --target $SHA`. Manual major bumps: push a `vX.Y.Z` tag to trigger `release.yml`. Local build: `CGO_ENABLED=1 GOARCH=arm64 go build -o bin/thermo-darwin-arm64 ./cmd/thermal/ && CGO_ENABLED=1 GOARCH=amd64 go build -o bin/thermo-darwin-amd64 ./cmd/thermal/` (from `thermal/`).
 - **Install script:** `install.sh` downloads the binary for the user's arch, asks where to put it, and optionally installs the braille statusline to `~/.claude/` with settings.json patching.
 
 ## Conventions
