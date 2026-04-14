@@ -26,7 +26,13 @@ curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install
 thermo --demo
 ```
 
-![thermal dashboard demo](assets/thermal-demo.gif)
+![thermal dashboard — classic theme](assets/thermal-classic.gif)
+
+![thermal dashboard — iron theme](assets/thermal-iron.gif)
+
+![thermal dashboard — mono theme](assets/thermal-mono.gif)
+
+![thermal dashboard — frappé theme](assets/thermal-frappe.gif)
 
 ## The dashboard
 

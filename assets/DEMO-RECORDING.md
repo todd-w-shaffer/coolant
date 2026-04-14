@@ -1,6 +1,6 @@
 # Demo GIF Recording Process
 
-How to re-record `thermal-demo.gif` for the README after visual changes to the dashboard.
+How to re-record the per-theme demo GIFs for the README after visual changes to the dashboard.
 
 ## Prerequisites
 
@@ -19,67 +19,51 @@ cd thermal && go build -o ../bin/thermo ./cmd/thermal/
 
 ### 2. Record with VHS
 
-The tape file is `assets/demo-thermal.tape`. Key settings:
+Four tapes, one per theme: `demo-classic.tape`, `demo-iron.tape`, `demo-mono.tape`, `demo-frappe.tape`. Shared settings:
 
 | Setting    | Value | Why                                                    |
 |------------|-------|--------------------------------------------------------|
 | FontSize   | 16    | Larger glyphs rendered at 2x for crisp downscale       |
 | Width      | 1920  | 2x display width — browser downscales for crisp text   |
-| Height     | 150   | Tight fit around dashboard content at FontSize 16      |
+| Height     | 190   | Fits double-height heat bar + swap row at FontSize 16  |
 | Padding    | 0     | No wasted space                                        |
-| Framerate  | 15    | Balances smooth animation with file size (~5.4MB)      |
+| Framerate  | 15    | Balances smooth animation with file size               |
 
-The tape hides the terminal, launches `./bin/thermo --demo`, presses `c` (compact mode), records for 20s, then quits.
+Each tape hides the terminal, launches `./bin/thermo --demo --theme=<name>`, presses `c` (compact mode), records for 20s, then quits.
 
 ```bash
-vhs assets/demo-thermal.tape
+for theme in classic iron mono frappe; do
+  vhs assets/demo-$theme.tape
+done
 ```
-
-This produces `assets/thermal-demo.gif`.
 
 ### 3. Optimize file size
 
-VHS output is unoptimized. Use gifsicle with lossy compression:
-
 ```bash
-gifsicle -O3 --lossy=120 assets/thermal-demo.gif -o assets/thermal-demo.gif
+for theme in classic iron mono frappe; do
+  gifsicle -O3 --lossy=120 assets/thermal-$theme.gif -o assets/thermal-$theme.gif
+done
 ```
 
-`--lossy=120` cuts ~20% without visible artifacts on terminal content. Higher values (150+) start smearing braille dots. Expect ~5.4MB final at current settings — the 2x resolution and color transitions (green→red headline) make this inherently larger than a 1x GIF.
-
-### 4. Verify
-
-Extract frames at key narrative moments and eyeball them:
-
-```bash
-gifsicle assets/thermal-demo.gif '#50'  -o /tmp/early.gif   # calm phase
-gifsicle assets/thermal-demo.gif '#250' -o /tmp/mid.gif     # language/build ramp
-gifsicle assets/thermal-demo.gif '#400' -o /tmp/peak.gif    # shell explosion
-```
-
-Check that:
-- Content fills the frame height (no large dead space at bottom)
-- Braille gauges render cleanly (no compression smear)
-- Narrative arc is visible: calm → ramp → peak → cooldown
+`--lossy=120` cuts ~20% without visible artifacts on terminal content. Higher values (150+) start smearing braille dots. Expect 5–8MB per GIF.
 
 ## Why 2x rendering
 
-GIFs are limited to 256 colors per frame. At 1x (960px), braille dots and text look blocky. Rendering at 1920px with a larger FontSize means each glyph has more source pixels. When GitHub's README viewer downscales to display width (~960px), the extra detail is preserved as effective subpixel resolution. The tradeoff is file size (~5.4MB vs ~3.5MB at 1x).
+GIFs are limited to 256 colors per frame. At 1x (960px), braille dots and text look blocky. Rendering at 1920px with a larger FontSize means each glyph has more source pixels. When GitHub's README viewer downscales to display width (~960px), the extra detail is preserved as effective subpixel resolution. The tradeoff is file size.
 
-The FontSize must scale with Width — at 1920px, FontSize 16 produces roughly the same terminal column/row count as FontSize 8 at 960px. If you shrink FontSize without increasing Width, you get more columns but each glyph has fewer pixels, defeating the purpose.
+The FontSize must scale with Width — at 1920px, FontSize 16 produces roughly the same terminal column/row count as FontSize 8 at 960px.
 
 ## Adjusting height
 
-If the dashboard layout changes (new rows, different braille font size), the Height may need tuning:
+If the dashboard layout changes (new rows, different braille font size), Height may need tuning:
 
-1. Set Height to something generous (e.g., 300)
+1. Set Height generous (e.g., 300)
 2. Record, extract a peak-activity frame: `gifsicle output.gif '#250' -o /tmp/peak.gif`
 3. Read the frame to check where content ends vs dead space
 4. Reduce Height by ~20px, re-record, re-check
-5. Iterate until peak frame fills the height with minimal bottom margin
-6. No gifsicle cropping needed — get it right at the source
+5. Iterate until peak fills height with minimal bottom margin — get it right at the source, no gifsicle cropping
 
-At current FontSize 16 / Width 1920, the dashboard content occupies ~130-140px. Height 150 gives a small breathing margin.
+At current FontSize 16 / Width 1920, dashboard content occupies ~175–185px with the double-height heat bar.
 
 ## Demo narrative arc
 
@@ -94,21 +78,10 @@ The `--demo` flag runs a scripted scenario (see `thermal/internal/demo/demov2.go
 | Shell     | 38-60  | 9.5-15s   | Shell explosion to 80+ procs, stats pin   |
 | Cooldown  | 60-80  | 15-20s    | Everything winds down, agents die         |
 
-## Full one-shot reproduction
-
-```bash
-cd /path/to/coolant
-cd thermal && go build -o ../bin/thermo ./cmd/thermal/ && cd ..
-vhs assets/demo-thermal.tape
-gifsicle -O3 --lossy=120 assets/thermal-demo.gif -o assets/thermal-demo.gif
-```
-
-That's the whole pipeline. The tape file has all the settings baked in.
-
 ## File inventory
 
-- `assets/demo-thermal.tape` — VHS tape (source of truth for recording settings)
-- `assets/thermal-demo.gif` — output GIF referenced by README.md line 29
+- `assets/demo-<theme>.tape` — VHS tape per theme (classic, iron, mono, frappe)
+- `assets/thermal-<theme>.gif` — output GIFs referenced by README.md
 - `assets/DEMO-RECORDING.md` — this file
 - `thermal/internal/demo/demov2.go` — scripted narrative data generator
 - `thermal/internal/demo/demov2_test.go` — TestNarrativeArc validates the arc
