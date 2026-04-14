@@ -140,6 +140,49 @@ func TestHeatBloomGolden_Heat1(t *testing.T) {
 	bloomGoldenCheck(t, "heatbloom_heat_1.golden", got)
 }
 
+func TestHeatBloomAnimTickClampsHeat(t *testing.T) {
+	b := newTestBloom(t)
+	b.SetSize(40, 2)
+	// Drive a hard step from 0 → 1 and let the spring rip. Underdamped
+	// physics will naturally overshoot past 1.0; AnimTick must clamp so
+	// the bloom never paints with heat > 1 (the "flashbulb" frame).
+	b.heat = 0
+	b.heatVel = 0
+	b.heatTarget = 1.0
+	maxHeat := 0.0
+	for i := 0; i < 240; i++ {
+		b.AnimTick()
+		if b.heat > maxHeat {
+			maxHeat = b.heat
+		}
+	}
+	if maxHeat > 1.0+1e-9 {
+		t.Errorf("heat overshot to %v; want clamped to <= 1.0", maxHeat)
+	}
+}
+
+func TestHeatBloomFirstUpdatePrimes(t *testing.T) {
+	b := newTestBloom(t)
+	b.SetSize(40, 2)
+	// Mimic the AppState the bloom sees on the first snapshot after boot.
+	// First Update must seed heat at the target so the spring starts at
+	// rest — no startup ramp, no overshoot. Subsequent Updates must ease.
+	b.setTarget(0.8)
+	if math.Abs(b.heat-0.8) > 1e-9 {
+		t.Errorf("first setTarget did not prime heat: got %v, want 0.8", b.heat)
+	}
+	if b.heatVel != 0 {
+		t.Errorf("first setTarget left non-zero velocity: %v", b.heatVel)
+	}
+	b.setTarget(0.2)
+	if math.Abs(b.heat-0.8) > 1e-9 {
+		t.Errorf("second setTarget should not snap heat; got %v, want 0.8 (ease via AnimTick)", b.heat)
+	}
+	if b.heatTarget != 0.2 {
+		t.Errorf("second setTarget should update heatTarget: got %v, want 0.2", b.heatTarget)
+	}
+}
+
 func TestHeatBloomBgAtPastRightBoundary(t *testing.T) {
 	b := newTestBloom(t)
 	b.SetSize(40, 2)

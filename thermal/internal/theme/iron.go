@@ -78,9 +78,11 @@ func Iron() *Theme {
 		AccentG: 80.0,
 		AccentB: 120.0,
 
-		// Offline state — purple wash (lifted for dark bg visibility)
+		// Offline state — neutral pre-data backdrop. Saturated theme
+		// colors here read as a startup "flash" before the first
+		// snapshot lands; 235 sits dim under the bloom and any theme.
 		OfflineFg: lipgloss.Color("236"),
-		OfflineBg: lipgloss.Color("53"), // dark magenta
+		OfflineBg: lipgloss.Color("235"),
 		OfflineSparkColors: []colorful.Color{
 			mustHex("#5b2d8e"), // medium purple
 			mustHex("#7b3f9e"), // brighter purple
