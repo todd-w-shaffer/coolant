@@ -69,9 +69,10 @@ func Classic() *Theme {
 		AccentG: 115.0,
 		AccentB: 74.0,
 
-		// Offline state
-		OfflineFg: lipgloss.Color("#000000"),
-		OfflineBg: lipgloss.Color("67"), // steel blue
+		// Offline state — neutral pre-data backdrop (see iron.go for
+		// rationale; vivid backdrops flash on startup).
+		OfflineFg: lipgloss.Color("245"),
+		OfflineBg: lipgloss.Color("235"),
 		OfflineSparkColors: []colorful.Color{
 			mustHex("#ff0000"), // red
 			mustHex("#ffff00"), // yellow

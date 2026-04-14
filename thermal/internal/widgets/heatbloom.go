@@ -34,6 +34,11 @@ type HeatBloom struct {
 	heat       float64
 	heatVel    float64
 	spring     harmonica.Spring
+	// primed is false until the first Update lands. The first target is
+	// snapped (heat = target, vel = 0) so the spring starts at rest —
+	// otherwise the boot ramp from 0 → first-snapshot heat would overshoot
+	// and paint a flashbulb of the hottest LUT entry across the bloom zone.
+	primed bool
 
 	// breathePhase accumulates radians modulo 2π. Period is heat-dependent.
 	breathePhase float64
@@ -64,16 +69,37 @@ func (b *HeatBloom) SetSize(w, h int) {
 // spring target. Safe with nil state (resets target to 0).
 func (b *HeatBloom) Update(s *model.AppState) {
 	if s == nil {
-		b.heatTarget = 0
+		b.setTarget(0)
 		return
 	}
-	b.heatTarget = s.CompositeHeat()
+	b.setTarget(s.CompositeHeat())
+}
+
+// setTarget assigns the spring target, snapping heat to it on the very
+// first call so the boot frame starts at rest instead of ramping from 0.
+func (b *HeatBloom) setTarget(t float64) {
+	b.heatTarget = t
+	if !b.primed {
+		b.heat = t
+		b.heatVel = 0
+		b.primed = true
+	}
 }
 
 // AnimTick advances the spring toward heatTarget and steps the breathe
 // oscillator at a heat-dependent rate.
 func (b *HeatBloom) AnimTick() {
 	b.heat, b.heatVel = b.spring.Update(b.heat, b.heatVel, b.heatTarget)
+	// Underdamped spring (BloomSpringDamping=0.9) intentionally overshoots
+	// for "alive" feel, but heat > 1 saturates bloomLUTIndex to the
+	// hottest ramp entry and pushes alphaAt's opacity envelope past max —
+	// a flashbulb frame on every spike. Clamp keeps the spring's character
+	// while capping the visual extreme.
+	if b.heat < 0 {
+		b.heat = 0
+	} else if b.heat > 1 {
+		b.heat = 1
+	}
 
 	periodSec := b.profile.BloomBreatheSecCool +
 		(b.profile.BloomBreatheSecHot-b.profile.BloomBreatheSecCool)*b.heat

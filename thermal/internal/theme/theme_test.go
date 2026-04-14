@@ -1,9 +1,16 @@
 package theme
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+// colorString stringifies a color for assertion. lipgloss.Color in v2 is
+// a string alias, so %v yields the ANSI code or hex literal.
+func colorString(c interface{}) string {
+	return fmt.Sprintf("%v", c)
+}
 
 func TestAllThemesProvideBloomRamp(t *testing.T) {
 	var zero BloomRampStop
@@ -25,6 +32,26 @@ func TestAllThemesProvideBloomRamp(t *testing.T) {
 		hot := th.BloomColor(1, 0)
 		if hot.R == 0 && hot.G == 0 && hot.B == 0 {
 			t.Errorf("theme %q BloomColor(1,0) is pure black — LUT likely unpopulated", name)
+		}
+	}
+}
+
+// TestOfflineBgIsNeutral guards against vivid pre-data backdrops. The
+// offline frame is a transient that ships before the first snapshot
+// lands; saturated theme colors here read as a "flash" on startup
+// (iron's dark magenta, classic's steel blue). Each themed pre-data
+// backdrop must be a dim neutral (ANSI 234-236) — frappe is exempt
+// because its catppuccin surface is already perceptually neutral.
+func TestOfflineBgIsNeutral(t *testing.T) {
+	allowed := map[string]bool{"234": true, "235": true, "236": true}
+	for _, name := range []string{"classic", "iron", "mono"} {
+		th, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		s := colorString(th.OfflineBg)
+		if !allowed[s] {
+			t.Errorf("theme %q OfflineBg = %q; want one of 234/235/236 (dim neutral)", name, s)
 		}
 	}
 }
