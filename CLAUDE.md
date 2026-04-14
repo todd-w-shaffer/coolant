@@ -61,6 +61,8 @@ event bus" convention below).
   (spring-smoothed, per-digit styled spans), gauges, agent dots
   (tidal/KITT), heat bloom, heat rails, alerts
 - `layout/` — bottom-strip layout compositor
+- `keys/` — central keybinding registry (KeyMap struct) shared between
+  key dispatch and help rendering so labels and behavior cannot drift
 - `config/` — named constants (timing, thresholds, EMA, animation and
   bloom defaults)
 - `ui/` — type/category colors, agent glyphs, DimText/ColorText helpers
