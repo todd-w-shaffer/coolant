@@ -16,54 +16,61 @@ cd thermal && go build -o ../bin/thermo ./cmd/thermal/  # build
 ./bin/thermo                             # run with live data
 ```
 
-## Workflow rules
-
-### Commit style
+## Commit style
 
 Subject line in imperative mood. Body includes a `Recipe:` block (a distilled prompt that would reproduce the change in one shot) and a `Changes:` block (per-file narrative). No Co-Authored-By lines.
 
-### TDD (all functional code)
+## TDD
 
 Strict red-green-refactor for **any** code that can break — bash, Go, or otherwise. No exceptions. One feature per cycle.
 
-1. **Red** — Write a failing test first. Do NOT write any implementation yet.
-2. **Green** — Implement the minimum code to pass. Nothing more.
-3. **Refactor** — Improve code quality while keeping tests green. Do not skip this step.
+1. **Red** — write a failing test first, do NOT write implementation yet
+2. **Green** — implement the minimum code to pass, nothing more
+3. **Refactor** — improve quality while keeping tests green, do not skip
 
-Bug fixes follow the same cycle: write a test that reproduces the bug (red), fix it (green), clean up (refactor).
-
-#### Bash tests
-
-`.bats` files in `tests/`. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`). Uses [bats-core](https://github.com/bats-core/bats-core).
-
-#### Go tests
-
-Table-driven tests in `*_test.go` files next to the code they test. Use `t.Helper()` on test helpers, direct assertions with `t.Errorf`/`t.Fatalf` — no test framework. Run: `cd thermal && go test ./...`
+Bug fixes follow the same cycle: write a test that reproduces the bug (red), fix it (green), clean up (refactor). See **Testing** below for per-language conventions and commands.
 
 ## Project structure
 
-Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization.
+Two layers: **bash** for hooks, plumbing, and data collection; **Go** for
+visualization. The bash↔Go seam is a JSONL event log (see the "JSONL
+event bus" convention below).
 
-```
-.claude-plugin/plugin.json   # plugin manifest
-.github/workflows/           # notify-marketplace.yml (triggers submodule update on push)
-claude-statusline/           # braille statusline for Claude Code (context/session/weekly bars)
-install.sh                   # interactive installer (binary + statusline + settings.json patching)
-hooks/hooks.json             # hook definitions (SessionStart, PreToolUse, SubagentStart/Stop)
-scripts/common.sh            # shared config, paths, log + JSONL event functions + _reconcile_counter
-scripts/toggle.sh            # manual parallel mode on/off/status (reconciled)
-scripts/preflight.sh         # SessionStart hook: warn about missing worktree exclusions
-scripts/gate.sh              # PreToolUse hook: cap test runners (reconciled), suppress build tools
-scripts/agent-start.sh       # SubagentStart hook: increment counter, warn at threshold
-scripts/agent-stop.sh        # SubagentStop hook: decrement counter, auto-disengage at zero
-thermal/                     # Go thermal dashboard binary (see below)
-docs/theming/                # theme system planning: color audit, schema, palettes, migration mapping
-skills/coolant/SKILL.md      # /coolant skill (opt-in build suppression)
-tests/test_helper.bash       # bats shared setup/teardown (temp dir isolation)
-tests/*.bats                 # bats test files, one per script
-assets/                      # VHS tape files, demo GIFs, marketing screenshots
-dev/otel/                    # Local Prometheus+Grafana stack for OTEL dogfooding (see below)
-```
+**Repo-level layout:**
+- `hooks/`, `scripts/` — bash plumbing (SessionStart / PreToolUse /
+  Subagent hooks, reconciled counters, JSONL event emission)
+- `thermal/` — Go thermal dashboard (packages below)
+- `.claude-plugin/`, `install.sh`, `claude-statusline/` — plugin
+  manifest, installer, and the braille statusline
+- `docs/` — design docs, theming plans, backlog specs
+- `dev/otel/` — local Prometheus+Grafana dogfood stack (see below)
+- `tests/` — bats tests for the bash layer
+- `skills/coolant/SKILL.md` — the `/coolant` skill entry
+- `assets/` — VHS tapes + demo GIFs
+
+**Thermal dashboard packages (`thermal/internal/`):**
+- `collector/` — CPU/MEM/procs/GPU/network sampling (fast 150ms + slow
+  1s loops, cgo `mach host_statistics`, JSONL event tailer)
+- `model/` — AppState, ThreatLevel, OverallTemperature formula,
+  RingBuffer[T], idle personality
+- `anim/` — Profile struct + named profiles (default/calm/intense);
+  motion parameters orthogonal to color
+- `theme/` — Theme struct + named themes (classic/iron/mono/frappe);
+  all colors flow through here, HCL blend LUTs pre-computed in Init
+- `widgets/` — rendered components: sparklines, headline, segment LCD
+  (spring-smoothed, per-digit styled spans), gauges, agent dots
+  (tidal/KITT), heat bloom, heat rails, alerts
+- `layout/` — bottom-strip layout compositor
+- `config/` — named constants (timing, thresholds, EMA, animation and
+  bloom defaults)
+- `ui/` — type/category colors, agent glyphs, DimText/ColorText helpers
+- `demo/` — synthetic Snapshot generator for `--demo`
+- `cmd/thermal/` — bubbletea app entry. `cmd/swatch/` and
+  `cmd/brailletext/` are preview tools.
+
+For the exact file inventory, call graph, and community structure,
+read `graphify-out/GRAPH_REPORT.md` — it's regenerated by a post-commit
+hook, so it's always current and authoritative for "where does X live".
 
 ### Archive folders (gitignored — do not read, reference, or treat as current)
 
@@ -95,83 +102,11 @@ Verified Claude Code metric names (live-checked, not guessed):
 
 ### thermal/ (Go thermal dashboard)
 
-Thermal dashboard rendered via bubbletea. Runs as a bottom tmux strip or standalone.
-
-```
-thermal/
-├── cmd/thermal/
-│   ├── main.go              # bubbletea app, flag parsing
-│   ├── parent_darwin.go     # kqueue EVFILT_PROC watcher — exits when parent dies
-│   └── parent_other.go      # no-op stub for non-darwin platforms
-├── cmd/brailletext/main.go  # standalone braille font debug tool
-├── cmd/swatch/main.go       # theme palette preview tool (static or --animate bubbletea loop)
-├── internal/
-│   ├── collector/
-│   │   ├── types.go          # Snapshot, SystemStats, ProcessInfo, Category
-│   │   ├── cpu_darwin.go     # cgo mach host_statistics for CPU tick deltas (cached host port)
-│   │   ├── system.go         # MEM/SWAP/decompressions via sysctl/vm_stat
-│   │   ├── procs.go          # Claude process discovery + descendant trees
-│   │   ├── network.go        # API connectivity check (TCP to api.anthropic.com)
-│   │   ├── collector.go      # decoupled fast (150ms) + slow (1s network/swap/GPU) loops
-│   │   └── events.go         # JSONL event tailer (polls $TMPDIR/coolant-$USER.events.jsonl)
-│   ├── model/
-│   │   ├── state.go          # AppState: rolling history, smoothed counts
-│   │   ├── threat.go         # ThreatLevel: COOL/WARM/HOT/MELTDOWN
-│   │   ├── projection.go     # memory weight classes, headroom estimation
-│   │   ├── personality.go    # idle messages, threat quips (loaded from CSV)
-│   │   ├── ring.go           # generic RingBuffer[T] — O(1) push, used by history/alerts/rates
-│   │   ├── temperature.go    # OverallTemperature formula + severity→brightness curves for the LCD readout
-│   │   └── data/
-│   │       └── messages.csv  # embedded status bar messages per threat level
-│   ├── anim/
-│   │   ├── profile.go        # Profile struct (all animation tunables)
-│   │   ├── default.go        # Default profile (reads from config/tuning.go)
-│   │   ├── calm.go           # Calm profile (slower rates, wider brightness, softer)
-│   │   ├── intense.go        # Intense profile (faster rates, tighter gaussian, snappier)
-│   │   └── registry.go       # animation registry: Get(), Names(), --animation flag lookup
-│   ├── theme/
-│   │   ├── theme.go          # Theme struct, SeverityColor, SparkThresholds, Init (LUT pre-compute)
-│   │   ├── classic.go        # Classic palette (backward-compat traffic-light)
-│   │   ├── iron.go           # Iron palette (FLIR blackbody: purple→magenta→amber)
-│   │   ├── mono.go           # Mono palette (single amber hue, brightness-only)
-│   │   ├── frappe.go         # Frappe palette (native catppuccin frappe hex colors)
-│   │   └── registry.go       # theme registry: Get(), Names(), --theme flag lookup
-│   ├── widgets/
-│   │   ├── sparkline.go      # double-res braille sparklines (2 samples/char), themed severity color
-│   │   ├── headline.go       # 2-row thermal bar: quip + runtimes over right-anchored sessions/agents/build-shell/LCD cluster
-│   │   ├── segmentreadout.go # LCD-style temperature readout (spring-smoothed value, per-digit styled spans, meltdown pulse)
-│   │   ├── segmentfont.go    # 7-segment bitmap font for segmentreadout digits and degree glyph
-│   │   ├── gauges.go         # CPU/MEM/compressor gauges + spring animations
-│   │   ├── rates.go          # system stats (CPU/MEM/SWAP/GPU) + spawn/death/net + [h] help
-│   │   ├── alerts.go         # scrolling alert log
-│   │   ├── breathedots.go    # agent indicators: tidal wave (active), KITT scanner (stale or highscore), 3-state glyphs (⬡⏣⬢)
-│   │   ├── heatbloom.go      # thermographic accent behind headline left zone: HCL-blended bloom driven by composite heat
-│   │   ├── rail.go           # directional heat rails (dotted underlines above/below build/shell counts) with ember decay
-│   │   ├── braillefont.go    # 4×8 bitmap font for gauge labels (CPU/MEM/SWAP)
-│   │   ├── thermal.go        # category heat-level threshold logic (returns gradient index)
-│   │   ├── golden_test.go    # golden capture/match tests for render regression detection
-│   │   └── testdata/*.golden # frozen render output for Classic theme backward-compat
-│   ├── layout/
-│   │   └── horizontal.go     # bottom-strip layout compositor
-│   ├── config/
-│   │   └── tuning.go         # named constants: timing, thresholds, EMA, animation defaults
-│   ├── ui/
-│   │   └── colors.go         # type colors, category colors, agent glyphs, DimText/ColorText helpers
-│   └── demo/
-│       └── demov2.go         # synthetic Snapshots with system stats
-├── go.mod
-└── go.sum
-```
+Thermal dashboard rendered via bubbletea; runs as a bottom tmux strip or standalone. Build/run commands in **Quick reference** at the top of this file.
 
 **Dependencies:** Go 1.25+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
 
-**Note:** The source directory is `thermal/` but the binary is named `thermo` (to avoid colliding with macOS `/usr/bin/thermal`).
-
-**Build:** `cd thermal && go build -o ../bin/thermo ./cmd/thermal/`
-
-**Run:**
-- `./bin/thermo --demo` (thermal dashboard, synthetic data)
-- `./bin/thermo` (thermal dashboard, live system data)
+**Naming note:** source directory is `thermal/`, binary is `thermo` (avoids colliding with macOS `/usr/bin/thermal`).
 
 ## Distribution
 
@@ -214,7 +149,9 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 
 ## Testing
 
-Uses [bats-core](https://github.com/bats-core/bats-core) (`brew install bats-core`). Tests are a dev dependency — they don't ship with coolant.
+Tests are a dev dependency — they don't ship with coolant. New scripts must have tests before merge; new behavior on existing scripts must have a failing test first (red-green-refactor).
+
+**Bash (bats-core):** `.bats` files in `tests/`, one per script. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`). Install via `brew install bats-core`.
 
 ```bash
 bats tests/                        # full suite
@@ -222,10 +159,13 @@ bats tests/toggle.bats             # single file
 bats tests/ -f "reconcile"         # name pattern
 ```
 
-- Each script gets a corresponding `tests/<name>.bats` file.
-- `tests/test_helper.bash` provides `setup`/`teardown` — isolates all state to a temp directory so tests never touch real `/tmp/coolant-*` files.
-- Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir. Scripts respect these via the defaults in `common.sh`.
-- New scripts must have tests before merge. New behavior on existing scripts must have a failing test first (red-green-refactor).
+`tests/test_helper.bash` provides `setup`/`teardown` that isolates all state to a temp directory — tests never touch real `/tmp/coolant-*` files. Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir; scripts respect these via the defaults in `common.sh`.
+
+**Go:** table-driven tests in `*_test.go` next to the code they test. Use `t.Helper()` on test helpers; direct assertions via `t.Errorf`/`t.Fatalf` — no test framework.
+
+```bash
+cd thermal && go test ./...        # full suite
+```
 
 ## graphify
 
