@@ -36,6 +36,7 @@ type AppState struct {
 	SmoothedCats    map[string]float64 // EMA-smoothed category counts
 	SessionCount    int
 	PluginActive    bool
+	UpdateAvailable bool
 	Online          bool
 	OnlineLog       *RingBuffer[bool] // tracks online/offline per tick, same length as History
 	OfflineSince    time.Time         // when we went offline

@@ -240,6 +240,9 @@ func (h *Horizontal) notificationBar() string {
 	if !h.state.PluginActive {
 		hints = append(hints, "[i] install coolant plugin for agent-level insights")
 	}
+	if h.state.UpdateAvailable {
+		hints = append(hints, "update available \u00b7 changelog \u2192 releases/latest")
+	}
 	if len(hints) == 0 {
 		return ""
 	}
