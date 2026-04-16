@@ -18,6 +18,8 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
+	"github.com/toddwshaffer/coolant/thermal/internal/updater"
+	"github.com/toddwshaffer/coolant/thermal/internal/version"
 )
 
 // ── Messages ────────────────────────────────────────────────
@@ -25,29 +27,32 @@ import (
 type snapshotMsg collector.Snapshot
 type animTickMsg time.Time
 type gateEventMsg collector.GateEvent
+type updateAvailableMsg string
 
 // ── Model ───────────────────────────────────────────────────
 
 type model struct {
-	width     int
-	height    int
-	layout    *layout.Horizontal
-	keys      keys.KeyMap
-	done      chan struct{}
-	demoMode  bool
-	snapChan  chan collector.Snapshot
-	eventChan chan collector.GateEvent
+	width      int
+	height     int
+	layout     *layout.Horizontal
+	keys       keys.KeyMap
+	done       chan struct{}
+	demoMode   bool
+	snapChan   chan collector.Snapshot
+	eventChan  chan collector.GateEvent
+	updateChan chan string
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 	km := keys.Default()
 	return model{
-		layout:    layout.NewHorizontal(th, ap, km),
-		keys:      km,
-		done:      make(chan struct{}),
-		demoMode:  demoMode,
-		snapChan:  make(chan collector.Snapshot, 16),
-		eventChan: make(chan collector.GateEvent, 32),
+		layout:     layout.NewHorizontal(th, ap, km),
+		keys:       km,
+		done:       make(chan struct{}),
+		demoMode:   demoMode,
+		snapChan:   make(chan collector.Snapshot, 16),
+		eventChan:  make(chan collector.GateEvent, 32),
+		updateChan: make(chan string, 1),
 	}
 }
 
@@ -58,18 +63,27 @@ func (m model) Init() tea.Cmd {
 		go collector.Run(m.snapChan, config.FastInterval, m.done)
 	}
 
-	// Start JSONL event tailer — path syncs with COOLANT_EVENTS in common.sh
 	evPath := os.Getenv("COOLANT_EVENTS")
 	if evPath == "" {
-		tmpDir := os.Getenv("TMPDIR")
-		if tmpDir == "" {
-			tmpDir = "/tmp/"
-		}
-		evPath = tmpDir + "coolant-" + currentUser() + ".events.jsonl"
+		evPath = coolantTmpPath("events.jsonl")
 	}
 	go collector.TailEvents(m.eventChan, evPath, config.EventInterval, m.done)
 
-	return tea.Batch(waitForSnapshot(m.snapChan), waitForEvent(m.eventChan), animTick())
+	cmds := []tea.Cmd{waitForSnapshot(m.snapChan), waitForEvent(m.eventChan), animTick()}
+
+	if !config.C.Updates.Disabled {
+		go func() {
+			defer close(m.updateChan)
+			cachePath := coolantTmpPath("latest-version")
+			latest, avail := updater.Check(version.Version, cachePath, config.C.Updates.CheckIntervalSec)
+			if avail {
+				m.updateChan <- latest
+			}
+		}()
+		cmds = append(cmds, waitForUpdate(m.updateChan))
+	}
+
+	return tea.Batch(cmds...)
 }
 
 func animTick() tea.Cmd {
@@ -88,6 +102,16 @@ func waitForSnapshot(ch <-chan collector.Snapshot) tea.Cmd {
 	}
 }
 
+func waitForUpdate(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		v, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return updateAvailableMsg(v)
+	}
+}
+
 func waitForEvent(ch <-chan collector.GateEvent) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-ch
@@ -103,6 +127,14 @@ func currentUser() string {
 		return u.Username
 	}
 	return os.Getenv("USER")
+}
+
+func coolantTmpPath(suffix string) string {
+	tmpDir := os.Getenv("TMPDIR")
+	if tmpDir == "" {
+		tmpDir = "/tmp/"
+	}
+	return tmpDir + "coolant-" + currentUser() + "." + suffix
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -145,6 +177,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout.State().HandleEvent(ev)
 		return m, waitForEvent(m.eventChan)
 
+	case updateAvailableMsg:
+		m.layout.State().UpdateAvailable = true
+
 	case animTickMsg:
 		m.layout.AnimTick()
 		return m, animTick()
@@ -173,7 +208,13 @@ func main() {
 	listThemes := flag.Bool("list-themes", false, "List available themes and exit")
 	listAnims := flag.Bool("list-animations", false, "List available animation profiles and exit")
 	kittHighScore := flag.Bool("kitt-highscore", false, "KITT scans completed agents instead of ghosts")
+	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version.Version)
+		os.Exit(0)
+	}
 
 	// Load user config: COOLANT_CONFIG env > ~/.config/coolant/config.toml > defaults
 	cfgPath := os.Getenv("COOLANT_CONFIG")

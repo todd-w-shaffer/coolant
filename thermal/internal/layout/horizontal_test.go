@@ -135,3 +135,36 @@ func TestNotificationBarShowsInstallHint(t *testing.T) {
 		t.Errorf("notification bar should mention install, got %q", got)
 	}
 }
+
+func TestNotificationBarShowsUpdateAvailable(t *testing.T) {
+	h := NewHorizontal(testTheme, testAnim, keys.Default())
+	h.State().PluginActive = true
+	h.State().UpdateAvailable = true
+	got := h.notificationBar()
+	if !strings.Contains(got, "update available") {
+		t.Errorf("notification bar should show update hint, got %q", got)
+	}
+}
+
+func TestNotificationBarHiddenWhenNoHints(t *testing.T) {
+	h := NewHorizontal(testTheme, testAnim, keys.Default())
+	h.State().PluginActive = true
+	h.State().UpdateAvailable = false
+	got := h.notificationBar()
+	if got != "" {
+		t.Errorf("notification bar should be empty, got %q", got)
+	}
+}
+
+func TestNotificationBarShowsBothHints(t *testing.T) {
+	h := NewHorizontal(testTheme, testAnim, keys.Default())
+	h.State().PluginActive = false
+	h.State().UpdateAvailable = true
+	got := h.notificationBar()
+	if !strings.Contains(got, "install") {
+		t.Errorf("should show install hint, got %q", got)
+	}
+	if !strings.Contains(got, "update available") {
+		t.Errorf("should show update hint, got %q", got)
+	}
+}

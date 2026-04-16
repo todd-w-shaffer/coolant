@@ -1,7 +1,8 @@
 # Spec stub: guard against invisible distribution staleness
 
-**Status:** backlog / stub
+**Status:** shipped
 **Seeded:** 2026-04-14
+**Shipped:** 2026-04-15
 **Origin:** Observation during v3 release cut — work-laptop install silently shipped a 3-week-old binary because `releases/latest/` was manually promoted while `install.sh` kept pointing at it.
 
 ## Problem
@@ -31,6 +32,14 @@ Three options in increasing order of intrusiveness:
 3. **Automatic: nightly check in the statusline itself.** Statusline checks `raw.githubusercontent.com/main/claude-statusline/VERSION` once per day, toasts if newer. Invasive — risks noise, network dependency in a tight path.
 
 **Recommendation:** option 2. Option 1 is free but passive (nobody looks at versions). Option 3 pollutes the statusline's hot path. Option 2 gives users an explicit "refresh me" with zero runtime cost.
+
+## What actually shipped
+
+Options 1, 2, and 3 — all three, with the hot-path concern mitigated by a daily TTL cache:
+
+- **Option 1 (passive):** `VERSION` file at repo root, auto-release workflow stamps it and a `# VERSION: x.y.z` comment in the statusline. Thermo has `--version` flag; ldflags inject the build version.
+- **Option 2 (active):** `scripts/upgrade.sh` re-fetches binary + statusline, prints before/after summary. Wired as `install.sh --upgrade`.
+- **Option 3 (automatic):** Both statusline and thermo check `raw.githubusercontent.com/main/VERSION` once per day (cached in `$TMPDIR/coolant-$USER.latest-version`). Statusline shows a dim yellow ⬆; thermo's notification banner shows "update available · changelog → releases/latest". `[updates]` TOML section controls TTL + opt-out.
 
 ## Open questions
 

@@ -56,6 +56,7 @@ type UserConfig struct {
 	Score      ScoreConfig
 	Sparklines SparklineConfig
 	Categories CategoryConfig
+	Updates    UpdatesConfig
 }
 
 // MemoryConfig controls when RAM usage triggers threat escalation.
@@ -119,6 +120,12 @@ type SparklineConfig struct {
 	SwapCritGB float64 // default 8.0
 	GPUWarn    float64 // default 60
 	GPUCrit    float64 // default 85
+}
+
+// UpdatesConfig controls automatic update checking behavior.
+type UpdatesConfig struct {
+	CheckIntervalSec int  // TTL between remote checks — default 86400 (24h)
+	Disabled         bool // opt out of update checks entirely — default false
 }
 
 // CategoryConfig controls per-category process count thresholds.
@@ -200,6 +207,10 @@ func Defaults() *UserConfig {
 			Thresholds:     cats,
 			Default:        CatThresholdDefault,
 			ShellExplosion: ShellExplosionThreshold,
+		},
+		Updates: UpdatesConfig{
+			CheckIntervalSec: 86400,
+			Disabled:         false,
 		},
 	}
 }
@@ -291,6 +302,10 @@ func merge(dst *UserConfig, raw map[string]any) {
 		coerceFloat(&dst.Sparklines.GPUWarn, sl, "gpu_warn")
 		coerceFloat(&dst.Sparklines.GPUCrit, sl, "gpu_crit")
 	}
+	if u, ok := section(raw, "updates"); ok {
+		coerceInt(&dst.Updates.CheckIntervalSec, u, "check_interval")
+		coerceBool(&dst.Updates.Disabled, u, "disabled")
+	}
 	if cat, ok := section(raw, "categories"); ok {
 		for name := range CatThresholds {
 			if pair, err := coercePair(cat, name); err == nil {
@@ -355,6 +370,25 @@ func coerceFloat(dst *float64, m map[string]any, key string) {
 	case string:
 		if f, err := strconv.ParseFloat(cleanNumeric(val), 64); err == nil {
 			*dst = f
+		}
+	}
+}
+
+// coerceBool reads a value as bool — accepts bool or string ("true"/"false").
+func coerceBool(dst *bool, m map[string]any, key string) {
+	v, ok := m[key]
+	if !ok {
+		return
+	}
+	switch val := v.(type) {
+	case bool:
+		*dst = val
+	case string:
+		switch strings.ToLower(strings.TrimSpace(val)) {
+		case "true", "yes", "1":
+			*dst = true
+		case "false", "no", "0":
+			*dst = false
 		}
 	}
 }
@@ -463,6 +497,10 @@ func validate(c *UserConfig) error {
 
 	if err := orderedInt("score", c.Score.Warm, c.Score.Hot, c.Score.Meltdown); err != nil {
 		return err
+	}
+
+	if c.Updates.CheckIntervalSec < 0 {
+		return fmt.Errorf("updates: check_interval must be non-negative")
 	}
 
 	if c.Spawn.BurstThreshold < 0 {

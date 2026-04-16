@@ -5,13 +5,18 @@ set -euo pipefail
 # Downloads the thermo dashboard binary and statusline.
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  echo "Usage: bash install.sh [--uninstall]"
+  echo "Usage: bash install.sh [--uninstall] [--upgrade]"
   echo ""
   echo "Installs the thermo dashboard binary and optional Claude Code statusline."
   echo "Run via: curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install.sh | bash"
   echo ""
   echo "  --uninstall    remove thermo binary, statusline, and PATH entry"
+  echo "  --upgrade      re-fetch thermo binary and statusline to latest"
   exit 0
+fi
+
+if [ "${1:-}" = "--upgrade" ]; then
+  exec bash <(curl -fsSL "https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/scripts/upgrade.sh")
 fi
 
 if [ "${1:-}" = "--uninstall" ]; then

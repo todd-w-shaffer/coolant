@@ -37,8 +37,9 @@ visualization. The bash↔Go seam is a JSONL event log (see the "JSONL
 event bus" convention below).
 
 **Repo-level layout:**
+- `VERSION` — root-level semver stamp, updated by auto-release workflow
 - `hooks/`, `scripts/` — bash plumbing (SessionStart / PreToolUse /
-  Subagent hooks, reconciled counters, JSONL event emission)
+  Subagent hooks, reconciled counters, JSONL event emission, `upgrade.sh`)
 - `thermal/` — Go thermal dashboard (packages below)
 - `.claude-plugin/`, `install.sh`, `claude-statusline/` — plugin
   manifest, installer, and the braille statusline
@@ -57,7 +58,8 @@ event bus" convention below).
   agent dots, heat bloom/rails, alerts), `layout/` (bottom-strip compositor),
   `ui/` (semantic colors, glyphs, helpers), `keys/` (shared keybinding registry)
 - **Plumbing** — `config/` (timing, thresholds, EMA, animation defaults),
-  `demo/` (scripted 6-phase narrative for `--demo`)
+  `demo/` (scripted 6-phase narrative for `--demo`), `version/` (ldflags-injected
+  build version), `updater/` (daily-TTL staleness check against `VERSION` on main)
 - **Entry points** — `cmd/thermal/` (bubbletea app), `cmd/swatch/` and
   `cmd/brailletext/` (preview tools)
 
@@ -107,7 +109,8 @@ Plugin and dashboard ship separately. The plugin installs via Claude Code's mark
 
 - **Marketplace:** `todd-w-shaffer/marketplace` repo hosts the plugin manifest. Coolant is a git submodule under `plugins/coolant`. A GitHub Action (`.github/workflows/notify-marketplace.yml`) fires `repository_dispatch` on every push to main, triggering the marketplace repo to auto-update the submodule.
 - **Binaries:** `thermo-darwin-arm64` and `thermo-darwin-amd64` attached to GitHub Releases. Cut automatically by `.github/workflows/auto-release.yml` on every push to `main` that touches `thermal/**` — bumps minor semver (seeded at v0.4.0), cross-compiles both arches with `CGO_ENABLED=1` on macos-latest, and runs `gh release create --target $SHA`. Manual major bumps: push a `vX.Y.Z` tag to trigger `release.yml`. Local build: `CGO_ENABLED=1 GOARCH=arm64 go build -o bin/thermo-darwin-arm64 ./cmd/thermal/ && CGO_ENABLED=1 GOARCH=amd64 go build -o bin/thermo-darwin-amd64 ./cmd/thermal/` (from `thermal/`).
-- **Install script:** `install.sh` downloads the binary for the user's arch, asks where to put it, and optionally installs the braille statusline to `~/.claude/` with settings.json patching.
+- **Install script:** `install.sh` downloads the binary for the user's arch, asks where to put it, and optionally installs the braille statusline to `~/.claude/` with settings.json patching. `install.sh --upgrade` delegates to `scripts/upgrade.sh` for silent re-fetch of both artifacts.
+- **Staleness detection:** Daily TTL check against `VERSION` on main, cached at `$TMPDIR/coolant-$USER.latest-version` (shared between Go updater and bash statusline). Thermo shows "update available" in the notification banner; statusline appends a dim yellow ⬆ glyph. `[updates]` TOML section controls TTL and opt-out.
 
 ## Conventions
 

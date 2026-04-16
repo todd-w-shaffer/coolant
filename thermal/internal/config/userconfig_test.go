@@ -627,6 +627,61 @@ crit_gb = "32 GB"
 	}
 }
 
+func TestUpdatesDefaultCheckInterval(t *testing.T) {
+	d := Defaults()
+	if d.Updates.CheckIntervalSec != 86400 {
+		t.Errorf("Updates.CheckIntervalSec = %d, want 86400", d.Updates.CheckIntervalSec)
+	}
+	if d.Updates.Disabled {
+		t.Error("Updates.Disabled should default to false")
+	}
+}
+
+func TestLoadUpdatesSection(t *testing.T) {
+	old := C
+	defer func() { C = old }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(`
+[updates]
+check_interval = 3600
+disabled = true
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Load(path); err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+
+	if C.Updates.CheckIntervalSec != 3600 {
+		t.Errorf("Updates.CheckIntervalSec = %d, want 3600", C.Updates.CheckIntervalSec)
+	}
+	if !C.Updates.Disabled {
+		t.Error("Updates.Disabled should be true")
+	}
+}
+
+func TestValidationRejectsNegativeCheckInterval(t *testing.T) {
+	old := C
+	defer func() { C = old }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte(`
+[updates]
+check_interval = -1
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for negative check_interval, got nil")
+	}
+}
+
 func TestValidationRejectsBadScoreOrder(t *testing.T) {
 	old := C
 	defer func() { C = old }()
