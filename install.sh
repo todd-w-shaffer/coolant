@@ -92,6 +92,19 @@ RAW="https://raw.githubusercontent.com/${REPO}/main"
 # Read from terminal even when piped via curl | bash
 prompt() { read -r "$1" < /dev/tty; }
 
+# Y/n prompt with validation loop — rejects garbage input from arrow keys etc.
+prompt_yn() {
+  local _var="$1" _response
+  while true; do
+    read -r _response < /dev/tty || _response=""
+    case "$_response" in
+      [Yy]|"") eval "$_var=Y"; return ;;
+      [Nn])    eval "$_var=N"; return ;;
+      *)       printf "  please enter Y or n: " ;;
+    esac
+  done
+}
+
 # Colors
 DIM='\033[2m'
 CYAN='\033[36m'
@@ -205,10 +218,9 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
 
   echo "  want to run thermo from anywhere in your terminal?"
   printf "  (adds %s to PATH in %s) [Y/n]: " "$INSTALL_DIR" "$PROFILE"
-  prompt ADD_PATH
-  ADD_PATH="${ADD_PATH:-Y}"
+  prompt_yn ADD_PATH
 
-  if [[ "$ADD_PATH" =~ ^[Yy]$ ]]; then
+  if [ "$ADD_PATH" = "Y" ]; then
     echo "" >> "$PROFILE"
     echo "# coolant" >> "$PROFILE"
     echo "$EXPORT_LINE" >> "$PROFILE"
@@ -232,10 +244,9 @@ echo ""
 echo "  coolant includes a statusline for Claude Code — context usage,"
 echo "  session usage, weekly quota, plan refresh timer, and git branch."
 printf "  install it? [Y/n]: "
-prompt INSTALL_SL
-INSTALL_SL="${INSTALL_SL:-Y}"
+prompt_yn INSTALL_SL
 
-if [[ "$INSTALL_SL" =~ ^[Yy]$ ]]; then
+if [ "$INSTALL_SL" = "Y" ]; then
   CLAUDE_DIR="$HOME/.claude"
   SL_DEST="${CLAUDE_DIR}/statusline.sh"
   SETTINGS="${CLAUDE_DIR}/settings.json"

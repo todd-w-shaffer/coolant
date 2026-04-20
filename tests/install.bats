@@ -161,6 +161,55 @@ EOF
   [ ! -f "$HOME/.local/bin/thermo" ]
 }
 
+# ── prompt_yn ──────────────────────────────────────────
+# Tests for the validate-and-loop Y/n prompt.
+# Single-pass variant outputs to stdout to avoid subshell variable issues.
+
+_test_yn() {
+  local _response
+  read -r _response || _response=""
+  case "$_response" in
+    [Yy]|"") echo "Y" ;;
+    [Nn])    echo "N" ;;
+    *)       return 1 ;;
+  esac
+}
+
+@test "prompt_yn accepts Y" {
+  result=$(echo "Y" | _test_yn)
+  [ "$result" = "Y" ]
+}
+
+@test "prompt_yn accepts y" {
+  result=$(echo "y" | _test_yn)
+  [ "$result" = "Y" ]
+}
+
+@test "prompt_yn accepts N" {
+  result=$(echo "N" | _test_yn)
+  [ "$result" = "N" ]
+}
+
+@test "prompt_yn accepts n" {
+  result=$(echo "n" | _test_yn)
+  [ "$result" = "N" ]
+}
+
+@test "prompt_yn treats empty as Y (default)" {
+  result=$(echo "" | _test_yn)
+  [ "$result" = "Y" ]
+}
+
+@test "prompt_yn rejects arrow key escape sequence" {
+  run bash -c 'printf "\033[C\n" | { read -r r || r=""; case "$r" in [Yy]|"") echo Y;; [Nn]) echo N;; *) exit 1;; esac; }'
+  [ "$status" -ne 0 ]
+}
+
+@test "prompt_yn rejects arbitrary text" {
+  run bash -c 'echo "hello" | { read -r r || r=""; case "$r" in [Yy]|"") echo Y;; [Nn]) echo N;; *) exit 1;; esac; }'
+  [ "$status" -ne 0 ]
+}
+
 # ── help flag ───────────────────────────────────────────
 
 @test "--help exits 0 with usage text" {
