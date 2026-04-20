@@ -92,19 +92,16 @@ RAW="https://raw.githubusercontent.com/${REPO}/main"
 # Read from terminal even when piped via curl | bash
 prompt() { read -r "$1" < /dev/tty; }
 
-# Y/n prompt with validation loop — suppresses echo so arrow keys
-# and garbage input are invisible, then prints the accepted value.
+# Y/n prompt with validation loop — overwrites garbage input on the
+# current line via ANSI clear so arrow key escape sequences don't linger.
 prompt_yn() {
-  local _var="$1" _response _old_stty
+  local _var="$1" _response
   while true; do
-    _old_stty=$(stty -g < /dev/tty 2>/dev/null)
-    stty -echo < /dev/tty 2>/dev/null
     read -r _response < /dev/tty || _response=""
-    stty "$_old_stty" < /dev/tty 2>/dev/null
     case "$_response" in
-      [Yy]|"") printf "Y\n"; eval "$_var=Y"; return ;;
-      [Nn])    printf "n\n"; eval "$_var=N"; return ;;
-      *)       printf "\n  please enter Y or n: " ;;
+      [Yy]|"") eval "$_var=Y"; return ;;
+      [Nn])    eval "$_var=N"; return ;;
+      *)       printf "\r\033[K  please enter Y or n: " ;;
     esac
   done
 }
