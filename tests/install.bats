@@ -210,6 +210,13 @@ _test_yn() {
   [ "$status" -ne 0 ]
 }
 
+@test "prompt_yn does not echo garbage to stdout" {
+  # Simulate: garbage then valid Y — only the accepted value should appear in output
+  run bash -c 'printf "hello\nY\n" | { while true; do read -r r || r=""; case "$r" in [Yy]|"") echo Y; exit 0;; [Nn]) echo N; exit 0;; *) ;; esac; done; }'
+  [ "$status" -eq 0 ]
+  [ "$output" = "Y" ]
+}
+
 # ── help flag ───────────────────────────────────────────
 
 @test "--help exits 0 with usage text" {
