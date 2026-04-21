@@ -41,6 +41,7 @@ A single bottom-strip panel designed for a tmux split alongside your Claude Code
 - **Am I about to lock up?** -- CPU, MEM, and SWAP sparklines with severity coloring. Green is fine, yellow means watch it, red means act now.
 - **Which session is the problem?** -- Each diamond is a Claude Code session. Color tracks the compilation dance: idle (gray), language spinning up (yellow), build tools running (orange), shell explosion (red, 30+ processes).
 - **How many agents are running?** -- Breathing hexagons on the headline, one per active subagent. Pulsing means alive.
+- **How much battery is left?** -- Braille fuel gauge with severity coloring and time remaining. Charging shows a breathing ⚡. Collapses on desktops with no battery.
 - **What's eating resources?** -- Live process counts by category (`build:003 shell:087`). Runtime labels (`node`, `go`, `rust`) appear when those processes are active and disappear when they're not.
 - **System vitals** -- CPU/MEM/SWAP/GPU gauges, spawn/death rates, network connectivity.
 
