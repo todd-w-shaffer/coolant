@@ -52,6 +52,7 @@ type AppState struct {
 	// Agent tracking (from JSONL events, not process discovery)
 	activeAgents    map[string]time.Time // agent_id → start timestamp
 	completedAgents int                  // monotonic count of agents that received a stop event
+	epoch           time.Time            // model init time — only count completions after this
 
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
@@ -76,6 +77,7 @@ func NewAppState() *AppState {
 		SmoothedCats:   make(map[string]float64),
 		scratchPIDs:    make(map[int]bool),
 		activeAgents:   make(map[string]time.Time),
+		epoch:          time.Now(),
 	}
 }
 
@@ -267,7 +269,9 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 		s.activeAgents[ev.AgentID] = ev.Timestamp
 	case collector.EventAgentStop:
 		if _, tracked := s.activeAgents[ev.AgentID]; tracked {
-			s.completedAgents++
+			if !ev.Timestamp.Before(s.epoch) {
+				s.completedAgents++
+			}
 		}
 		delete(s.activeAgents, ev.AgentID)
 	}

@@ -139,6 +139,9 @@ func (b *BreatheDots) prepareDots(maxDots int) (frames []dotFrame, sweepPos floa
 	kittCount := staleCount
 	if b.highScore {
 		kittCount = b.completedCount
+		if kittCount > config.KITTMaxDots {
+			kittCount = config.KITTMaxDots
+		}
 	}
 	sweepPos = triangleWave(b.staleSweep, kittCount)
 	return frames, sweepPos, staleCount
@@ -211,8 +214,12 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 	}
 
 	if b.highScore && b.completedCount > 0 {
+		renderCount := b.completedCount
+		if renderCount > config.KITTMaxDots {
+			renderCount = config.KITTMaxDots
+		}
 		hasPrior := len(frames) > 0
-		for ci := 0; ci < b.completedCount; ci++ {
+		for ci := 0; ci < renderCount; ci++ {
 			brightness := b.highscoreCompletedBrightness(ci, sweepPos)
 			needSep := hasPrior || ci > 0
 			b.writeDot(&buf, &visWidth, glyphFilled, brightness, bg, needSep)
@@ -247,7 +254,11 @@ func (b *BreatheDots) RenderSplit(glyphHollow, glyphMid, glyphFilled string, bg 
 	}
 
 	if b.highScore && b.completedCount > 0 {
-		for ci := 0; ci < b.completedCount; ci++ {
+		renderCount := b.completedCount
+		if renderCount > config.KITTMaxDots {
+			renderCount = config.KITTMaxDots
+		}
+		for ci := 0; ci < renderCount; ci++ {
 			brightness := b.highscoreCompletedBrightness(ci, sweepPos)
 			b.writeDot(&ghostBuf, &ghostWidth, glyphFilled, brightness, bg, ghostSeen)
 			ghostSeen = true

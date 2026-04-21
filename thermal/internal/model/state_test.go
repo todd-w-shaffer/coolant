@@ -577,6 +577,39 @@ func TestCompletedAgentsIncrementsOnStop(t *testing.T) {
 	}
 }
 
+func TestCompletedAgentsIgnoresHistoricalStops(t *testing.T) {
+	s := NewAppState()
+	past := s.CompletedAgentCount()
+
+	// Historical events (before epoch) should populate activeAgents but
+	// not increment completedAgents.
+	historical := time.Now().Add(-10 * time.Minute)
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: historical, Event: collector.EventAgentStart,
+		AgentID: "old1", AgentType: "researcher",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: historical.Add(time.Minute), Event: collector.EventAgentStop,
+		AgentID: "old1", AgentType: "researcher",
+	})
+	if s.CompletedAgentCount() != past {
+		t.Errorf("historical stop incremented CompletedAgents: got %d, want %d", s.CompletedAgentCount(), past)
+	}
+
+	// Live event (after epoch) should increment.
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStart,
+		AgentID: "new1", AgentType: "coder",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "new1", AgentType: "coder",
+	})
+	if s.CompletedAgentCount() != past+1 {
+		t.Errorf("live stop did not increment CompletedAgents: got %d, want %d", s.CompletedAgentCount(), past+1)
+	}
+}
+
 func TestCompletedAgentsIgnoresUnknownStop(t *testing.T) {
 	s := NewAppState()
 

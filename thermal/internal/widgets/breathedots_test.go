@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
@@ -331,6 +332,28 @@ func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
 
 	if w2 <= w1 {
 		t.Errorf("completed dot width didn't grow: %d → %d", w1, w2)
+	}
+}
+
+func TestBreatheDotHighScoreCapsAtMax(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetCompletedCount(config.KITTMaxDots + 20)
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+
+	_, w := b.Render("⬡", "⏣", "⬢", nil, 0)
+	// Each dot is 1 cell + 1 space separator (except first). Max visible = 2*max - 1.
+	maxVisible := 2*config.KITTMaxDots - 1
+	if w > maxVisible {
+		t.Errorf("rendered width %d exceeds cap %d (max %d dots)", w, maxVisible, config.KITTMaxDots)
+	}
+
+	// Also verify RenderSplit respects the cap
+	_, _, gw, _ := b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	if gw > maxVisible {
+		t.Errorf("RenderSplit ghost width %d exceeds cap %d", gw, maxVisible)
 	}
 }
 
