@@ -86,10 +86,18 @@ const (
 // ── History / buffer sizes ─────────────────────────────────
 
 const (
-	MaxHistory     = 600 // ~90s at 150ms — fills sparklines on wide terminals
-	MaxAlerts      = 100 // scrolling alert log cap
-	RateWindowSize = 10  // rolling window for spawn/death rate
+	MaxHistory      = 600 // ~90s at 150ms — fills sparklines on wide terminals
+	MaxAlerts       = 100 // scrolling alert log cap
+	RateWindowSize  = 10  // rolling window for spawn/death rate
+	MaxAgentRecords = 500 // ring buffer cap for completed agent records
 )
+
+// BurstGapThreshold is the minimum gap between agent starts that separates
+// two burst groups. Agents starting within this window share a BurstID.
+const BurstGapThreshold = 3 * time.Second
+
+// MaxGateEvents is the ring buffer cap for gate.cap + gate.suppress events.
+const MaxGateEvents = 64
 
 // ── Threat classification ──────────────────────────────────
 

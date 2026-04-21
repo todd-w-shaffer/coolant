@@ -1,6 +1,8 @@
 package model
 
 import (
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -285,6 +287,596 @@ func TestOnlineLogTracksPerTick(t *testing.T) {
 	for i, w := range want {
 		if got[i] != w {
 			t.Errorf("OnlineLog[%d] = %v, want %v", i, got[i], w)
+		}
+	}
+}
+
+func TestAgentStartCreatesRecord(t *testing.T) {
+	s := NewAppState()
+	ev := collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStart,
+		AgentID:   "abc123",
+		SessionID: "sess-001",
+		AgentType: "researcher",
+		Project:   "/home/user/project",
+		Cwd:       "/home/user/project/src",
+	}
+	s.HandleEvent(ev)
+
+	if s.AgentCount() != 1 {
+		t.Fatalf("AgentCount = %d, want 1", s.AgentCount())
+	}
+
+	records := s.ActiveRecords()
+	if len(records) != 1 {
+		t.Fatalf("ActiveRecords len = %d, want 1", len(records))
+	}
+	rec := records[0]
+	if rec.AgentID != "abc123" {
+		t.Errorf("AgentID = %q, want %q", rec.AgentID, "abc123")
+	}
+	if rec.SessionID != "sess-001" {
+		t.Errorf("SessionID = %q, want %q", rec.SessionID, "sess-001")
+	}
+	if rec.AgentType != "researcher" {
+		t.Errorf("AgentType = %q, want %q", rec.AgentType, "researcher")
+	}
+	if rec.Project != "/home/user/project" {
+		t.Errorf("Project = %q, want %q", rec.Project, "/home/user/project")
+	}
+	if rec.Cwd != "/home/user/project/src" {
+		t.Errorf("Cwd = %q, want %q", rec.Cwd, "/home/user/project/src")
+	}
+	if rec.StartTime.IsZero() {
+		t.Error("StartTime should not be zero")
+	}
+}
+
+func TestAgentStopCompletesRecord(t *testing.T) {
+	s := NewAppState()
+	startTime := time.Now()
+	stopTime := startTime.Add(30 * time.Second)
+
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: startTime, Event: collector.EventAgentStart,
+		AgentID: "rec-001", SessionID: "sess-1", AgentType: "coder",
+		Project: "/proj", Cwd: "/proj/src",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: stopTime, Event: collector.EventAgentStop,
+		AgentID: "rec-001", AgentType: "coder",
+		PermissionMode: "auto", TranscriptPath: "/tmp/transcript.jsonl",
+	})
+
+	if len(s.ActiveRecords()) != 0 {
+		t.Errorf("ActiveRecords len = %d, want 0 after stop", len(s.ActiveRecords()))
+	}
+
+	completed := s.CompletedRecords()
+	if len(completed) != 1 {
+		t.Fatalf("CompletedRecords len = %d, want 1", len(completed))
+	}
+	rec := completed[0]
+	if rec.Duration != 30*time.Second {
+		t.Errorf("Duration = %v, want 30s", rec.Duration)
+	}
+	if rec.StopTime != stopTime {
+		t.Errorf("StopTime = %v, want %v", rec.StopTime, stopTime)
+	}
+	if rec.PermissionMode != "auto" {
+		t.Errorf("PermissionMode = %q, want %q", rec.PermissionMode, "auto")
+	}
+	if rec.TranscriptPath != "/tmp/transcript.jsonl" {
+		t.Errorf("TranscriptPath = %q, want %q", rec.TranscriptPath, "/tmp/transcript.jsonl")
+	}
+	if s.CompletedAgentCount() != 1 {
+		t.Errorf("CompletedAgentCount = %d, want 1", s.CompletedAgentCount())
+	}
+}
+
+func TestPurgeStaleAgentsPushesRecords(t *testing.T) {
+	s := NewAppState()
+
+	// Two stale, one fresh
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now().Add(-10 * time.Minute),
+		Event:     collector.EventAgentStart,
+		AgentID:   "stale-001", AgentType: "researcher",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now().Add(-10 * time.Minute),
+		Event:     collector.EventAgentStart,
+		AgentID:   "stale-002", AgentType: "reviewer",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStart,
+		AgentID:   "fresh-001", AgentType: "coder",
+	})
+
+	s.PurgeStaleAgents()
+
+	// Purged records should appear in completed with Purged: true
+	completed := s.CompletedRecords()
+	if len(completed) != 2 {
+		t.Fatalf("CompletedRecords len = %d, want 2 after purge", len(completed))
+	}
+	for _, rec := range completed {
+		if !rec.Purged {
+			t.Errorf("record %q should have Purged=true", rec.AgentID)
+		}
+		if rec.StopTime.IsZero() {
+			t.Errorf("record %q should have StopTime set to purge cutoff", rec.AgentID)
+		}
+	}
+
+	// Purge should NOT increment totalCompleted (avoids phantom KITT dots)
+	if s.CompletedAgentCount() != 0 {
+		t.Errorf("CompletedAgentCount = %d, want 0 (purge doesn't count)", s.CompletedAgentCount())
+	}
+
+	// Fresh agent still active
+	if s.AgentCount() != 1 {
+		t.Errorf("AgentCount = %d, want 1", s.AgentCount())
+	}
+}
+
+func TestRingBufferEvictsOldest(t *testing.T) {
+	s := NewAppState()
+	// Push MaxAgentRecords + 1 completed records, verify oldest is evicted
+	for i := 0; i < config.MaxAgentRecords+1; i++ {
+		id := "agent-" + strconv.Itoa(i)
+		start := time.Now()
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start, Event: collector.EventAgentStart,
+			AgentID: id, AgentType: "worker",
+		})
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(time.Second), Event: collector.EventAgentStop,
+			AgentID: id, AgentType: "worker",
+		})
+	}
+
+	completed := s.CompletedRecords()
+	if len(completed) != config.MaxAgentRecords {
+		t.Fatalf("CompletedRecords len = %d, want %d", len(completed), config.MaxAgentRecords)
+	}
+	// Oldest should be agent-1 (agent-0 was evicted)
+	if completed[0].AgentID != "agent-1" {
+		t.Errorf("oldest record = %q, want %q (agent-0 should be evicted)", completed[0].AgentID, "agent-1")
+	}
+	// Counter should still be monotonic
+	if s.CompletedAgentCount() != config.MaxAgentRecords+1 {
+		t.Errorf("CompletedAgentCount = %d, want %d", s.CompletedAgentCount(), config.MaxAgentRecords+1)
+	}
+}
+
+func TestLookupAgent(t *testing.T) {
+	s := NewAppState()
+	start := time.Now()
+
+	// Start two agents
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "active-1", AgentType: "coder",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "done-1", AgentType: "reviewer",
+	})
+	// Stop one
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(10 * time.Second), Event: collector.EventAgentStop,
+		AgentID: "done-1", AgentType: "reviewer",
+	})
+
+	// Look up the active one — should have zero StopTime
+	rec := s.LookupAgent("active-1")
+	if rec == nil {
+		t.Fatal("LookupAgent(active-1) returned nil")
+	}
+	if !rec.StopTime.IsZero() {
+		t.Errorf("active agent StopTime = %v, want zero", rec.StopTime)
+	}
+
+	// Look up the completed one — should have non-zero Duration
+	rec = s.LookupAgent("done-1")
+	if rec == nil {
+		t.Fatal("LookupAgent(done-1) returned nil")
+	}
+	if rec.Duration != 10*time.Second {
+		t.Errorf("completed agent Duration = %v, want 10s", rec.Duration)
+	}
+
+	// Look up nonexistent — should be nil
+	if s.LookupAgent("nope") != nil {
+		t.Error("LookupAgent(nope) should return nil")
+	}
+}
+
+func TestCounterResetClearsActiveRecords(t *testing.T) {
+	s := NewAppState()
+	start := time.Now()
+
+	// Start 2 agents
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "a1", AgentType: "coder",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "a2", AgentType: "reviewer",
+	})
+
+	if s.AgentCount() != 2 {
+		t.Fatalf("AgentCount = %d, want 2 before reset", s.AgentCount())
+	}
+
+	// counter.reset
+	resetTime := start.Add(time.Minute)
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: resetTime, Event: collector.EventCounterReset,
+	})
+
+	if s.AgentCount() != 0 {
+		t.Errorf("AgentCount = %d, want 0 after reset", s.AgentCount())
+	}
+
+	completed := s.CompletedRecords()
+	if len(completed) != 2 {
+		t.Fatalf("CompletedRecords len = %d, want 2 after reset", len(completed))
+	}
+	for _, rec := range completed {
+		if !rec.Purged {
+			t.Errorf("record %q should have Purged=true after reset", rec.AgentID)
+		}
+		if rec.StopTime != resetTime {
+			t.Errorf("record %q StopTime = %v, want reset timestamp", rec.AgentID, rec.StopTime)
+		}
+	}
+
+	// Purge from reset should NOT increment totalCompleted
+	if s.CompletedAgentCount() != 0 {
+		t.Errorf("CompletedAgentCount = %d, want 0 (reset doesn't count)", s.CompletedAgentCount())
+	}
+}
+
+func TestOrphanStopCreatesRecord(t *testing.T) {
+	s := NewAppState()
+
+	// Stop with no prior start — orphan
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "orphan-1", AgentType: "ghost",
+		SessionID: "sess-x", Project: "/proj",
+		PermissionMode: "auto", TranscriptPath: "/tmp/t.jsonl",
+	})
+
+	completed := s.CompletedRecords()
+	if len(completed) != 1 {
+		t.Fatalf("CompletedRecords len = %d, want 1", len(completed))
+	}
+	rec := completed[0]
+	if !rec.Orphan {
+		t.Error("record should have Orphan=true")
+	}
+	if rec.Duration != 0 {
+		t.Errorf("orphan Duration = %v, want 0 (no start to compute from)", rec.Duration)
+	}
+	if rec.PermissionMode != "auto" {
+		t.Errorf("PermissionMode = %q, want %q", rec.PermissionMode, "auto")
+	}
+	if s.OrphanStopCount() != 1 {
+		t.Errorf("OrphanStopCount = %d, want 1", s.OrphanStopCount())
+	}
+	if s.CompletedAgentCount() != 1 {
+		t.Errorf("CompletedAgentCount = %d, want 1 (orphans count)", s.CompletedAgentCount())
+	}
+
+	// Normal start+stop should not affect orphan count
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStart,
+		AgentID: "normal-1", AgentType: "coder",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "normal-1", AgentType: "coder",
+	})
+	if s.OrphanStopCount() != 1 {
+		t.Errorf("OrphanStopCount = %d after normal stop, want 1", s.OrphanStopCount())
+	}
+}
+
+func TestPeakConcurrency(t *testing.T) {
+	s := NewAppState()
+	start := time.Now()
+
+	// Start 3 agents
+	for i := 0; i < 3; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(time.Duration(i) * time.Second),
+			Event:     collector.EventAgentStart,
+			AgentID:   "peak-" + strconv.Itoa(i), AgentType: "worker",
+		})
+	}
+	if s.PeakConcurrency() != 3 {
+		t.Errorf("PeakConcurrency = %d, want 3", s.PeakConcurrency())
+	}
+
+	// Stop 2, start 1 — peak should still be 3 (high-water mark)
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(5 * time.Second), Event: collector.EventAgentStop,
+		AgentID: "peak-0", AgentType: "worker",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(6 * time.Second), Event: collector.EventAgentStop,
+		AgentID: "peak-1", AgentType: "worker",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(7 * time.Second), Event: collector.EventAgentStart,
+		AgentID: "peak-3", AgentType: "worker",
+	})
+	if s.PeakConcurrency() != 3 {
+		t.Errorf("PeakConcurrency after partial stop = %d, want 3", s.PeakConcurrency())
+	}
+}
+
+func TestBurstDetection(t *testing.T) {
+	s := NewAppState()
+	start := time.Now()
+
+	// Burst 0: 3 agents within 3 seconds
+	for i := 0; i < 3; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(time.Duration(i) * time.Second),
+			Event:     collector.EventAgentStart,
+			AgentID:   "b0-" + strconv.Itoa(i), AgentType: "worker",
+		})
+	}
+
+	// Gap > BurstGapThreshold, then burst 1: 2 agents
+	for i := 0; i < 2; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(6*time.Second + time.Duration(i)*time.Second),
+			Event:     collector.EventAgentStart,
+			AgentID:   "b1-" + strconv.Itoa(i), AgentType: "worker",
+		})
+	}
+
+	// Stop all and check BurstIDs via completed records
+	for i := 0; i < 3; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(10 * time.Second), Event: collector.EventAgentStop,
+			AgentID: "b0-" + strconv.Itoa(i), AgentType: "worker",
+		})
+	}
+	for i := 0; i < 2; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(10 * time.Second), Event: collector.EventAgentStop,
+			AgentID: "b1-" + strconv.Itoa(i), AgentType: "worker",
+		})
+	}
+
+	completed := s.CompletedRecords()
+	for _, rec := range completed {
+		switch {
+		case rec.AgentID[:2] == "b0":
+			if rec.BurstID != 0 {
+				t.Errorf("agent %q BurstID = %d, want 0", rec.AgentID, rec.BurstID)
+			}
+		case rec.AgentID[:2] == "b1":
+			if rec.BurstID != 1 {
+				t.Errorf("agent %q BurstID = %d, want 1", rec.AgentID, rec.BurstID)
+			}
+		}
+	}
+}
+
+func TestTranscriptStat(t *testing.T) {
+	s := NewAppState()
+	start := time.Now()
+
+	// Create a temp file with known content
+	dir := t.TempDir()
+	path := dir + "/transcript.jsonl"
+	data := make([]byte, 1234)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Start + stop with transcript path pointing to the temp file
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "t1", AgentType: "coder",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(time.Second), Event: collector.EventAgentStop,
+		AgentID: "t1", AgentType: "coder", TranscriptPath: path,
+	})
+
+	completed := s.CompletedRecords()
+	if len(completed) != 1 {
+		t.Fatalf("CompletedRecords len = %d, want 1", len(completed))
+	}
+	if completed[0].TranscriptBytes != 1234 {
+		t.Errorf("TranscriptBytes = %d, want 1234", completed[0].TranscriptBytes)
+	}
+
+	// Stop with nonexistent path — TranscriptBytes should be 0
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "t2", AgentType: "reviewer",
+	})
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(time.Second), Event: collector.EventAgentStop,
+		AgentID: "t2", AgentType: "reviewer", TranscriptPath: "/nonexistent/path.jsonl",
+	})
+
+	completed = s.CompletedRecords()
+	if len(completed) != 2 {
+		t.Fatalf("CompletedRecords len = %d, want 2", len(completed))
+	}
+	// Newest is last
+	if completed[1].TranscriptBytes != 0 {
+		t.Errorf("TranscriptBytes for missing file = %d, want 0", completed[1].TranscriptBytes)
+	}
+}
+
+func TestOrphanTranscriptStat(t *testing.T) {
+	s := NewAppState()
+
+	dir := t.TempDir()
+	path := dir + "/orphan-transcript.jsonl"
+	data := make([]byte, 567)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Orphan stop with transcript path
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(), Event: collector.EventAgentStop,
+		AgentID: "orphan-t", AgentType: "ghost", TranscriptPath: path,
+	})
+
+	completed := s.CompletedRecords()
+	if len(completed) != 1 {
+		t.Fatalf("CompletedRecords len = %d, want 1", len(completed))
+	}
+	if completed[0].TranscriptBytes != 567 {
+		t.Errorf("orphan TranscriptBytes = %d, want 567", completed[0].TranscriptBytes)
+	}
+}
+
+func TestGateEventBuffer(t *testing.T) {
+	s := NewAppState()
+	now := time.Now()
+
+	// Push 3 cap events and 1 suppress
+	for i := 0; i < 3; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			Event:     collector.EventGateCap,
+			Command:   "vitest", Rewritten: "vitest --maxWorkers=2",
+		})
+	}
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: now.Add(4 * time.Second),
+		Event:     collector.EventGateSuppress,
+		Command:   "tsc", Reason: "parallel mode",
+	})
+
+	events := s.GateEvents()
+	if len(events) != 4 {
+		t.Fatalf("GateEvents len = %d, want 4", len(events))
+	}
+	if s.GateCapCount() != 3 {
+		t.Errorf("GateCapCount = %d, want 3", s.GateCapCount())
+	}
+	if s.GateSuppressCount() != 1 {
+		t.Errorf("GateSuppressCount = %d, want 1", s.GateSuppressCount())
+	}
+}
+
+func TestCounterDrift(t *testing.T) {
+	s := NewAppState()
+	now := time.Now()
+
+	// Start an agent with AgentCount=1 — Go also has 1 active record → drift 0
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: now, Event: collector.EventAgentStart,
+		AgentID: "d1", AgentType: "coder", AgentCount: 1,
+	})
+	if s.CounterDrift() != 0 {
+		t.Errorf("drift after start = %d, want 0", s.CounterDrift())
+	}
+
+	// Orphan stop with AgentCount=2 — Go removes nothing (no match), bash says 2
+	// Go has 1 active → drift = 2 - 1 = 1
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: now.Add(time.Second), Event: collector.EventAgentStop,
+		AgentID: "unknown", AgentType: "ghost", AgentCount: 2,
+	})
+	if s.CounterDrift() != 1 {
+		t.Errorf("drift after orphan stop = %d, want 1", s.CounterDrift())
+	}
+
+	// Start another agent with AgentCount=2 — Go now has 2 active → drift 0
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: now.Add(2 * time.Second), Event: collector.EventAgentStart,
+		AgentID: "d2", AgentType: "reviewer", AgentCount: 2,
+	})
+	if s.CounterDrift() != 0 {
+		t.Errorf("drift after second start = %d, want 0", s.CounterDrift())
+	}
+}
+
+func TestGateEventBufferEviction(t *testing.T) {
+	s := NewAppState()
+	now := time.Now()
+
+	// Push MaxGateEvents + 1 cap events — oldest should be evicted
+	for i := 0; i < config.MaxGateEvents+1; i++ {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: now.Add(time.Duration(i) * time.Second),
+			Event:     collector.EventGateCap,
+			Command:   "vitest-" + strconv.Itoa(i),
+		})
+	}
+
+	events := s.GateEvents()
+	if len(events) != config.MaxGateEvents {
+		t.Fatalf("GateEvents len = %d, want %d", len(events), config.MaxGateEvents)
+	}
+	// Oldest should be vitest-1 (vitest-0 evicted)
+	if events[0].Command != "vitest-1" {
+		t.Errorf("oldest gate event = %q, want %q", events[0].Command, "vitest-1")
+	}
+	if s.GateCapCount() != config.MaxGateEvents {
+		t.Errorf("GateCapCount = %d, want %d", s.GateCapCount(), config.MaxGateEvents)
+	}
+}
+
+func TestBurstGapBoundary(t *testing.T) {
+	s := NewAppState()
+	start := time.Now()
+
+	// First agent
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start, Event: collector.EventAgentStart,
+		AgentID: "exact-0", AgentType: "worker",
+	})
+	// Second agent at exactly BurstGapThreshold — should stay in same burst (> not >=)
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(config.BurstGapThreshold), Event: collector.EventAgentStart,
+		AgentID: "exact-1", AgentType: "worker",
+	})
+	// Third agent 1ns past threshold — new burst
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: start.Add(config.BurstGapThreshold + config.BurstGapThreshold + 1),
+		Event:     collector.EventAgentStart,
+		AgentID:   "over-0", AgentType: "worker",
+	})
+
+	// Stop all to check BurstIDs
+	for _, id := range []string{"exact-0", "exact-1", "over-0"} {
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: start.Add(10 * time.Second), Event: collector.EventAgentStop,
+			AgentID: id, AgentType: "worker",
+		})
+	}
+
+	completed := s.CompletedRecords()
+	for _, rec := range completed {
+		switch rec.AgentID {
+		case "exact-0", "exact-1":
+			if rec.BurstID != 0 {
+				t.Errorf("agent %q BurstID = %d, want 0 (within threshold)", rec.AgentID, rec.BurstID)
+			}
+		case "over-0":
+			if rec.BurstID != 1 {
+				t.Errorf("agent %q BurstID = %d, want 1 (past threshold)", rec.AgentID, rec.BurstID)
+			}
 		}
 	}
 }
@@ -581,8 +1173,8 @@ func TestCompletedAgentsIgnoresHistoricalStops(t *testing.T) {
 	s := NewAppState()
 	past := s.CompletedAgentCount()
 
-	// Historical events (before epoch) should populate activeAgents but
-	// not increment completedAgents.
+	// Historical events (before epoch) should populate activeRecords but
+	// not increment totalCompleted.
 	historical := time.Now().Add(-10 * time.Minute)
 	s.HandleEvent(collector.GateEvent{
 		Timestamp: historical, Event: collector.EventAgentStart,
@@ -610,16 +1202,19 @@ func TestCompletedAgentsIgnoresHistoricalStops(t *testing.T) {
 	}
 }
 
-func TestCompletedAgentsIgnoresUnknownStop(t *testing.T) {
+func TestCompletedAgentsCountsOrphanStop(t *testing.T) {
 	s := NewAppState()
 
-	// Stop an agent that was never started — should not increment
+	// Stop an agent that was never started — orphan handling increments counter
 	s.HandleEvent(collector.GateEvent{
 		Timestamp: time.Now(), Event: collector.EventAgentStop,
 		AgentID: "phantom", AgentType: "ghost",
 	})
-	if s.CompletedAgentCount() != 0 {
-		t.Errorf("CompletedAgents = %d for unknown stop, want 0", s.CompletedAgentCount())
+	if s.CompletedAgentCount() != 1 {
+		t.Errorf("CompletedAgents = %d for orphan stop, want 1", s.CompletedAgentCount())
+	}
+	if s.OrphanStopCount() != 1 {
+		t.Errorf("OrphanStopCount = %d, want 1", s.OrphanStopCount())
 	}
 }
 
