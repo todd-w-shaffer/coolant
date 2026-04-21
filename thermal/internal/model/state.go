@@ -3,12 +3,38 @@
 package model
 
 import (
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
+
+// AgentRecord captures the full lifecycle of a single subagent,
+// populated incrementally: start-side fields on agent.start,
+// stop-side fields on agent.stop, enrichments in Phase 2.
+type AgentRecord struct {
+	// Start-side (populated on agent.start)
+	AgentID   string
+	SessionID string
+	AgentType string
+	Project   string
+	Cwd       string
+	StartTime time.Time
+	BurstID   int // Phase 2b: assigned on start, 0 until then
+
+	// Stop-side (populated on agent.stop, zero if still active)
+	StopTime       time.Time
+	Duration       time.Duration
+	PermissionMode string
+	TranscriptPath string
+
+	// Enrichments (Phase 2, zero-valued until populated)
+	TranscriptBytes int64 // Phase 2c: from os.Stat on stop
+	Orphan          bool  // Phase 2a: stop arrived with no matching start
+	Purged          bool  // set when PurgeStaleAgents evicts (never got a stop event)
+}
 
 // AlertEntry is a single alert with timestamp and severity.
 type AlertEntry struct {
@@ -50,9 +76,16 @@ type AppState struct {
 	scratchPIDs map[int]bool
 
 	// Agent tracking (from JSONL events, not process discovery)
-	activeAgents    map[string]time.Time // agent_id → start timestamp
-	completedAgents int                  // monotonic count of agents that received a stop event
-	epoch           time.Time            // model init time — only count completions after this
+	activeRecords    map[string]*AgentRecord          // agent_id → in-progress record
+	completedRecords *RingBuffer[AgentRecord]         // capped completed agents
+	totalCompleted   int                              // monotonic count — not capped by ring buffer
+	epoch            time.Time                        // model init time — only count completions after this
+	peakConcurrency  int                              // high-water mark of concurrent agents
+	orphanStops      int                              // monotonic count of stops with no matching start
+	burstCounter     int                              // monotonic within thermo lifetime, not reset on session reset
+	lastStartTime    time.Time                        // timestamp of most recent agent.start (for burst gap detection)
+	gateEvents       *RingBuffer[collector.GateEvent] // capped ring of gate.cap + gate.suppress events
+	counterDrift     int                              // latest divergence: positive = bash > Go
 
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
@@ -66,18 +99,20 @@ type AppState struct {
 // NewAppState creates an initialized AppState.
 func NewAppState() *AppState {
 	return &AppState{
-		History:        NewRingBuffer[collector.Snapshot](config.MaxHistory),
-		OnlineLog:      NewRingBuffer[bool](config.MaxHistory),
-		Alerts:         NewRingBuffer[AlertEntry](config.MaxAlerts),
-		recentSpawns:   NewRingBuffer[int](config.RateWindowSize),
-		recentDeaths:   NewRingBuffer[int](config.RateWindowSize),
-		TypeCounts:     make(map[string]int),
-		SmoothedCounts: make(map[string]float64),
-		CategoryCounts: make(map[string]int),
-		SmoothedCats:   make(map[string]float64),
-		scratchPIDs:    make(map[int]bool),
-		activeAgents:   make(map[string]time.Time),
-		epoch:          time.Now(),
+		History:          NewRingBuffer[collector.Snapshot](config.MaxHistory),
+		OnlineLog:        NewRingBuffer[bool](config.MaxHistory),
+		Alerts:           NewRingBuffer[AlertEntry](config.MaxAlerts),
+		recentSpawns:     NewRingBuffer[int](config.RateWindowSize),
+		recentDeaths:     NewRingBuffer[int](config.RateWindowSize),
+		TypeCounts:       make(map[string]int),
+		SmoothedCounts:   make(map[string]float64),
+		CategoryCounts:   make(map[string]int),
+		SmoothedCats:     make(map[string]float64),
+		scratchPIDs:      make(map[int]bool),
+		activeRecords:    make(map[string]*AgentRecord),
+		completedRecords: NewRingBuffer[AgentRecord](config.MaxAgentRecords),
+		gateEvents:       NewRingBuffer[collector.GateEvent](config.MaxGateEvents),
+		epoch:            time.Now(),
 	}
 }
 
@@ -262,18 +297,70 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 		s.addAlert(AlertEntry{Time: ev.Timestamp, Message: spec.msg(ev), Level: spec.level})
 	}
 
-	// Side effects beyond alerting
 	switch ev.Event {
 	case collector.EventAgentStart:
 		s.PluginActive = true
-		s.activeAgents[ev.AgentID] = ev.Timestamp
+		if !s.lastStartTime.IsZero() && ev.Timestamp.Sub(s.lastStartTime) > config.BurstGapThreshold {
+			s.burstCounter++
+		}
+		s.lastStartTime = ev.Timestamp
+		s.activeRecords[ev.AgentID] = &AgentRecord{
+			AgentID:   ev.AgentID,
+			SessionID: ev.SessionID,
+			AgentType: ev.AgentType,
+			Project:   ev.Project,
+			Cwd:       ev.Cwd,
+			StartTime: ev.Timestamp,
+			BurstID:   s.burstCounter,
+		}
+		if current := len(s.activeRecords); current > s.peakConcurrency {
+			s.peakConcurrency = current
+		}
+		s.counterDrift = ev.AgentCount - len(s.activeRecords)
 	case collector.EventAgentStop:
-		if _, tracked := s.activeAgents[ev.AgentID]; tracked {
+		if rec, tracked := s.activeRecords[ev.AgentID]; tracked {
+			rec.StopTime = ev.Timestamp
+			rec.Duration = ev.Timestamp.Sub(rec.StartTime)
+			rec.PermissionMode = ev.PermissionMode
+			rec.TranscriptPath = ev.TranscriptPath
+			rec.TranscriptBytes = statTranscript(rec.TranscriptPath)
 			if !ev.Timestamp.Before(s.epoch) {
-				s.completedAgents++
+				s.completedRecords.Push(*rec)
+				s.totalCompleted++
+			}
+			delete(s.activeRecords, ev.AgentID)
+		} else {
+			orphan := AgentRecord{
+				AgentID:        ev.AgentID,
+				SessionID:      ev.SessionID,
+				AgentType:      ev.AgentType,
+				Project:        ev.Project,
+				Cwd:            ev.Cwd,
+				StopTime:       ev.Timestamp,
+				PermissionMode: ev.PermissionMode,
+				TranscriptPath: ev.TranscriptPath,
+				Orphan:         true,
+			}
+			orphan.TranscriptBytes = statTranscript(orphan.TranscriptPath)
+			if !ev.Timestamp.Before(s.epoch) {
+				s.completedRecords.Push(orphan)
+				s.totalCompleted++
+				s.orphanStops++
 			}
 		}
-		delete(s.activeAgents, ev.AgentID)
+		s.counterDrift = ev.AgentCount - len(s.activeRecords)
+	case collector.EventGateCap, collector.EventGateSuppress:
+		s.gateEvents.Push(ev)
+	case collector.EventCounterReset:
+		// New session — move all active records to completed as purged.
+		// Does NOT increment totalCompleted (same rationale as PurgeStaleAgents).
+		for id, rec := range s.activeRecords {
+			rec.Purged = true
+			rec.StopTime = ev.Timestamp
+			s.completedRecords.Push(*rec)
+			delete(s.activeRecords, id)
+		}
+		s.peakConcurrency = 0
 	}
 }
 
@@ -294,7 +381,7 @@ func (s *AppState) StableQuip() string {
 
 // AgentCount returns the total number of tracked subagents (fresh + stale).
 func (s *AppState) AgentCount() int {
-	return len(s.activeAgents)
+	return len(s.activeRecords)
 }
 
 // FreshAgentCount returns agents started within the staleness threshold.
@@ -309,16 +396,18 @@ func (s *AppState) StaleAgentCount() int {
 	return stale
 }
 
-// CompletedAgentCount returns the monotonic count of agents that received a stop event.
+// CompletedAgentCount returns the monotonic count of agents that received
+// a confirmed stop event. Not capped by the ring buffer — this is the
+// counter KITT highscore reads.
 func (s *AppState) CompletedAgentCount() int {
-	return s.completedAgents
+	return s.totalCompleted
 }
 
-// agentCountSplit does a single pass over activeAgents with one time.Now() call.
+// agentCountSplit does a single pass over activeRecords with one time.Now() call.
 func (s *AppState) agentCountSplit() (fresh, stale int) {
 	cutoff := time.Now().Add(-config.AgentStaleThreshold)
-	for _, started := range s.activeAgents {
-		if started.After(cutoff) {
+	for _, rec := range s.activeRecords {
+		if rec.StartTime.After(cutoff) {
 			fresh++
 		} else {
 			stale++
@@ -327,12 +416,92 @@ func (s *AppState) agentCountSplit() (fresh, stale int) {
 	return
 }
 
-// PurgeStaleAgents removes all agents that have exceeded the staleness threshold.
+// PeakConcurrency returns the high-water mark of concurrent active agents.
+// Reset on counter.reset (per-session metric).
+func (s *AppState) PeakConcurrency() int {
+	return s.peakConcurrency
+}
+
+// OrphanStopCount returns the monotonic count of stop events that had
+// no matching start (likely pre-epoch agents or hook race conditions).
+func (s *AppState) OrphanStopCount() int {
+	return s.orphanStops
+}
+
+// CounterDrift returns the latest divergence between the bash counter
+// file and Go's agent tracking. Positive = bash thinks more agents
+// exist than Go does.
+func (s *AppState) CounterDrift() int {
+	return s.counterDrift
+}
+
+// GateEvents returns a slice of gate.cap + gate.suppress events from the ring buffer.
+func (s *AppState) GateEvents() []collector.GateEvent {
+	return s.gateEvents.Slice()
+}
+
+// GateCapCount returns the number of gate.cap events in the ring buffer.
+func (s *AppState) GateCapCount() int { return s.gateEventCount(collector.EventGateCap) }
+
+// GateSuppressCount returns the number of gate.suppress events in the ring buffer.
+func (s *AppState) GateSuppressCount() int { return s.gateEventCount(collector.EventGateSuppress) }
+
+func (s *AppState) gateEventCount(kind string) int {
+	count := 0
+	for i := 0; i < s.gateEvents.Len(); i++ {
+		if s.gateEvents.At(i).Event == kind {
+			count++
+		}
+	}
+	return count
+}
+
+// ActiveRecords returns a copy of all in-progress agent records.
+func (s *AppState) ActiveRecords() []AgentRecord {
+	if len(s.activeRecords) == 0 {
+		return nil
+	}
+	out := make([]AgentRecord, 0, len(s.activeRecords))
+	for _, rec := range s.activeRecords {
+		out = append(out, *rec)
+	}
+	return out
+}
+
+// CompletedRecords returns a slice of completed agent records from the ring buffer.
+func (s *AppState) CompletedRecords() []AgentRecord {
+	return s.completedRecords.Slice()
+}
+
+// LookupAgent returns a single record by ID, searching active then completed.
+// Returns nil if not found. The returned pointer is to a copy — callers
+// cannot mutate the ring buffer or active map through it.
+func (s *AppState) LookupAgent(id string) *AgentRecord {
+	if rec, ok := s.activeRecords[id]; ok {
+		cp := *rec
+		return &cp
+	}
+	// Linear scan completed records newest-first. 500-element scan is <1μs.
+	for i := s.completedRecords.Len() - 1; i >= 0; i-- {
+		rec := s.completedRecords.At(i)
+		if rec.AgentID == id {
+			return &rec
+		}
+	}
+	return nil
+}
+
+// PurgeStaleAgents removes agents that have exceeded the staleness threshold.
+// Purged records are pushed to completedRecords with Purged: true but do NOT
+// increment totalCompleted — purge is cleanup, not confirmed completion.
 func (s *AppState) PurgeStaleAgents() {
 	cutoff := time.Now().Add(-config.AgentStaleThreshold)
-	for id, started := range s.activeAgents {
-		if !started.After(cutoff) {
-			delete(s.activeAgents, id)
+	for id, rec := range s.activeRecords {
+		if !rec.StartTime.After(cutoff) {
+			rec.Purged = true
+			rec.StopTime = cutoff
+			s.completedRecords.Push(*rec)
+			delete(s.activeRecords, id)
 		}
 	}
 }
@@ -370,6 +539,18 @@ func (s *AppState) CompositeHeat() float64 {
 
 func (s *AppState) addAlert(a AlertEntry) {
 	s.Alerts.Push(a)
+}
+
+// statTranscript returns the file size for a local transcript path,
+// or 0 if the path is empty or the file doesn't exist.
+func statTranscript(path string) int64 {
+	if path == "" {
+		return 0
+	}
+	if info, err := os.Stat(path); err == nil {
+		return info.Size()
+	}
+	return 0
 }
 
 func countAlpha(string) float64 { return config.CountSmoothAlpha }
