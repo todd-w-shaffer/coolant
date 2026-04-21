@@ -54,26 +54,27 @@ const (
 
 // Agent icon breathing animation.
 const (
-	BreatheMinBright = 0.25  // dimmest point of breathing cycle
-	BreatheMaxBright = 1.0   // brightest point
-	BreathePhaseStep = 0.105 // radians per AnimTick (~2s cycle at 30fps: 2π/60)
-	BreatheFadeEps   = 0.01  // spring position below which a dying icon is removed
-	BreatheStaleRate = 0.3   // phase advance multiplier for stale (orphaned) dots
-	BreatheStaleDim  = 0.35  // brightness multiplier for stale dots
+	BreatheMinBright = 0.25 // dimmest point of breathing cycle
+	BreatheMaxBright = 1.0  // brightest point
+	BreathePhaseStep = 0.14 // radians per AnimTick (~1.5s cycle at 30fps: 2π/45)
+	BreatheFadeEps   = 0.01 // spring position below which a dying icon is removed
+	BreatheStaleRate = 0.3  // phase advance multiplier for stale (orphaned) dots
+	BreatheStaleDim  = 0.35 // brightness multiplier for stale dots
 )
 
 // KITT scanner (stale ghost dots / highscore completed dots).
 const (
-	KITTSweepRate    = 0.04 // sweep position advance per AnimTick (~3s per full sweep)
-	KITTAmbient      = 0.15 // floor brightness at sweep edges
-	KITTPeak         = 0.85 // peak contribution above ambient
-	KITTSigmaSq      = 0.8  // gaussian width (sigma²) — tighter = sharper spotlight
-	KITTSingleBright = 0.8  // brightness multiplier when only one dot (no sweep)
+	KITTSweepRate    = 0.025 // sweep position advance per AnimTick
+	KITTAmbient      = 0.15  // floor brightness at sweep edges
+	KITTPeak         = 0.85  // peak contribution above ambient
+	KITTSigmaSq      = 0.8   // gaussian width (sigma²) — tighter = sharper spotlight
+	KITTSingleBright = 0.8   // brightness multiplier when only one dot (no sweep)
+	KITTMaxDots      = 12    // cap rendered completed/ghost dots to prevent overflow
 )
 
 // Tidal wave (active agent dots).
 const (
-	TidalPhaseStep    = 0.025 // phase advance per AnimTick (~8s per full wave)
+	TidalPhaseStep    = 0.015 // phase advance per AnimTick (~14s per full wave)
 	TidalWaveMix      = 0.85  // tidal wave weight in brightness blend
 	TidalBreathMix    = 0.15  // individual breath weight in brightness blend
 	TidalBrightFloor  = 0.5   // minimum brightness for active dots
@@ -200,8 +201,8 @@ const BuildShellEmberDecay = 2 * time.Second
 
 // Breathe period (seconds) — slow at idle, fast at meltdown.
 const (
-	BloomBreatheSecCool = 4.5
-	BloomBreatheSecHot  = 1.6
+	BloomBreatheSecCool = 6.0
+	BloomBreatheSecHot  = 2.2
 )
 
 // Scale amplitude — the ± fractional ellipse-radius expansion per breath.
