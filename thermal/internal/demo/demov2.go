@@ -276,17 +276,30 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			online = false
 		}
 
+		// Synthetic battery: drains from 65% across the arc, giving the
+		// battery cell a visible narrative even in --demo mode.
+		battPct := 65.0 - float64(arcTick)*0.5
+		if battPct < 3 {
+			battPct = 3
+		}
+		battState := collector.BatteryDischarging
+		battRemaining := time.Duration(battPct/100.0*6.0) * time.Hour
+
 		snap := collector.Snapshot{
 			System: collector.SystemStats{
-				CPUPercent:     cpuPct,
-				MemUsedBytes:   memUsed,
-				MemTotalBytes:  totalMem,
-				SwapUsedBytes:  swapUsed,
-				SwapTotalBytes: 8 * model.GB,
-				Decompressions: decomps,
-				GPUPercent:     gpuPct,
-				NCPUs:          8,
-				Timestamp:      time.Now(),
+				CPUPercent:           cpuPct,
+				MemUsedBytes:         memUsed,
+				MemTotalBytes:        totalMem,
+				SwapUsedBytes:        swapUsed,
+				SwapTotalBytes:       8 * model.GB,
+				Decompressions:       decomps,
+				GPUPercent:           gpuPct,
+				NCPUs:                8,
+				Timestamp:            time.Now(),
+				BatteryPresent:       true,
+				BatteryPercent:       battPct,
+				BatteryState:         battState,
+				BatteryTimeRemaining: battRemaining,
 			},
 			Sessions:  sessions,
 			AllProcs:  procs,
