@@ -53,16 +53,16 @@ func TestBattery_DischargingRender(t *testing.T) {
 		t.Errorf("top row missing 47%%: %q", topStrip)
 	}
 	// Bot row should contain time remaining
-	if !strings.Contains(botStrip, "2h57m") {
-		t.Errorf("bot row missing 2h57m: %q", botStrip)
+	if !strings.Contains(botStrip, "3.0h") {
+		t.Errorf("bot row missing 3.0h: %q", botStrip)
 	}
 }
 
 func TestBattery_BrailleLevelMapping(t *testing.T) {
 	tests := []struct {
 		pct        float64
-		wantTop    int // top half level 0-4
-		wantBottom int // bottom half level 0-4
+		wantTop    int // top half fill level 0-4
+		wantBottom int // bottom half fill level 0-4
 	}{
 		{0, 0, 0},
 		{12, 0, 1},
@@ -70,18 +70,44 @@ func TestBattery_BrailleLevelMapping(t *testing.T) {
 		{50, 0, 4},
 		{63, 1, 4},
 		{87, 3, 4},
-		{100, 4, 4},
+		{100, 3, 4}, // capped at level 7 to preserve nipple shape
 	}
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			topR, botR := brailleGauge(tt.pct)
-			gotTop := decodeBrailleLevel(topR)
-			gotBot := decodeBrailleLevel(botR)
-			if gotTop != tt.wantTop || gotBot != tt.wantBottom {
-				t.Errorf("pct=%.0f: got top=%d bot=%d, want top=%d bot=%d",
-					tt.pct, gotTop, gotBot, tt.wantTop, tt.wantBottom)
+			_, _, _, botL, _, _ := brailleBattery(tt.pct)
+			// Bottom chars have pure fill (no outline bits).
+			gotBot := decodeBrailleLevel(botL)
+			if gotBot != tt.wantBottom {
+				t.Errorf("pct=%.0f: bot level=%d, want %d", tt.pct, gotBot, tt.wantBottom)
 			}
 		})
+	}
+}
+
+func TestBattery_NippleAlwaysPresent(t *testing.T) {
+	// The center top char must always include the nipple bits,
+	// even at 0% fill.
+	for _, pct := range []float64{0, 25, 50, 75, 100} {
+		_, topC, _, _, _, _ := brailleBattery(pct)
+		bits := topC & 0xFF
+		// Nipple = dots 1+4 (top row of center char)
+		if bits&0x01 == 0 || bits&0x08 == 0 { // dots 1 and 4 (terminal at top)
+			t.Errorf("pct=%.0f: center top char %U missing nipple bits", pct, topC)
+		}
+	}
+}
+
+func TestBattery_WallAlwaysPresent(t *testing.T) {
+	// Side top chars must always include wall bits (dots 7+8),
+	// even at 0% fill.
+	for _, pct := range []float64{0, 25, 50, 75, 100} {
+		topL, _, topR, _, _, _ := brailleBattery(pct)
+		for _, r := range []rune{topL, topR} {
+			bits := r & 0xFF
+			if bits&0x40 == 0 || bits&0x80 == 0 { // dots 7 and 8 (wall top)
+				t.Errorf("pct=%.0f: side top char %U missing wall bits", pct, r)
+			}
+		}
 	}
 }
 
@@ -393,6 +419,29 @@ func TestBattery_MeltdownPulseIndependentOfHeadline(t *testing.T) {
 
 	if p2 <= p1 {
 		t.Errorf("meltdown phase not monotonically advancing: p1=%v p2=%v", p1, p2)
+	}
+}
+
+func TestFormatRemaining(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{45 * time.Minute, "0.8h"},
+		{1*time.Hour + 30*time.Minute, "1.5h"},
+		{2*time.Hour + 57*time.Minute, "3.0h"},
+		{5*time.Hour + 12*time.Minute, "5.2h"},
+		{9*time.Hour + 54*time.Minute, "9.9h"},
+		{10 * time.Hour, "10h"},
+		{12*time.Hour + 30*time.Minute, "13h"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got := formatRemaining(tt.d)
+			if got != tt.want {
+				t.Errorf("formatRemaining(%v) = %q, want %q", tt.d, got, tt.want)
+			}
+		})
 	}
 }
 

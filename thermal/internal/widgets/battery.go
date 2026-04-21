@@ -65,10 +65,10 @@ func (b *Battery) AnimTick() {
 // ViewLines returns the top and bottom row strings and the cell's
 // visible width. Returns ("", "", 0) when no battery is present.
 //
-// Layout is stable across all states — braille gauge always renders:
+// Layout is stable across all states — 3-wide battery shape always renders:
 //
-//	Discharging:  ⣿ 47%    Charging:     ⣿ 85%    No estimate:  ⣿ 47%
-//	              ⣿ 2h57m                ⣿  ⚡                   ⣿
+//	Discharging:  ⣀⣤⣀ 47%    Charging:  ⣀⣤⣀ 85%    No estimate:  ⣀⣤⣀ 47%
+//	              ⣿⣿⣿ 3.0h              ⣿⣿⣿  ⚡                  ⣿⣿⣿
 func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 	if !b.stats.BatteryPresent {
 		return "", "", 0
@@ -95,12 +95,14 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 	}
 	fgStyle := lipgloss.NewStyle().Foreground(modFg).Background(bg)
 
-	topBraille, botBraille := brailleGauge(b.stats.BatteryPercent)
+	tL, tC, tR, bL, bC, bR := brailleBattery(b.stats.BatteryPercent)
+	topGauge := string([]rune{tL, tC, tR})
+	botGauge := string([]rune{bL, bC, bR})
 	pctText := fmt.Sprintf("%d%%", int(b.stats.BatteryPercent))
 
-	// Top row: always gauge + percent (stable across all states).
-	topContent := fgStyle.Render(string(topBraille)) + fgStyle.Render(" "+pctText)
-	topVis := 2 + len(pctText) // braille=1 + space + pctText
+	// Top row: always battery shape + percent (stable across all states).
+	topContent := fgStyle.Render(topGauge) + fgStyle.Render(" "+pctText)
+	topVis := 4 + len(pctText) // battery=3 + space + pctText
 	topPad := w - topVis
 	if topPad < 0 {
 		topPad = 0
@@ -122,18 +124,18 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 		}
 		boltStyle := lipgloss.NewStyle().Foreground(boltFg).Background(bg)
 		// ⚡ (U+26A1) renders as 2 cells in Ghostty/iTerm2.
-		botContent = fgStyle.Render(string(botBraille)) + bgPad(bg, 1) + boltStyle.Render("⚡")
-		botVis = 1 + 1 + 2 // braille + space + ⚡
+		botContent = fgStyle.Render(botGauge) + bgPad(bg, 1) + boltStyle.Render("⚡")
+		botVis = 3 + 1 + 2 // battery + space + ⚡
 
 	case b.stats.BatteryTimeRemaining > 0:
 		timeText := formatRemaining(b.stats.BatteryTimeRemaining)
-		botContent = fgStyle.Render(string(botBraille)) + fgStyle.Render(" "+timeText)
-		botVis = 2 + len(timeText) // braille + space + timeText
+		botContent = fgStyle.Render(botGauge) + fgStyle.Render(" "+timeText)
+		botVis = 4 + len(timeText) // battery + space + timeText
 
 	default:
-		// No estimate yet — just the gauge, no dash.
-		botContent = fgStyle.Render(string(botBraille))
-		botVis = 1
+		// No estimate yet — just the battery shape.
+		botContent = fgStyle.Render(botGauge)
+		botVis = 3
 	}
 
 	botPad := w - botVis
@@ -158,31 +160,53 @@ func (b *Battery) severityFg() color.Color {
 	}
 }
 
-// brailleGauge returns the top and bottom braille runes for a 0-100
-// percent reading, filling both left and right columns for a solid-bar
-// look. Reuses levelSplit/leftBits/rightBits from sparkline.go.
-func brailleGauge(pct float64) (top, bot rune) {
+// Battery outline bits OR'd into the top row regardless of fill level.
+// Wall: dots 7+8 (bottom row of top char) — the casing's top edge.
+// Nipple: dots 1+4 (top row of top char) — the terminal, floating above
+// the wall with a visible gap at low fill. The .:.  silhouette emerges
+// from the gap between nipple and wall in the center char.
+var (
+	battWallBits        = leftBits[1] | rightBits[1] // ⣀ — wall top edge
+	battNippleBits rune = 0x01 | 0x08                // ⠉ — terminal at top of center char
+)
+
+// brailleBattery returns six braille runes (3 top, 3 bottom) forming a
+// battery shape. The center top char includes the nipple terminal, side
+// top chars include the wall top edge. Fill rises bottom-to-top with
+// charge level. Reuses levelSplit/leftBits/rightBits from sparkline.go.
+func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
 	level := int(pct*8.0/100.0 + 0.5)
 	if level < 0 {
 		level = 0
 	}
-	if level > 8 {
-		level = 8
+	// Cap at 7 so the side top chars never fully fill — the nipple
+	// always pokes one row above the sides, preserving the battery
+	// silhouette at every charge level. The percent text carries precision.
+	if level > 7 {
+		level = 7
 	}
 	b, t := levelSplit(level)
-	return rune(0x2800 | leftBits[t] | rightBits[t]),
-		rune(0x2800 | leftBits[b] | rightBits[b])
+
+	fill := leftBits[t] | rightBits[t]
+	botFill := leftBits[b] | rightBits[b]
+
+	topL = 0x2800 | fill | battWallBits
+	topC = 0x2800 | fill | battWallBits | battNippleBits
+	topR = 0x2800 | fill | battWallBits
+	botL = 0x2800 | botFill
+	botC = 0x2800 | botFill
+	botR = 0x2800 | botFill
+	return
 }
 
-// formatRemaining renders a time.Duration as "Xh YYm" or "YYm".
-// Only called when d > 0 — the zero case is handled by the caller.
+// formatRemaining renders a time.Duration as "X.Xh" (under 10 hours)
+// or "Xh" (10+). Only called when d > 0.
 func formatRemaining(d time.Duration) string {
-	h := int(d.Hours())
-	m := int(d.Minutes()) % 60
-	if h > 0 {
-		return fmt.Sprintf("%dh%02dm", h, m)
+	hours := d.Hours()
+	if hours >= 9.95 {
+		return fmt.Sprintf("%dh", int(hours+0.5))
 	}
-	return fmt.Sprintf("%dm", m)
+	return fmt.Sprintf("%.1fh", hours)
 }
 
 // modulateBrightness scales a color's brightness by the given factor (0-1).

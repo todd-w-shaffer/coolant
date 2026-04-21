@@ -193,7 +193,7 @@ const (
 
 // Battery cell rendering.
 const (
-	BatteryCellWidth         = 7    // cells wide for the 2-row cell
+	BatteryCellWidth         = 8    // 3 braille (battery shape) + space + text
 	BatteryChargeBreathFloor = 0.35 // brightness floor during charging breath
 	BatteryChargeBreathCeil  = 0.80 // brightness ceiling during charging breath
 	BatteryBreathRate        = 0.35 // multiplier on BreathePhaseStep — slower than agent dots
