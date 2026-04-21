@@ -22,16 +22,17 @@ import (
 var meltdownPhaseStep = 2 * math.Pi / float64(config.AnimFPS)
 
 // Headline renders the unified thermal bar. It is a 2-row strip when online
-// (top row: quip + LCD readout + agent icons + session diamonds + category
-// cells; bottom row: readout continuation) and a 1-row strip when offline
-// or idle.
+// (top row: quip + runtimes + sessions/agents + build/shell + LCD + battery;
+// bottom row: ghost trail + agents + shell + LCD + battery) and a 1-row strip
+// when offline or idle.
 type Headline struct {
-	width  int
-	state  *model.AppState
-	agents *BreatheDots
-	temp   *SegmentReadout
-	bloom  *HeatBloom
-	theme  *theme.Theme
+	width   int
+	state   *model.AppState
+	agents  *BreatheDots
+	temp    *SegmentReadout
+	bloom   *HeatBloom
+	battery *Battery
+	theme   *theme.Theme
 
 	// pulsePhase is the single meltdown oscillator; the segment readout
 	// and any future bar-level throb consume this same phase so the whole
@@ -53,11 +54,12 @@ type Headline struct {
 
 func NewHeadline(th *theme.Theme, ap *anim.Profile) *Headline {
 	return &Headline{
-		agents: NewBreatheDots(th, ap),
-		temp:   NewSegmentReadout(th, ap),
-		bloom:  NewHeatBloom(th, ap),
-		theme:  th,
-		now:    time.Now,
+		agents:  NewBreatheDots(th, ap),
+		temp:    NewSegmentReadout(th, ap),
+		bloom:   NewHeatBloom(th, ap),
+		battery: NewBattery(th, ap),
+		theme:   th,
+		now:     time.Now,
 	}
 }
 
@@ -82,6 +84,9 @@ func (h *Headline) Update(state *model.AppState) {
 	if state.Online {
 		h.temp.Update(model.OverallTemperature(state), threatToThermal(state.ThreatLevel))
 	}
+	if state.Current != nil {
+		h.battery.Update(state.Current.System)
+	}
 	h.bloom.Update(state)
 }
 
@@ -96,6 +101,7 @@ func (h *Headline) AnimTick() {
 	h.agents.AnimTick()
 	h.temp.AnimTick()
 	h.bloom.AnimTick()
+	h.battery.AnimTick()
 	if h.meltdown {
 		h.pulsePhase += meltdownPhaseStep
 		if h.pulsePhase > 2*math.Pi {
@@ -344,8 +350,8 @@ const dynamicCellWidth = 8
 
 // ViewLines returns the headline as a 2-line slice. Layout (online):
 //
-//	[quip ...........................]  [      ] [⌬ session] [build:000] [LCD]
-//	[                    runtime cells]  [      ] [⬡ agent  ] [shell:001] [LCD]
+//	[quip ...........................]  [      ] [⌬ session] [build:000] [LCD] [batt]
+//	[                    runtime cells]  [      ] [⬡ agent  ] [shell:001] [LCD] [batt]
 //
 // Right-aligned cluster (sessions/agents → build/shell → LCD) stays pinned;
 // runtimes appear/disappear as the only dynamic churn, growing leftward into
@@ -368,6 +374,9 @@ func (h *Headline) ViewLines() []string {
 		pulseScale = 0.6 + 0.4*(math.Sin(h.pulsePhase)+1)/2
 	}
 	lcd := h.renderLCDFrag(iconBg, pulseScale)
+
+	bTop, bBot, bW := h.battery.ViewLines(iconBg)
+	battery := rowPair{top: bTop, bot: bBot, visWidth: bW}
 
 	buildShell := h.renderBuildShellStack(h.state.SmoothedCats, iconBg)
 
@@ -413,6 +422,7 @@ func (h *Headline) ViewLines() []string {
 	appendFrag(sessAgents)
 	appendFrag(buildShell)
 	appendFrag(lcd)
+	appendFrag(battery)
 
 	// Ghost trail absorbs the stack cell's left-slack on the bot row so
 	// ghost→active reads as one continuous ribbon. Zero when actives meet
@@ -490,7 +500,7 @@ func (h *Headline) ViewLines() []string {
 		if needRibbonSep {
 			ribbonSep = bgPad(iconBg, 1)
 		}
-		botLine = botLeft + ribbonSep + activeStr + h.rebuildBotRight(buildShell, lcd, divider)
+		botLine = botLeft + ribbonSep + activeStr + h.rebuildBotRight(buildShell, lcd, battery, divider)
 	} else {
 		botLine = botLeft + sep + rightBot.String()
 	}
@@ -505,7 +515,7 @@ func (h *Headline) ViewLines() []string {
 // buildShell fragment (used when the sessAgents cell is absorbed or
 // partially absorbed into the ghost trail). Each fragment is preceded
 // by a divider — the first is the ghost-area/right-cluster boundary.
-func (h *Headline) rebuildBotRight(buildShell, lcd rowPair, divider string) string {
+func (h *Headline) rebuildBotRight(buildShell, lcd, battery rowPair, divider string) string {
 	var sb strings.Builder
 	write := func(f rowPair) {
 		if f.visWidth == 0 {
@@ -516,6 +526,7 @@ func (h *Headline) rebuildBotRight(buildShell, lcd rowPair, divider string) stri
 	}
 	write(buildShell)
 	write(lcd)
+	write(battery)
 	return sb.String()
 }
 

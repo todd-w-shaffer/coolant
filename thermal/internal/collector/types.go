@@ -2,17 +2,33 @@ package collector
 
 import "time"
 
+// BatteryState represents the macOS power source state.
+type BatteryState int
+
+const (
+	BatteryUnknown       BatteryState = iota
+	BatteryDischarging                // "discharging"
+	BatteryCharging                   // "charging"
+	BatteryCharged                    // "charged" (100%, plugged)
+	BatteryACNotCharging              // "AC attached; not charging" (optimized-hold, cold)
+	BatteryFinishing                  // "finishing charge" (near 100%)
+)
+
 // SystemStats holds system-wide resource utilization from sysctl/vm_stat.
 type SystemStats struct {
-	CPUPercent     float64 // mach host_statistics tick delta, 0-100
-	MemUsedBytes   int64   // active + wired + compressed pages
-	MemTotalBytes  int64   // hw.memsize
-	SwapUsedBytes  int64
-	SwapTotalBytes int64
-	Decompressions int64   // vm_stat delta: decompressions since last tick
-	GPUPercent     float64 // ioreg AGXAccelerator Device Utilization, 0-100
-	NCPUs          int
-	Timestamp      time.Time
+	CPUPercent           float64 // mach host_statistics tick delta, 0-100
+	MemUsedBytes         int64   // active + wired + compressed pages
+	MemTotalBytes        int64   // hw.memsize
+	SwapUsedBytes        int64
+	SwapTotalBytes       int64
+	Decompressions       int64   // vm_stat delta: decompressions since last tick
+	GPUPercent           float64 // ioreg AGXAccelerator Device Utilization, 0-100
+	NCPUs                int
+	Timestamp            time.Time
+	BatteryPresent       bool          // false on desktops / Mac Studio
+	BatteryPercent       float64       // 0-100
+	BatteryState         BatteryState  // enum: Unknown, Discharging, Charging, Charged, ACNotCharging
+	BatteryTimeRemaining time.Duration // 0 when (no estimate) or AC-stable
 }
 
 // MemPercent returns memory utilization as 0-100.

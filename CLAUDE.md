@@ -50,12 +50,12 @@ event bus" convention below).
 - `assets/` — VHS tapes + demo GIFs
 
 **Thermal dashboard (`thermal/internal/`) — conceptual groups:**
-- **Sampling** — `collector/` gathers system metrics (CPU/MEM/procs/GPU/network,
+- **Sampling** — `collector/` gathers system metrics (CPU/MEM/procs/GPU/battery/network,
   cgo mach ticks, JSONL event tailer); `model/` holds AppState, threat level
   formula, ring buffers, idle personality
 - **Rendering** — `theme/` (color palettes, HCL blend LUTs), `anim/` (motion
   profiles, orthogonal to theme), `widgets/` (sparklines, headline, LCD, gauges,
-  agent dots, heat bloom/rails, alerts), `layout/` (bottom-strip compositor),
+  agent dots, heat bloom/rails, alerts, battery), `layout/` (bottom-strip compositor),
   `ui/` (semantic colors, glyphs, helpers), `keys/` (shared keybinding registry)
 - **Plumbing** — `config/` (timing, thresholds, EMA, animation defaults),
   `demo/` (scripted 6-phase narrative for `--demo`), `version/` (ldflags-injected
@@ -134,7 +134,7 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
 - **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
 - Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
-- **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep. Shared online state protected by mutex.
+- **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU/battery concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep; battery via `pmset -g batt`. Shared online state protected by mutex.
 - **Theme system** (`internal/theme/`): All colors flow through a `*theme.Theme` struct passed to every widget constructor. `Theme.Init()` pre-computes HCL blend LUTs (101 entries each for severity gradients). `Theme.SeverityColor()` replaces the old package-level `severityColor()`. Built-in themes registered in `theme.Registry`; resolved via `--theme` flag > `COOLANT_THEME` env > `"classic"` default. To add a theme: copy `classic.go`, change colors, register in `registry.go`.
 - **Animation system** (`internal/anim/`): All motion parameters flow through an `*anim.Profile` struct passed alongside `*theme.Theme` to widget constructors. Theme controls color, profile controls motion — orthogonal axes. `Default()` reads from `config/tuning.go` (single source of truth). Built-in profiles: `default`, `calm` (slower/softer), `intense` (faster/sharper). Resolved via `--animation` flag > `COOLANT_ANIMATION` env > `"default"`. To add a profile: copy `default.go`, change values, register in `registry.go`.
 - **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). `--kitt-highscore` flag (default on) makes the KITT scanner display completed agent count — stale dots dim-breathe, completed dots earn the KITT scan. Disable with `--kitt-highscore=false` or `COOLANT_KITT_HIGHSCORE=0` to revert to ghost mode. Animation patterns are universal across themes and profiles; theme controls accent color, profile controls speed/brightness/spring physics.

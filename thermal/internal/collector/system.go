@@ -99,7 +99,7 @@ func CollectSlowStats(ctx context.Context) SystemStats {
 		key string
 		val string
 	}
-	ch := make(chan result, 3)
+	ch := make(chan result, 4)
 
 	go func() {
 		out, _ := execCmd(ctx, "sysctl", "-n", "vm.swapusage")
@@ -113,10 +113,14 @@ func CollectSlowStats(ctx context.Context) SystemStats {
 		out, _ := execCmd(ctx, "bash", "-c", `ioreg -r -d 1 -c AGXAccelerator | grep 'Device Utilization'`)
 		ch <- result{"gpu", out}
 	}()
+	go func() {
+		out, _ := execCmd(ctx, "pmset", "-g", "batt")
+		ch <- result{"battery", out}
+	}()
 
 	var stats SystemStats
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 4; i++ {
 		r := <-ch
 		switch r.key {
 		case "swap":
@@ -133,6 +137,8 @@ func CollectSlowStats(ctx context.Context) SystemStats {
 			}
 		case "gpu":
 			parseGPU(r.val, &stats)
+		case "battery":
+			parseBattery(r.val, &stats)
 		}
 	}
 

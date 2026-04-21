@@ -182,6 +182,23 @@ const (
 	GPUSparkCrit    = 85.0
 )
 
+// ── Battery ───────────────────────────────────────────────
+
+// Battery severity thresholds (percent remaining).
+const (
+	BatteryMeltdownPct = 10.0 // below this, cell pulses locally (crit throb)
+	BatteryCritPct     = 20.0 // red below this
+	BatteryWarnPct     = 50.0 // amber below this, green above
+)
+
+// Battery cell rendering.
+const (
+	BatteryCellWidth         = 7    // cells wide for the 2-row cell
+	BatteryChargeBreathFloor = 0.35 // brightness floor during charging breath
+	BatteryChargeBreathCeil  = 0.80 // brightness ceiling during charging breath
+	BatteryBreathRate        = 0.35 // multiplier on BreathePhaseStep — slower than agent dots
+)
+
 // ── Headroom warnings ──────────────────────────────────────
 
 const (

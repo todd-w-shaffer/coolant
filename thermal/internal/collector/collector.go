@@ -121,6 +121,10 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 			snap.System.SwapTotalBytes = slow.SwapTotalBytes
 			snap.System.Decompressions = slow.Decompressions
 			snap.System.GPUPercent = slow.GPUPercent
+			snap.System.BatteryPresent = slow.BatteryPresent
+			snap.System.BatteryPercent = slow.BatteryPercent
+			snap.System.BatteryState = slow.BatteryState
+			snap.System.BatteryTimeRemaining = slow.BatteryTimeRemaining
 			if !lastSlowSuccess.IsZero() {
 				snap.SlowAge = time.Since(lastSlowSuccess)
 			}
