@@ -207,7 +207,7 @@ func main() {
 	animName := flag.String("animation", "", "Animation profile (default, calm, intense)")
 	listThemes := flag.Bool("list-themes", false, "List available themes and exit")
 	listAnims := flag.Bool("list-animations", false, "List available animation profiles and exit")
-	kittHighScore := flag.Bool("kitt-highscore", false, "KITT scans completed agents instead of ghosts")
+	kittHighScore := flag.Bool("kitt-highscore", true, "KITT scans completed agents instead of ghosts")
 	showVersion := flag.Bool("version", false, "Print version and exit")
 	flag.Parse()
 
@@ -255,10 +255,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Resolve highscore mode: flag > env > off
+	// Resolve highscore mode: flag > env > on
 	highScore := *kittHighScore
-	if !highScore && os.Getenv("COOLANT_KITT_HIGHSCORE") == "1" {
-		highScore = true
+	if highScore && os.Getenv("COOLANT_KITT_HIGHSCORE") == "0" {
+		highScore = false
 	}
 
 	// Resolve animation: flag > env > default
