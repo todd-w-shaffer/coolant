@@ -204,7 +204,7 @@ func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
 func formatRemaining(d time.Duration) string {
 	hours := d.Hours()
 	if hours >= 9.95 {
-		return fmt.Sprintf("%dh", int(hours+0.5))
+		return fmt.Sprintf("%dhr", int(hours+0.5)) // "10hr" — 4 chars, matches "9.9h"
 	}
 	return fmt.Sprintf("%.1fh", hours)
 }
