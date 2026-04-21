@@ -432,8 +432,8 @@ func TestFormatRemaining(t *testing.T) {
 		{2*time.Hour + 57*time.Minute, "3.0h"},
 		{5*time.Hour + 12*time.Minute, "5.2h"},
 		{9*time.Hour + 54*time.Minute, "9.9h"},
-		{10 * time.Hour, "10h"},
-		{12*time.Hour + 30*time.Minute, "13h"},
+		{10 * time.Hour, "10hr"},
+		{12*time.Hour + 30*time.Minute, "13hr"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
