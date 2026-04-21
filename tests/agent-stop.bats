@@ -63,3 +63,24 @@ load test_helper
     bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
   grep -q '"event":"parallel.disengaged"' "$COOLANT_EVENTS"
 }
+
+@test "agent-stop JSONL includes cwd" {
+  echo "2" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"cwd":"/Users/dev/myproject"' "$COOLANT_EVENTS"
+}
+
+@test "agent-stop JSONL includes permission_mode" {
+  echo "2" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Plan","permission_mode":"plan"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"permission_mode":"plan"' "$COOLANT_EVENTS"
+}
+
+@test "agent-stop JSONL includes agent_transcript_path" {
+  echo "2" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","agent_transcript_path":"/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"transcript_path":"/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl"' "$COOLANT_EVENTS"
+}

@@ -22,18 +22,21 @@ const (
 
 // GateEvent represents a parsed JSONL event from the coolant event log.
 type GateEvent struct {
-	Timestamp  time.Time `json:"ts"`
-	Event      string    `json:"event"`
-	SessionID  string    `json:"session_id,omitempty"`
-	AgentID    string    `json:"agent_id,omitempty"`
-	AgentType  string    `json:"agent_type,omitempty"`
-	Tool       string    `json:"tool,omitempty"`
-	Command    string    `json:"command,omitempty"`
-	Reason     string    `json:"reason,omitempty"`
-	AgentCount int       `json:"agent_count,omitempty"`
-	Threshold  int       `json:"threshold,omitempty"`
-	Original   string    `json:"original,omitempty"`
-	Rewritten  string    `json:"rewritten,omitempty"`
+	Timestamp      time.Time `json:"ts"`
+	Event          string    `json:"event"`
+	SessionID      string    `json:"session_id,omitempty"`
+	AgentID        string    `json:"agent_id,omitempty"`
+	AgentType      string    `json:"agent_type,omitempty"`
+	Cwd            string    `json:"cwd,omitempty"`
+	PermissionMode string    `json:"permission_mode,omitempty"`
+	TranscriptPath string    `json:"transcript_path,omitempty"`
+	Tool           string    `json:"tool,omitempty"`
+	Command        string    `json:"command,omitempty"`
+	Reason         string    `json:"reason,omitempty"`
+	AgentCount     int       `json:"agent_count,omitempty"`
+	Threshold      int       `json:"threshold,omitempty"`
+	Original       string    `json:"original,omitempty"`
+	Rewritten      string    `json:"rewritten,omitempty"`
 }
 
 // TailEvents tails the JSONL event file, sending parsed events to ch.
