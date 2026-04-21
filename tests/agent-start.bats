@@ -85,3 +85,23 @@ load test_helper
   [[ "${output}" == *"systemMessage"* ]]
   [[ "${output}" == *"4 agents"* ]]
 }
+
+@test "agent-start JSONL includes cwd" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"cwd":"/Users/dev/myproject"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start JSONL includes permission_mode" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","permission_mode":"auto"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"permission_mode":"auto"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start JSONL escapes spaces in cwd" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/my project"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"cwd":"/Users/dev/my project"' "$COOLANT_EVENTS"
+  # Verify it's valid JSON by checking the whole line parses
+  python3 -c "import json,sys; json.loads(sys.stdin.readline())" < "$COOLANT_EVENTS"
+}

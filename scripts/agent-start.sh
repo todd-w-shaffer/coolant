@@ -19,7 +19,7 @@ echo "$next" > "$COOLANT_COUNTER"
 coolant_unlock
 
 coolant_log "agent started ($next active)"
-coolant_event '"event":"agent.start","session_id":"'"$_agent_session_id"'","agent_id":"'"$_agent_id"'","agent_type":"'"$_agent_type"'","agent_count":'"$next"
+coolant_event '"event":"agent.start","session_id":"'"$_agent_session_id"'","agent_id":"'"$_agent_id"'","agent_type":"'"$_agent_type"'","cwd":"'"$_agent_cwd"'","permission_mode":"'"$_agent_permission_mode"'","agent_count":'"$next"
 
 # Warn at threshold (opt-in — user runs /coolant to engage)
 if [ "$next" -ge "$COOLANT_THRESHOLD" ] && [ ! -f "$COOLANT_LOCKFILE" ]; then

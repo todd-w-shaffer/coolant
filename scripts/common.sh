@@ -93,26 +93,26 @@ _reconcile_counter() {
   printf '%s' "$jsonl_count"
 }
 
-# Extract session_id, agent_id, agent_type from hook JSON.
-# Inline regex + parameter expansion — zero forks.
-# Sets: _agent_session_id, _agent_id, _agent_type
+# Extract a single JSON string field by key, escape for re-emission.
+# Sets _val. Zero forks — inline regex + parameter expansion only.
+_extract_escaped() {
+  local key="$1" json="$2"
+  _val=""
+  [[ "$json" =~ \"$key\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
+  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
+}
+
+# Extract agent metadata from hook JSON.
+# Sets: _agent_session_id, _agent_id, _agent_type, _agent_cwd,
+#       _agent_permission_mode, _agent_transcript_path
 _extract_agent_fields() {
-  local _eaf_json="$1" _val
-
-  _val=""
-  [[ "$_eaf_json" =~ \"session_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
-  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
-  _agent_session_id="$_val"
-
-  _val=""
-  [[ "$_eaf_json" =~ \"agent_id\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
-  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
-  _agent_id="$_val"
-
-  _val=""
-  [[ "$_eaf_json" =~ \"agent_type\"[[:space:]]*:[[:space:]]*\"([^\"]*)\" ]] && _val="${BASH_REMATCH[1]}"
-  _val="${_val//\\/\\\\}"; _val="${_val//\"/\\\"}"; _val="${_val//$'\n'/\\n}"; _val="${_val//$'\t'/\\t}"
-  _agent_type="$_val"
+  local _eaf_json="$1"
+  _extract_escaped "session_id"           "$_eaf_json"; _agent_session_id="$_val"
+  _extract_escaped "agent_id"             "$_eaf_json"; _agent_id="$_val"
+  _extract_escaped "agent_type"           "$_eaf_json"; _agent_type="$_val"
+  _extract_escaped "cwd"                  "$_eaf_json"; _agent_cwd="$_val"
+  _extract_escaped "permission_mode"      "$_eaf_json"; _agent_permission_mode="$_val"
+  _extract_escaped "agent_transcript_path" "$_eaf_json"; _agent_transcript_path="$_val"
 }
 
 # Atomic counter operations using mkdir as a POSIX mutex.

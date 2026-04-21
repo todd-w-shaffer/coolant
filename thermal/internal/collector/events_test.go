@@ -116,6 +116,67 @@ func TestTailEventsSkipsMalformedLines(t *testing.T) {
 	close(done)
 }
 
+func TestTailEventsParsesEnrichedFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Enriched agent.start with cwd and permission_mode
+	f.WriteString(`{"ts":"2026-04-20T20:00:00Z","event":"agent.start","session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject","permission_mode":"auto","agent_count":1}` + "\n")
+	// Enriched agent.stop with transcript_path
+	f.WriteString(`{"ts":"2026-04-20T20:01:00Z","event":"agent.stop","session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject","permission_mode":"auto","transcript_path":"/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl","agent_count":0}` + "\n")
+	// Old-format event without new fields (backwards compat)
+	f.WriteString(`{"ts":"2026-04-14T10:00:00Z","event":"agent.start","session_id":"s2","agent_id":"a2","agent_type":"Plan","agent_count":1}` + "\n")
+	f.Close()
+
+	ch := make(chan GateEvent, 16)
+	done := make(chan struct{})
+
+	go TailEvents(ch, path, 50*time.Millisecond, done)
+
+	var events []GateEvent
+	timeout := time.After(2 * time.Second)
+	for len(events) < 3 {
+		select {
+		case ev := <-ch:
+			events = append(events, ev)
+		case <-timeout:
+			t.Fatalf("timed out waiting for events, got %d", len(events))
+		}
+	}
+	close(done)
+
+	// Enriched start
+	if events[0].Cwd != "/Users/dev/myproject" {
+		t.Errorf("start cwd: got %q, want /Users/dev/myproject", events[0].Cwd)
+	}
+	if events[0].PermissionMode != "auto" {
+		t.Errorf("start permission_mode: got %q, want auto", events[0].PermissionMode)
+	}
+
+	// Enriched stop
+	if events[1].TranscriptPath != "/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl" {
+		t.Errorf("stop transcript_path: got %q", events[1].TranscriptPath)
+	}
+	if events[1].Cwd != "/Users/dev/myproject" {
+		t.Errorf("stop cwd: got %q", events[1].Cwd)
+	}
+
+	// Old-format event — new fields should be zero values
+	if events[2].Cwd != "" {
+		t.Errorf("old event cwd should be empty, got %q", events[2].Cwd)
+	}
+	if events[2].PermissionMode != "" {
+		t.Errorf("old event permission_mode should be empty, got %q", events[2].PermissionMode)
+	}
+	if events[2].TranscriptPath != "" {
+		t.Errorf("old event transcript_path should be empty, got %q", events[2].TranscriptPath)
+	}
+}
+
 func TestTailEventsHandlesTruncation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
