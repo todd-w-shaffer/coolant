@@ -104,13 +104,14 @@ _extract_escaped() {
 
 # Extract agent metadata from hook JSON.
 # Sets: _agent_session_id, _agent_id, _agent_type, _agent_cwd,
-#       _agent_permission_mode, _agent_transcript_path
+#       _agent_project, _agent_permission_mode, _agent_transcript_path
 _extract_agent_fields() {
   local _eaf_json="$1"
   _extract_escaped "session_id"           "$_eaf_json"; _agent_session_id="$_val"
   _extract_escaped "agent_id"             "$_eaf_json"; _agent_id="$_val"
   _extract_escaped "agent_type"           "$_eaf_json"; _agent_type="$_val"
   _extract_escaped "cwd"                  "$_eaf_json"; _agent_cwd="$_val"
+  _agent_project="${_agent_cwd##*/}"
   _extract_escaped "permission_mode"      "$_eaf_json"; _agent_permission_mode="$_val"
   _extract_escaped "agent_transcript_path" "$_eaf_json"; _agent_transcript_path="$_val"
 }
