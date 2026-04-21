@@ -28,6 +28,7 @@ type GateEvent struct {
 	AgentID        string    `json:"agent_id,omitempty"`
 	AgentType      string    `json:"agent_type,omitempty"`
 	Cwd            string    `json:"cwd,omitempty"`
+	Project        string    `json:"project,omitempty"`
 	PermissionMode string    `json:"permission_mode,omitempty"`
 	TranscriptPath string    `json:"transcript_path,omitempty"`
 	Tool           string    `json:"tool,omitempty"`

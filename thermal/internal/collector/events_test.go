@@ -124,10 +124,10 @@ func TestTailEventsParsesEnrichedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Enriched agent.start with cwd and permission_mode
-	f.WriteString(`{"ts":"2026-04-20T20:00:00Z","event":"agent.start","session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject","permission_mode":"auto","agent_count":1}` + "\n")
+	// Enriched agent.start with cwd, project, and permission_mode
+	f.WriteString(`{"ts":"2026-04-20T20:00:00Z","event":"agent.start","session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject","project":"myproject","permission_mode":"auto","agent_count":1}` + "\n")
 	// Enriched agent.stop with transcript_path
-	f.WriteString(`{"ts":"2026-04-20T20:01:00Z","event":"agent.stop","session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject","permission_mode":"auto","transcript_path":"/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl","agent_count":0}` + "\n")
+	f.WriteString(`{"ts":"2026-04-20T20:01:00Z","event":"agent.stop","session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/myproject","project":"myproject","permission_mode":"auto","transcript_path":"/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl","agent_count":0}` + "\n")
 	// Old-format event without new fields (backwards compat)
 	f.WriteString(`{"ts":"2026-04-14T10:00:00Z","event":"agent.start","session_id":"s2","agent_id":"a2","agent_type":"Plan","agent_count":1}` + "\n")
 	f.Close()
@@ -153,6 +153,9 @@ func TestTailEventsParsesEnrichedFields(t *testing.T) {
 	if events[0].Cwd != "/Users/dev/myproject" {
 		t.Errorf("start cwd: got %q, want /Users/dev/myproject", events[0].Cwd)
 	}
+	if events[0].Project != "myproject" {
+		t.Errorf("start project: got %q, want myproject", events[0].Project)
+	}
 	if events[0].PermissionMode != "auto" {
 		t.Errorf("start permission_mode: got %q, want auto", events[0].PermissionMode)
 	}
@@ -168,6 +171,9 @@ func TestTailEventsParsesEnrichedFields(t *testing.T) {
 	// Old-format event — new fields should be zero values
 	if events[2].Cwd != "" {
 		t.Errorf("old event cwd should be empty, got %q", events[2].Cwd)
+	}
+	if events[2].Project != "" {
+		t.Errorf("old event project should be empty, got %q", events[2].Project)
 	}
 	if events[2].PermissionMode != "" {
 		t.Errorf("old event permission_mode should be empty, got %q", events[2].PermissionMode)

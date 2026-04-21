@@ -78,6 +78,13 @@ load test_helper
   grep -q '"permission_mode":"plan"' "$COOLANT_EVENTS"
 }
 
+@test "agent-stop JSONL includes project basename" {
+  echo "2" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/apps/shootsfilm"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -q '"project":"shootsfilm"' "$COOLANT_EVENTS"
+}
+
 @test "agent-stop JSONL includes agent_transcript_path" {
   echo "2" > "$COOLANT_COUNTER"
   echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","agent_transcript_path":"/Users/dev/.claude/projects/abc/subagents/agent-a1.jsonl"}' | \
