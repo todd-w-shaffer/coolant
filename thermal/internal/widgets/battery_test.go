@@ -49,8 +49,8 @@ func TestBattery_DischargingRender(t *testing.T) {
 		t.Fatal("top row empty")
 	}
 	// Top row should contain percent text
-	if !strings.Contains(topStrip, "47%") {
-		t.Errorf("top row missing 47%%: %q", topStrip)
+	if !strings.Contains(topStrip, "047%") {
+		t.Errorf("top row missing 047%%: %q", topStrip)
 	}
 	// Bot row should contain time remaining
 	if !strings.Contains(botStrip, "3.0h") {
@@ -218,7 +218,7 @@ func TestBattery_ChargingShowsBolt(t *testing.T) {
 	if !strings.Contains(botStrip, "⚡") {
 		t.Errorf("charging bot row missing ⚡: %q", botStrip)
 	}
-	if !strings.Contains(topStrip, "85%") {
+	if !strings.Contains(topStrip, "085%") {
 		t.Errorf("charging top row missing 85%%: %q", topStrip)
 	}
 }
