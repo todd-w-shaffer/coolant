@@ -22,10 +22,13 @@ if [ "$next" -lt 0 ]; then
 fi
 
 echo "$next" > "$COOLANT_COUNTER"
+_compute_agent_duration "$_agent_id" "$(date +%s)"
 coolant_unlock
 
 coolant_log "agent stopped ($next remaining)"
-coolant_event '"event":"agent.stop","session_id":"'"$_agent_session_id"'","agent_id":"'"$_agent_id"'","agent_type":"'"$_agent_type"'","cwd":"'"$_agent_cwd"'","project":"'"$_agent_project"'","permission_mode":"'"$_agent_permission_mode"'","transcript_path":"'"$_agent_transcript_path"'","agent_count":'"$next"
+_stop_tail=""
+[ -n "${_agent_duration_s}" ] && _stop_tail=',"duration_s":'"$_agent_duration_s"
+coolant_event '"event":"agent.stop","session_id":"'"$_agent_session_id"'","agent_id":"'"$_agent_id"'","agent_type":"'"$_agent_type"'","cwd":"'"$_agent_cwd"'","project":"'"$_agent_project"'","permission_mode":"'"$_agent_permission_mode"'","transcript_path":"'"$_agent_transcript_path"'","agent_count":'"$next""$_stop_tail"
 
 if [ "$next" -eq 0 ] && [ -f "$COOLANT_LOCKFILE" ]; then
   rm -f "$COOLANT_LOCKFILE"

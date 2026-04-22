@@ -11,6 +11,7 @@ setup() {
   export COOLANT_COUNTER="${TEST_TMPDIR}/coolant.count"
   export COOLANT_LOG="${TEST_TMPDIR}/coolant.log"
   export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
+  export COOLANT_AGENT_STARTS="${TEST_TMPDIR}/coolant.agent-starts"
   export COOLANT_THRESHOLD=3
   export _COOLANT_NCPU=10
 }

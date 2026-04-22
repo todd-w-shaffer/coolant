@@ -111,3 +111,33 @@ load test_helper
     bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
   grep -q '"project":"coolant"' "$COOLANT_EVENTS"
 }
+
+@test "agent-start project strips .claude-worktrees suffix" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/apps/coolant/.claude-worktrees/segment-readout"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"project":"coolant"' "$COOLANT_EVENTS"
+  ! grep -q '"project":"segment-readout"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start project strips nested worktree paths" {
+  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore","cwd":"/Users/dev/apps/coolant/.claude-worktrees/feature/deep/nesting"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  grep -q '"project":"coolant"' "$COOLANT_EVENTS"
+}
+
+@test "agent-start records start ts in agent-starts state file" {
+  echo '{"session_id":"s1","agent_id":"abc123","agent_type":"Explore","cwd":"/Users/dev/apps/coolant"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  [ -f "$COOLANT_AGENT_STARTS" ]
+  grep -q "^abc123	" "$COOLANT_AGENT_STARTS"
+}
+
+@test "agent-start records distinct state entries for concurrent agents" {
+  echo '{"session_id":"s1","agent_id":"first","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  echo '{"session_id":"s1","agent_id":"second","agent_type":"Plan"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
+  [ "$(wc -l < "$COOLANT_AGENT_STARTS" | tr -d ' ')" = "2" ]
+  grep -q "^first	"  "$COOLANT_AGENT_STARTS"
+  grep -q "^second	" "$COOLANT_AGENT_STARTS"
+}

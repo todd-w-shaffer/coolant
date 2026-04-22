@@ -6,6 +6,7 @@ COOLANT_LOCKFILE="${COOLANT_LOCKFILE:-${_COOLANT_DIR}coolant-${USER}.lock}"
 COOLANT_COUNTER="${COOLANT_COUNTER:-${_COOLANT_DIR}coolant-agents-${USER}.count}"
 COOLANT_LOG="${COOLANT_LOG:-${_COOLANT_DIR}coolant-${USER}.log}"
 COOLANT_EVENTS="${COOLANT_EVENTS:-${_COOLANT_DIR}coolant-${USER}.events.jsonl}"
+COOLANT_AGENT_STARTS="${COOLANT_AGENT_STARTS:-${_COOLANT_DIR}coolant-${USER}.agent-starts}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
 _COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -111,9 +112,49 @@ _extract_agent_fields() {
   _extract_escaped "agent_id"             "$_eaf_json"; _agent_id="$_val"
   _extract_escaped "agent_type"           "$_eaf_json"; _agent_type="$_val"
   _extract_escaped "cwd"                  "$_eaf_json"; _agent_cwd="$_val"
-  _agent_project="${_agent_cwd##*/}"
+  # Worktrees live at <repo>/.claude-worktrees/<branch>; without stripping,
+  # project would read as the branch name and split a single repo across
+  # multiple "projects" in downstream aggregates.
+  local _eaf_trimmed="${_agent_cwd%%/.claude-worktrees/*}"
+  _agent_project="${_eaf_trimmed##*/}"
   _extract_escaped "permission_mode"      "$_eaf_json"; _agent_permission_mode="$_val"
   _extract_escaped "agent_transcript_path" "$_eaf_json"; _agent_transcript_path="$_val"
+}
+
+# Record agent start time in a tab-separated state file (agent_id<TAB>epoch_s).
+# Caller should hold coolant_lock to serialize writes, and passes `now` so
+# a single date(1) fork is shared across the hook invocation.
+_record_agent_start() {
+  local agent_id="$1" now="$2"
+  printf '%s\t%s\n' "$agent_id" "$now" >> "$COOLANT_AGENT_STARTS"
+}
+
+# Look up recorded start ts for agent_id, compute wall-clock duration in
+# seconds, and remove the matched line from the state file. Also prunes
+# entries older than 24h to bound state-file growth when agents start
+# without a matching stop (CC #44971 orphan-stop bug, agent crashes).
+# Sets _agent_duration_s to the duration string, or empty if no start recorded.
+# Caller should hold coolant_lock.
+_compute_agent_duration() {
+  local agent_id="$1" now="$2"
+  _agent_duration_s=""
+  [ -f "$COOLANT_AGENT_STARTS" ] || return 0
+
+  local start_ts cutoff=$((now - 86400))
+  # Single awk pass: emit matched start_ts to stdout, write kept lines to tmp.
+  # BEGIN initializes tmp so `mv` below always succeeds even if the filter
+  # emits nothing (all entries stale or sole entry was our match).
+  start_ts=$(awk -v id="$agent_id" -v cutoff="$cutoff" \
+                 -v tmp="${COOLANT_AGENT_STARTS}.tmp" -F'\t' '
+    BEGIN             { printf "" > tmp }
+    $1 == id          { print $2; next }
+    $2 + 0 >= cutoff  { print > tmp }
+  ' "$COOLANT_AGENT_STARTS")
+  mv "${COOLANT_AGENT_STARTS}.tmp" "$COOLANT_AGENT_STARTS"
+
+  if [ -n "$start_ts" ]; then
+    _agent_duration_s=$((now - start_ts))
+  fi
 }
 
 # Atomic counter operations using mkdir as a POSIX mutex.
