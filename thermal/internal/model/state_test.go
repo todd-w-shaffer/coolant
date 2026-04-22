@@ -2,6 +2,7 @@ package model
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -1377,6 +1378,29 @@ func TestCycleCategoryFilter(t *testing.T) {
 	}
 }
 
+func TestCycleCategoryFilterFixedOnly(t *testing.T) {
+	s := NewAppState()
+	// No dynamic categories seeded — only build + shell are visible (fixed)
+	visible := VisibleCategoryNames(s.SmoothedCats)
+	if len(visible) != 2 {
+		t.Fatalf("expected 2 fixed categories, got %d: %v", len(visible), visible)
+	}
+
+	// Forward cycles through build → shell → empty
+	s.CycleCategoryFilter(+1)
+	if s.CategoryFilter != "build" {
+		t.Errorf("got %q, want build", s.CategoryFilter)
+	}
+	s.CycleCategoryFilter(+1)
+	if s.CategoryFilter != "shell" {
+		t.Errorf("got %q, want shell", s.CategoryFilter)
+	}
+	s.CycleCategoryFilter(+1)
+	if s.CategoryFilter != "" {
+		t.Errorf("got %q, want empty", s.CategoryFilter)
+	}
+}
+
 func TestVisibleCategoryNames(t *testing.T) {
 	smoothed := map[string]float64{
 		"build": 0,   // fixed — always visible
@@ -1433,5 +1457,122 @@ func TestPushAlert(t *testing.T) {
 	got := s.Alerts.Peek()
 	if got.Message != "test alert" {
 		t.Errorf("alert message = %q, want %q", got.Message, "test alert")
+	}
+}
+
+// ── SessionUptime ───────────────────────────────────────────
+
+func TestSessionUptimeZeroWithNoAgents(t *testing.T) {
+	s := NewAppState()
+	if got := s.SessionUptime(); got != 0 {
+		t.Errorf("SessionUptime with no agents = %v, want 0", got)
+	}
+}
+
+func TestSessionUptimeTracksEarliestStart(t *testing.T) {
+	s := NewAppState()
+	t0 := time.Now().Add(-5 * time.Minute)
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a1", Timestamp: t0,
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a2", Timestamp: t0.Add(2 * time.Minute),
+	})
+	uptime := s.SessionUptime()
+	if uptime < 4*time.Minute || uptime > 6*time.Minute {
+		t.Errorf("SessionUptime = %v, want ~5m", uptime)
+	}
+}
+
+func TestSessionUptimeResetsOnCounterReset(t *testing.T) {
+	s := NewAppState()
+	t0 := time.Now().Add(-10 * time.Minute)
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a1", Timestamp: t0,
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventCounterReset, Timestamp: time.Now(),
+	})
+	if got := s.SessionUptime(); got != 0 {
+		t.Errorf("SessionUptime after reset = %v, want 0", got)
+	}
+}
+
+// ── TotalTranscriptBytes ────────────────────────────────────
+
+func TestTotalTranscriptBytesCompletedOnly(t *testing.T) {
+	s := NewAppState()
+	t0 := time.Now()
+
+	// Create temp transcript files with known sizes so statTranscript
+	// populates TranscriptBytes on agent.stop.
+	dir := t.TempDir()
+	f1 := filepath.Join(dir, "agent-a1.jsonl")
+	f2 := filepath.Join(dir, "agent-a2.jsonl")
+	os.WriteFile(f1, make([]byte, 1024), 0644) // 1KB
+	os.WriteFile(f2, make([]byte, 2048), 0644) // 2KB
+
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a1", Timestamp: t0,
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "a1", TranscriptPath: f1, Timestamp: t0.Add(time.Second),
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a2", Timestamp: t0.Add(2 * time.Second),
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "a2", TranscriptPath: f2, Timestamp: t0.Add(3 * time.Second),
+	})
+	// Active agent — should NOT contribute (TranscriptBytes == 0)
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a3", Timestamp: t0.Add(4 * time.Second),
+	})
+
+	got := s.TotalTranscriptBytes()
+	want := int64(1024 + 2048)
+	if got != want {
+		t.Errorf("TotalTranscriptBytes = %d, want %d", got, want)
+	}
+}
+
+// ── AgentTypeCounts ─────────────────────────────────────────
+
+func TestAgentTypeCounts(t *testing.T) {
+	s := NewAppState()
+	t0 := time.Now()
+	// 2 general-purpose, 1 Explore (active), 1 Plan (completed)
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a1", AgentType: "general-purpose", Timestamp: t0,
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "a1", AgentType: "general-purpose", Timestamp: t0.Add(time.Second),
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a2", AgentType: "general-purpose", Timestamp: t0.Add(2 * time.Second),
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "a2", AgentType: "general-purpose", Timestamp: t0.Add(3 * time.Second),
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a3", AgentType: "Explore", Timestamp: t0.Add(4 * time.Second),
+	})
+	// a3 still active
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "a4", AgentType: "Plan", Timestamp: t0.Add(5 * time.Second),
+	})
+	s.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "a4", AgentType: "Plan", Timestamp: t0.Add(6 * time.Second),
+	})
+
+	counts := s.AgentTypeCounts()
+	if counts["general-purpose"] != 2 {
+		t.Errorf("general-purpose = %d, want 2", counts["general-purpose"])
+	}
+	if counts["Explore"] != 1 {
+		t.Errorf("Explore = %d, want 1", counts["Explore"])
+	}
+	if counts["Plan"] != 1 {
+		t.Errorf("Plan = %d, want 1", counts["Plan"])
 	}
 }
