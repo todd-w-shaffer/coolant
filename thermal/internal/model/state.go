@@ -90,6 +90,9 @@ type AppState struct {
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
 
+	// Category filter (ephemeral inspection state — not persisted)
+	CategoryFilter string
+
 	// Personality
 	IdleCycle  int
 	idleTicker int
@@ -506,6 +509,63 @@ func (s *AppState) PurgeStaleAgents() {
 	}
 }
 
+// SetCategoryFilter sets the active category filter. Empty string clears.
+func (s *AppState) SetCategoryFilter(name string) {
+	s.CategoryFilter = name
+}
+
+// ToggleCategoryFilter toggles filtering: if name matches the current
+// filter, clears it; otherwise sets it to name.
+func (s *AppState) ToggleCategoryFilter(name string) {
+	if s.CategoryFilter == name {
+		s.CategoryFilter = ""
+	} else {
+		s.CategoryFilter = name
+	}
+}
+
+// CycleCategoryFilter cycles through visible categories. +1 forward,
+// -1 backward. The cycle is none → A → B → … → Z → none. direction == 0
+// is a no-op.
+func (s *AppState) CycleCategoryFilter(direction int) {
+	if direction == 0 {
+		return
+	}
+	visible := VisibleCategoryNames(s.SmoothedCats)
+	if len(visible) == 0 {
+		s.CategoryFilter = ""
+		return
+	}
+
+	// Find current index (-1 when no filter active)
+	cur := -1
+	for i, name := range visible {
+		if name == s.CategoryFilter {
+			cur = i
+			break
+		}
+	}
+
+	next := cur + direction
+	if next < -1 {
+		next = len(visible) - 1 // backward past none → last
+	}
+	if next >= len(visible) {
+		next = -1 // forward past last → none
+	}
+
+	if next == -1 {
+		s.CategoryFilter = ""
+	} else {
+		s.CategoryFilter = visible[next]
+	}
+}
+
+// PushAlert adds an alert to the ring buffer (public wrapper).
+func (s *AppState) PushAlert(a AlertEntry) {
+	s.addAlert(a)
+}
+
 // IsIdle returns true when no Claude sessions are detected.
 func (s *AppState) IsIdle() bool {
 	return s.SessionCount == 0
@@ -551,6 +611,20 @@ func statTranscript(path string) int64 {
 		return info.Size()
 	}
 	return 0
+}
+
+// VisibleCategoryNames returns category names that should appear in the
+// headline: fixed categories always, dynamic runtimes when smoothed >= 0.5.
+// Order follows collector.Categories. Lives in model (not widgets) to avoid
+// an import cycle — widgets imports model, so model cannot import widgets.
+func VisibleCategoryNames(smoothed map[string]float64) []string {
+	var names []string
+	for _, cat := range collector.Categories {
+		if collector.FixedCategories[cat.Name] || smoothed[cat.Name] >= 0.5 {
+			names = append(names, cat.Name)
+		}
+	}
+	return names
 }
 
 func countAlpha(string) float64 { return config.CountSmoothAlpha }

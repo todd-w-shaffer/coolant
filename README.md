@@ -76,7 +76,7 @@ Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runne
 
 - **macOS** -- the dashboard uses native system APIs (mach kernel, vm_stat, sysctl). Prebuilt binaries for Apple Silicon and Intel.
 - **bash 3.2+** -- hooks only, ships with macOS
-- **tmux** -- optional, for running the dashboard in a bottom split pane
+- **tmux** -- optional, for running the dashboard in a bottom split pane. Enable `set -g mouse on` in `~/.tmux.conf` for headline click-to-filter. Use Option-drag (macOS) to copy text while mouse capture is active, or press `m` to toggle mouse mode off.
 
 Hooks work on any platform with bash. The thermal dashboard is macOS-only.
 

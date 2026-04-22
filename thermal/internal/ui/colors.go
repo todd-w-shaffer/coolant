@@ -89,3 +89,10 @@ func init() {
 		CategoryGlyphFormatted[name] = ColorText(clr, glyph)
 	}
 }
+
+// CatZoneID returns the bubblezone zone ID for a category cell.
+// Used by headline.go (mark) and main.go (click dispatch) — keeping the
+// string construction in one place prevents silent drift.
+func CatZoneID(name string) string {
+	return "cat:" + name
+}

@@ -142,6 +142,9 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. Timing, thresholds, and EMA alphas live in `internal/config/tuning.go`; animation defaults also live there but are consumed via `anim.Default()` rather than directly.
 - Braille rendering done natively in Go (no awk, no subshells).
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
+- **bubblezone v2 is incompatible with `lipgloss.Canvas` / the v2 compositor.** We register clickable zones via `github.com/lrstanley/bubblezone/v2`. The maintainer warns that bubblezone may not work when using the lipgloss v2 canvas/compositor — the marker-scan model assumes a flat string. Coolant composes layouts via string concatenation in `layout/horizontal.go`; do not introduce `lipgloss.Canvas` without re-evaluating the zone story.
+- **Zone ID naming convention:** `<widget>:<entity-id>` — e.g. `cat:build`, `agent:abc123`, `stat:cpu`. Avoids cross-widget collisions without `zone.NewPrefix()` overhead.
+- **Width math near marks:** bubblezone markers are zero-width to `lipgloss.Width` but inflate `len()`. Wrap only the final styled output in `zone.Mark`; never compute width on a Mark-wrapped string. Prefer `lipgloss.Width` over `len` anywhere a string may be marked.
 
 ## Testing
 

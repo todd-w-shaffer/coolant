@@ -1,8 +1,10 @@
 package layout
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
@@ -52,5 +54,34 @@ func TestToggleHelpFromFullReturnsToShort(t *testing.T) {
 	h.ToggleHelp()
 	if got := h.HelpMode(); got != HelpShort {
 		t.Errorf("toggling from full HelpMode = %d, want %d", got, HelpShort)
+	}
+}
+
+// TestHelpViewCoversAllBindings asserts that every keybinding registered in
+// KeyMap appears somewhere in the full help overlay. Catches drift when a
+// binding is added to keys.go but helpView() in horizontal.go isn't updated.
+func TestHelpViewCoversAllBindings(t *testing.T) {
+	h := newHorizontalForTest(t)
+	lines := h.helpView()
+
+	// Flatten and strip ANSI so we match plain text.
+	var combined string
+	for _, line := range lines {
+		combined += ansi.Strip(line) + " "
+	}
+
+	// Check FullHelp groups 1+ (group 0 is help/quit — meta keys that
+	// don't need full-overlay entries since "press any key" covers them).
+	km := keys.Default()
+	for gi, group := range km.FullHelp() {
+		if gi == 0 {
+			continue
+		}
+		for _, b := range group {
+			help := b.Help()
+			if !strings.Contains(combined, help.Key) {
+				t.Errorf("helpView missing key %q (desc: %q) from FullHelp group %d", help.Key, help.Desc, gi)
+			}
+		}
 	}
 }

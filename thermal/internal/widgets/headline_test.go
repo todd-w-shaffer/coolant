@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
+	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
@@ -429,7 +430,7 @@ func TestRenderSessionsAgentsStack_WidthMaxOfRows(t *testing.T) {
 		sessions = h.state.Current.Sessions
 	}
 	iconBg := th.OverallGradient[1].Bg
-	sessionStr, sessionWidth := renderSessionDiamonds(sessions, iconBg, th)
+	sessionStr, sessionWidth := renderSessionDiamonds(sessions, iconBg, th, "")
 	_, activeStr, _, activeWidth := h.agents.RenderSplit(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
 
 	rp := h.renderSessionsAgentsStack(sessionStr, sessionWidth, activeStr, activeWidth, iconBg)
@@ -653,6 +654,113 @@ func TestVisibleCategoriesPreservesOrder(t *testing.T) {
 				}
 				prevOrder = ref.Order
 			}
+		}
+	}
+}
+
+// TestInactiveCategoryCellsDim — when a filter is active, non-matching
+// dynamic category cells on the top row should render with a downshifted
+// gradient (dimmer). The matching cell stays at full brightness.
+func TestInactiveCategoryCellsDim(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+
+	smoothed := map[string]float64{"node": 5.0, "go": 2.0}
+
+	// No filter — baseline: "node" cell at its natural color
+	baseline := renderCatCell(collector.Category{Name: "node", Label: "node", Order: 2}, smoothed, dynamicCellWidth, th, "")
+	baseStripped := ansi.Strip(baseline)
+
+	// With filter on "go" — "node" should be dimmed (different ANSI)
+	dimmed := renderCatCell(collector.Category{Name: "node", Label: "node", Order: 2}, smoothed, dynamicCellWidth, th, "go")
+	dimStripped := ansi.Strip(dimmed)
+
+	// Content should be the same text
+	if baseStripped != dimStripped {
+		t.Errorf("stripped content differs:\n  base: %q\n  dim:  %q", baseStripped, dimStripped)
+	}
+	// But ANSI escapes should differ (dimmed gradient)
+	if baseline == dimmed {
+		t.Error("filtered-out category cell should have different ANSI styling (dimmed)")
+	}
+
+	// Matching cell should be unchanged
+	matching := renderCatCell(collector.Category{Name: "go", Label: "go", Order: 3}, smoothed, dynamicCellWidth, th, "go")
+	matchBaseline := renderCatCell(collector.Category{Name: "go", Label: "go", Order: 3}, smoothed, dynamicCellWidth, th, "")
+	if matching != matchBaseline {
+		t.Error("matching category cell should render identically with or without filter")
+	}
+}
+
+// TestSessionDiamondsDimWhenFiltered — when a filter is active, session
+// diamonds whose dominant category doesn't match should render with
+// dimmed color.
+func TestSessionDiamondsDimWhenFiltered(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	iconBg := th.OverallGradient[1].Bg
+
+	sessions := []collector.SessionTree{
+		{
+			RootPID:  1000,
+			RootComm: "claude",
+			Descendants: []collector.ProcessInfo{
+				{PID: 1001, TypeCode: "T", Comm: "tsc"}, // build
+				{PID: 1002, TypeCode: "T", Comm: "tsc"}, // build
+			},
+		},
+		{
+			RootPID:  2000,
+			RootComm: "claude",
+			Descendants: []collector.ProcessInfo{
+				{PID: 2001, TypeCode: "N", Comm: "node"}, // node (runtime)
+			},
+		},
+	}
+
+	// No filter
+	baseline, baseW := renderSessionDiamonds(sessions, iconBg, th, "")
+	// Filter on "build" — session 1 matches, session 2 doesn't
+	filtered, filtW := renderSessionDiamonds(sessions, iconBg, th, "build")
+
+	if baseW != filtW {
+		t.Errorf("width changed: base=%d filtered=%d", baseW, filtW)
+	}
+	if baseline == filtered {
+		t.Error("filtered session diamonds should differ from baseline (non-matching session dimmed)")
+	}
+}
+
+// TestCategoryCellsAreMarked — each visible dynamic category cell in the
+// headline should be wrapped in zone.Mark so bubblezone can detect clicks.
+// We verify by checking that the raw output differs from the scanned output
+// (zone markers are present and stripped by Scan) and that Scan preserves
+// the visible width.
+func TestCategoryCellsAreMarked(t *testing.T) {
+	th := theme.Classic()
+	th.Init()
+	h := NewHeadline(th, anim.Default())
+	h.SetSize(120, 2)
+
+	state := fixtureState()
+	state.SmoothedCats["node"] = 5.0
+	h.Update(state)
+
+	output := h.View()
+	scanned := zone.Scan(output)
+
+	// zone.Mark injects invisible sentinel bytes. If marks are present,
+	// the raw output is longer than the scanned output.
+	if len(output) == len(scanned) {
+		t.Error("output unchanged after zone.Scan — no zone markers detected; renderCatCell should wrap cells in zone.Mark")
+	}
+
+	// Visible width must be preserved (markers are zero-width).
+	for i, line := range strings.Split(output, "\n") {
+		scanLine := strings.Split(scanned, "\n")[i]
+		if ansi.StringWidth(line) != ansi.StringWidth(scanLine) {
+			t.Errorf("line %d: raw width %d != scanned width %d — zone markers inflated visible width",
+				i, ansi.StringWidth(line), ansi.StringWidth(scanLine))
 		}
 	}
 }
