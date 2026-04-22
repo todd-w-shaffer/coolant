@@ -55,8 +55,10 @@ event bus" convention below).
   formula, ring buffers, idle personality
 - **Rendering** — `theme/` (color palettes, HCL blend LUTs), `anim/` (motion
   profiles, orthogonal to theme), `widgets/` (sparklines, headline, LCD, gauges,
-  agent dots, heat bloom/rails, alerts, battery), `layout/` (bottom-strip compositor),
-  `ui/` (semantic colors, glyphs, helpers), `keys/` (shared keybinding registry)
+  agent dots, heat bloom/rails, alerts, battery), `layout/` (bottom-strip compositor
+  with `overlayContent` for `h` help and `i` intel overlays, category filter dim
+  feedback via bubblezone click regions), `ui/` (semantic colors, glyphs, helpers,
+  `CatZoneID`), `keys/` (shared keybinding registry)
 - **Plumbing** — `config/` (timing, thresholds, EMA, animation defaults),
   `demo/` (scripted 6-phase narrative for `--demo`), `version/` (ldflags-injected
   build version), `updater/` (daily-TTL staleness check against `VERSION` on main)
@@ -126,7 +128,7 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - JSON field extraction from hook stdin uses `_json_field` (top-level), `_nested_command` (tool_input.command), and `_extract_escaped` (extract + escape for re-emission into JSONL) — no jq dependency.
 - Values interpolated into JSONL must pass through `_json_escape` to handle backslashes and quotes. Agent metadata extraction uses `_extract_agent_fields`, which calls `_extract_escaped` for each field.
 - State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log, agent-starts tsv (agent_id<TAB>epoch_s for duration_s computation on stop; 24h entries self-prune), version cache. No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks.
-- **Gate system**: `gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always capped with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are suppressed when user opts in via `/coolant`. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
+- **Gate system**: `gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always throttled with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are blocked when user opts in via `/coolant`. Alert labels use "throttled" (test runners, automatic) and "blocked" (build tools, opt-in) — JSONL event names remain `gate.cap`/`gate.suppress` internally. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
 - macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao`, `ioreg` for sensors. No third-party tools.
 
 ### Go (API gotchas)

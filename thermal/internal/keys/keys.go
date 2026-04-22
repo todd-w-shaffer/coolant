@@ -13,6 +13,7 @@ type KeyMap struct {
 	CategoryNext  key.Binding
 	CategoryClear key.Binding
 	MouseToggle   key.Binding
+	Intel         key.Binding
 }
 
 func Default() KeyMap {
@@ -49,19 +50,23 @@ func Default() KeyMap {
 			key.WithKeys("m"),
 			key.WithHelp("m", "toggle mouse"),
 		),
+		Intel: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "session intel"),
+		),
 	}
 }
 
 // ShortHelp satisfies bubbles/help.KeyMap. Order is load-bearing — tests
 // assert left-to-right rendering.
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Quit, k.Collapse, k.PurgeStale, k.CategoryPrev, k.CategoryNext, k.CategoryClear, k.MouseToggle}
+	return []key.Binding{k.Help, k.Quit, k.Collapse, k.PurgeStale, k.CategoryPrev, k.CategoryNext, k.CategoryClear, k.MouseToggle, k.Intel}
 }
 
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Help, k.Quit},
-		{k.Collapse, k.PurgeStale},
+		{k.Collapse, k.PurgeStale, k.Intel},
 		{k.CategoryPrev, k.CategoryNext, k.CategoryClear, k.MouseToggle},
 	}
 }

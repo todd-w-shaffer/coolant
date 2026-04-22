@@ -181,3 +181,64 @@ func TestTmuxHintFiresOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestIntelKeyTogglesOverlay(t *testing.T) {
+	m := newTestModel(t)
+	// Need a snapshot so we're not idle (intel suppressed during idle)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	snap := collector.Snapshot{Online: true, Sessions: []collector.SessionTree{{RootPID: 1}}}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	m, _ = pressKey(t, m, "i")
+	if !m.layout.IntelMode() {
+		t.Error("'i' should toggle intel mode on")
+	}
+	m, _ = pressKey(t, m, "i")
+	// Any key in intel mode dismisses — so second 'i' dismisses, doesn't toggle back on
+	if m.layout.IntelMode() {
+		t.Error("second key in intel mode should dismiss")
+	}
+}
+
+func TestIntelDismissedByAnyKey(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	snap := collector.Snapshot{Online: true, Sessions: []collector.SessionTree{{RootPID: 1}}}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	m, _ = pressKey(t, m, "i")
+	if !m.layout.IntelMode() {
+		t.Fatal("precondition: intel should be on")
+	}
+	m, _ = pressKey(t, m, "x")
+	if m.layout.IntelMode() {
+		t.Error("'x' in intel mode should dismiss intel")
+	}
+}
+
+func TestQuitConsumedInIntelMode(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	snap := collector.Snapshot{Online: true, Sessions: []collector.SessionTree{{RootPID: 1}}}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	m, _ = pressKey(t, m, "i")
+	m, _ = pressKey(t, m, "q")
+	if m.layout.IntelMode() {
+		t.Error("'q' in intel mode should dismiss intel")
+	}
+	select {
+	case <-m.done:
+		t.Error("'q' in intel mode should NOT quit the app")
+	default:
+	}
+}

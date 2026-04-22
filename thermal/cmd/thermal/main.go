@@ -151,6 +151,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyPressMsg:
+		// Intel mode: any key dismisses without dispatching its action.
+		if m.layout.IntelMode() {
+			m.layout.DismissIntel()
+			return m, nil
+		}
 		// Full-help mode: any key dismisses without dispatching its action.
 		if m.layout.HelpMode() == layout.HelpFull {
 			m.layout.DismissHelp()
@@ -174,6 +179,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout.State().SetCategoryFilter("")
 		case key.Matches(msg, m.keys.MouseToggle):
 			m.mouseEnabled = !m.mouseEnabled
+		case key.Matches(msg, m.keys.Intel):
+			if !m.layout.State().IsIdle() {
+				m.layout.ToggleIntel()
+			}
 		}
 
 	case tea.WindowSizeMsg:

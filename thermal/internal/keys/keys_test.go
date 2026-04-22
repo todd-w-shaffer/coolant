@@ -25,6 +25,7 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 		{"CategoryNext", km.CategoryNext, []string{"]"}, "]", "next category"},
 		{"CategoryClear", km.CategoryClear, []string{"\\"}, "\\", "clear filter"},
 		{"MouseToggle", km.MouseToggle, []string{"m"}, "m", "toggle mouse"},
+		{"Intel", km.Intel, []string{"i"}, "i", "session intel"},
 	}
 
 	for _, tt := range tests {
@@ -46,7 +47,7 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 func TestShortHelpOrder(t *testing.T) {
 	km := Default()
 	short := km.ShortHelp()
-	want := []key.Binding{km.Help, km.Quit, km.Collapse, km.PurgeStale, km.CategoryPrev, km.CategoryNext, km.CategoryClear, km.MouseToggle}
+	want := []key.Binding{km.Help, km.Quit, km.Collapse, km.PurgeStale, km.CategoryPrev, km.CategoryNext, km.CategoryClear, km.MouseToggle, km.Intel}
 	if len(short) != len(want) {
 		t.Fatalf("ShortHelp() length = %d, want %d", len(short), len(want))
 	}
@@ -65,7 +66,7 @@ func TestFullHelpGrouping(t *testing.T) {
 	}
 	want := [][]key.Binding{
 		{km.Help, km.Quit},
-		{km.Collapse, km.PurgeStale},
+		{km.Collapse, km.PurgeStale, km.Intel},
 		{km.CategoryPrev, km.CategoryNext, km.CategoryClear, km.MouseToggle},
 	}
 	for r := range want {

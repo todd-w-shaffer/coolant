@@ -76,16 +76,17 @@ type AppState struct {
 	scratchPIDs map[int]bool
 
 	// Agent tracking (from JSONL events, not process discovery)
-	activeRecords    map[string]*AgentRecord          // agent_id → in-progress record
-	completedRecords *RingBuffer[AgentRecord]         // capped completed agents
-	totalCompleted   int                              // monotonic count — not capped by ring buffer
-	epoch            time.Time                        // model init time — only count completions after this
-	peakConcurrency  int                              // high-water mark of concurrent agents
-	orphanStops      int                              // monotonic count of stops with no matching start
-	burstCounter     int                              // monotonic within thermo lifetime, not reset on session reset
-	lastStartTime    time.Time                        // timestamp of most recent agent.start (for burst gap detection)
-	gateEvents       *RingBuffer[collector.GateEvent] // capped ring of gate.cap + gate.suppress events
-	counterDrift     int                              // latest divergence: positive = bash > Go
+	activeRecords        map[string]*AgentRecord          // agent_id → in-progress record
+	completedRecords     *RingBuffer[AgentRecord]         // capped completed agents
+	totalCompleted       int                              // monotonic count — not capped by ring buffer
+	epoch                time.Time                        // model init time — only count completions after this
+	peakConcurrency      int                              // high-water mark of concurrent agents
+	orphanStops          int                              // monotonic count of stops with no matching start
+	burstCounter         int                              // monotonic within thermo lifetime, not reset on session reset
+	lastStartTime        time.Time                        // timestamp of most recent agent.start (for burst gap detection)
+	gateEvents           *RingBuffer[collector.GateEvent] // capped ring of gate.cap + gate.suppress events
+	counterDrift         int                              // latest divergence: positive = bash > Go
+	sessionEarliestStart time.Time                        // set on first agent.start, reset on counter.reset
 
 	// Alerts
 	Alerts *RingBuffer[AlertEntry]
@@ -305,6 +306,9 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 	switch ev.Event {
 	case collector.EventAgentStart:
 		s.PluginActive = true
+		if s.sessionEarliestStart.IsZero() {
+			s.sessionEarliestStart = ev.Timestamp
+		}
 		if !s.lastStartTime.IsZero() && ev.Timestamp.Sub(s.lastStartTime) > config.BurstGapThreshold {
 			s.burstCounter++
 		}
@@ -366,6 +370,7 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 			delete(s.activeRecords, id)
 		}
 		s.peakConcurrency = 0
+		s.sessionEarliestStart = time.Time{}
 	}
 }
 
@@ -566,6 +571,41 @@ func (s *AppState) CycleCategoryFilter(direction int) {
 // PushAlert adds an alert to the ring buffer (public wrapper).
 func (s *AppState) PushAlert(a AlertEntry) {
 	s.addAlert(a)
+}
+
+// SessionUptime returns the duration since the first agent.start in this
+// session. Returns 0 if no agents have started (or after a counter.reset
+// with no new agents). Reads sessionEarliestStart directly — does not
+// scan the ring buffer (which evicts old entries at 500).
+func (s *AppState) SessionUptime() time.Duration {
+	if s.sessionEarliestStart.IsZero() {
+		return 0
+	}
+	return time.Since(s.sessionEarliestStart)
+}
+
+// TotalTranscriptBytes returns the sum of TranscriptBytes across completed
+// records. Active records have 0 (populated on agent.stop), so only
+// completed records contribute.
+func (s *AppState) TotalTranscriptBytes() int64 {
+	var total int64
+	for i := 0; i < s.completedRecords.Len(); i++ {
+		total += s.completedRecords.At(i).TranscriptBytes
+	}
+	return total
+}
+
+// AgentTypeCounts returns a type breakdown across completed + active records.
+// The returned map is unordered — callers handle display sorting.
+func (s *AppState) AgentTypeCounts() map[string]int {
+	counts := make(map[string]int)
+	for i := 0; i < s.completedRecords.Len(); i++ {
+		counts[s.completedRecords.At(i).AgentType]++
+	}
+	for _, rec := range s.activeRecords {
+		counts[rec.AgentType]++
+	}
+	return counts
 }
 
 // IsIdle returns true when no Claude sessions are detected.

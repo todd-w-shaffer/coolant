@@ -2,9 +2,12 @@
 package layout
 
 import (
+	"cmp"
 	"fmt"
 	"image/color"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -26,11 +29,12 @@ const (
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).
 // Layout order:
 //
-//	Line 1:   [i] plugin CTA (if no plugin)
-//	Line 2:   [ overall temp + msg | test:004 | build:008 | run:018 | search:005 | shell:004 ]
-//	Lines 3-8: 2-row sparklines (cpu%, mem%, compressor — 2 rows each)
-//	Line 9:   spawn:+003/s  death:-001/s  net:+002/s  |  CPU:034%  MEM:11/16GB  SWAP:00000MB
-//	Lines 10-11: alerts
+//	Line 1:    notification bar (plugin CTA / update available)
+//	Lines 2-3: headline (category cells, session diamonds, agent dots, LCD, battery)
+//	Lines 4-9: sparkline gauges (cpu%, mem%, swap — 2 rows each)
+//	           [h] help overlay or [i] intel overlay composites over dimmed gauges
+//	Line 10:   rates (system stats, spawn/death/net, short help)
+//	Lines 11+: alerts
 type Horizontal struct {
 	width     int
 	height    int
@@ -40,6 +44,7 @@ type Horizontal struct {
 	rates     *widgets.Rates
 	alerts    *widgets.Alerts
 	helpMode  int8
+	intelMode bool
 	collapsed bool
 	theme     *theme.Theme
 }
@@ -79,6 +84,7 @@ func (h *Horizontal) HelpMode() int8 {
 }
 
 func (h *Horizontal) ToggleHelp() {
+	h.intelMode = false
 	if h.helpMode == HelpFull {
 		h.helpMode = HelpShort
 		return
@@ -88,6 +94,19 @@ func (h *Horizontal) ToggleHelp() {
 
 func (h *Horizontal) DismissHelp() {
 	h.helpMode = HelpShort
+}
+
+func (h *Horizontal) IntelMode() bool {
+	return h.intelMode
+}
+
+func (h *Horizontal) ToggleIntel() {
+	h.helpMode = HelpShort
+	h.intelMode = !h.intelMode
+}
+
+func (h *Horizontal) DismissIntel() {
+	h.intelMode = false
 }
 
 func (h *Horizontal) ToggleCollapse() {
@@ -100,6 +119,9 @@ func (h *Horizontal) IsCollapsed() bool {
 
 func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
+	if state.IsIdle() {
+		h.intelMode = false // dismiss stale intel on idle transition
+	}
 	h.headline.Update(state)
 	h.gauges.Update(state)
 	h.rates.Update(state)
@@ -135,11 +157,16 @@ func (h *Horizontal) activeView() string {
 		lines = append(lines, h.headline.ViewLines()...)
 	}
 
-	if h.helpMode == HelpFull && h.height >= 6 {
+	if h.intelMode && h.height >= 6 {
 		h.gauges.SetDimmed(true)
 		gaugeLines := h.gauges.ViewLines(h.height - 1)
 		h.gauges.SetDimmed(false)
-		lines = append(lines, overlayHelp(h.helpView(), gaugeLines)...)
+		lines = append(lines, overlayContent(h.intelView(), gaugeLines)...)
+	} else if h.helpMode == HelpFull && h.height >= 6 {
+		h.gauges.SetDimmed(true)
+		gaugeLines := h.gauges.ViewLines(h.height - 1)
+		h.gauges.SetDimmed(false)
+		lines = append(lines, overlayContent(h.helpView(), gaugeLines)...)
 	} else if h.height >= 4 {
 		lines = append(lines, h.gauges.ViewLines(h.height-1)...)
 	}
@@ -151,11 +178,11 @@ func (h *Horizontal) activeView() string {
 	return h.padToHeight(lines)
 }
 
-// overlayHelp composes help lines over dimmed gauge lines using the widest
+// overlayContent composes help lines over dimmed gauge lines using the widest
 // help line as the opacity border: each help row is padded to that width,
 // and dimmed sparkline shows through from that column onward on every row.
 // Gauge rows below the help block render as unmodified dimmed sparklines.
-func overlayHelp(help, gaugeLines []string) []string {
+func overlayContent(help, gaugeLines []string) []string {
 	if len(gaugeLines) == 0 {
 		return gaugeLines
 	}
@@ -198,7 +225,152 @@ func (h *Horizontal) helpView() []string {
 		" " + dim("filter") + " " + ct(d, "[ prev") + "  " + ct(d, "] next") + "  " + ct(d, "\\ clear") + "  " +
 			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
 			dim("click a headline category to filter"),
+		" " + ct(d, "i session intel") + "  " +
+			dim("|") + " " + ct(d, "x purge stale") + "  " + ct(d, "c collapse"),
 		" " + dim("press any key to dismiss"),
+	}
+}
+
+func (h *Horizontal) intelView() []string {
+	dim := ui.DimText
+	ct := func(s string) string { return ui.ColorText(h.theme.HelpColor, s) }
+	sep := dim(" · ")
+	s := h.state
+
+	// Row 1: agents — active, completed, peak, uptime
+	active := ct(fmt.Sprintf("%d active", s.AgentCount()))
+	completed := ct(fmt.Sprintf("%d completed", s.CompletedAgentCount()))
+	peakVal := float64(s.PeakConcurrency())
+	peakThresh := &theme.SparkThresholds{Warn: 3, Crit: 6}
+	peakColor := h.theme.SeverityColor(peakVal, peakThresh)
+	peak := peakColor + fmt.Sprintf("peak %d", s.PeakConcurrency()) + "\033[0m"
+	row1 := " " + dim("agents") + "    " + active + sep + completed + sep + peak
+	if uptime := s.SessionUptime(); uptime > 0 {
+		row1 += sep + ct(formatUptime(uptime))
+	}
+
+	// Row 2: types — sorted by count descending, cap at 5
+	typeCounts := s.AgentTypeCounts()
+	type typeEntry struct {
+		name  string
+		count int
+	}
+	var entries []typeEntry
+	for name, count := range typeCounts {
+		entries = append(entries, typeEntry{name, count})
+	}
+	slices.SortStableFunc(entries, func(a, b typeEntry) int {
+		if a.count != b.count {
+			return cmp.Compare(b.count, a.count) // descending by count
+		}
+		return cmp.Compare(a.name, b.name) // ascending by name for ties
+	})
+	var typeParts []string
+	if len(entries) <= 5 {
+		for _, e := range entries {
+			typeParts = append(typeParts, ct(fmt.Sprintf("%d %s", e.count, e.name)))
+		}
+	} else {
+		for _, e := range entries[:4] {
+			typeParts = append(typeParts, ct(fmt.Sprintf("%d %s", e.count, e.name)))
+		}
+		other := 0
+		for _, e := range entries[4:] {
+			other += e.count
+		}
+		typeParts = append(typeParts, ct(fmt.Sprintf("%d other", other)))
+	}
+	row2 := " " + dim("types") + "     "
+	if len(typeParts) > 0 {
+		row2 += strings.Join(typeParts, sep)
+	} else {
+		row2 += dim("none")
+	}
+
+	// Row 3: duration — avg, longest
+	var row3 string
+	records := s.CompletedRecords()
+	if len(records) == 0 {
+		row3 = " " + dim("duration") + "  " + dim("no completions yet")
+	} else {
+		var totalDur time.Duration
+		var longest model.AgentRecord
+		for _, rec := range records {
+			totalDur += rec.Duration
+			if rec.Duration > longest.Duration {
+				longest = rec
+			}
+		}
+		avg := totalDur / time.Duration(len(records))
+		avgStr := ct(fmt.Sprintf("avg %s", formatDuration(avg)))
+		longestStr := ct(fmt.Sprintf("longest %s", formatDuration(longest.Duration)))
+		longestID := ""
+		if longest.AgentID != "" {
+			id := longest.AgentID
+			if len(id) > 6 {
+				id = id[:6]
+			}
+			longestID = " " + dim("("+longest.AgentType+" "+id+")")
+		}
+		row3 = " " + dim("duration") + "  " + avgStr + sep + longestStr + longestID
+	}
+
+	// Row 4: tools — throttled, blocked
+	capCount := s.GateCapCount()
+	suppressCount := s.GateSuppressCount()
+	var throttledStr string
+	if capCount > 0 {
+		throttledStr = ui.ColorText(h.theme.SpawnColor, fmt.Sprintf("%d throttled", capCount))
+	} else {
+		throttledStr = dim("0 throttled")
+	}
+	blockedStr := ct(fmt.Sprintf("%d blocked", suppressCount))
+	row4 := " " + dim("tools") + "     " + throttledStr + sep + blockedStr
+
+	// Row 5: output — transcript bytes, orphans, drift
+	totalBytes := s.TotalTranscriptBytes()
+	bytesStr := ct(formatBytesCompact(totalBytes) + " transcripts")
+	orphanStr := ct(fmt.Sprintf("%d orphans", s.OrphanStopCount()))
+	driftStr := ct(fmt.Sprintf("drift %d", s.CounterDrift()))
+	row5 := " " + dim("output") + "    " + bytesStr + sep + orphanStr + sep + driftStr
+
+	return []string{row1, row2, row3, row4, row5}
+}
+
+// formatUptime formats a duration as "Xh Ym" or "Xm Ys" for compact display.
+func formatUptime(d time.Duration) string {
+	if d >= time.Hour {
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh%02dm", h, m)
+	}
+	m := int(d.Minutes())
+	s := int(d.Seconds()) % 60
+	return fmt.Sprintf("%dm%02ds", m, s)
+}
+
+// formatDuration formats a duration as compact seconds for agent durations.
+func formatDuration(d time.Duration) string {
+	s := int(d.Seconds())
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	m := s / 60
+	s = s % 60
+	return fmt.Sprintf("%dm%ds", m, s)
+}
+
+// formatBytesCompact formats bytes as "N B" / "N.N KB" / "N.N MB" with
+// decimal point and space for human-readable intel display. Distinct from
+// model.FormatBytes which uses tighter "NKB"/"NMB"/"N.NGB" for gauges.
+func formatBytesCompact(b int64) string {
+	switch {
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%d B", b)
 	}
 }
 
