@@ -97,20 +97,6 @@ func TestBattery_NippleAlwaysPresent(t *testing.T) {
 	}
 }
 
-func TestBattery_WallAlwaysPresent(t *testing.T) {
-	// Side top chars must always include wall bits (dots 7+8),
-	// even at 0% fill.
-	for _, pct := range []float64{0, 25, 50, 75, 100} {
-		topL, _, topR, _, _, _ := brailleBattery(pct)
-		for _, r := range []rune{topL, topR} {
-			bits := r & 0xFF
-			if bits&0x40 == 0 || bits&0x80 == 0 { // dots 7 and 8 (wall top)
-				t.Errorf("pct=%.0f: side top char %U missing wall bits", pct, r)
-			}
-		}
-	}
-}
-
 // decodeBrailleLevel returns how many rows are filled in a braille char
 // that uses both left+right columns (solid bar). Counts bits set in
 // the standard braille positions.
@@ -442,6 +428,58 @@ func TestFormatRemaining(t *testing.T) {
 				t.Errorf("formatRemaining(%v) = %q, want %q", tt.d, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBattery_CasingAlwaysPresent(t *testing.T) {
+	// Bottom chars: outer columns fully lit (all 4 rows).
+	// Top chars: outer columns lit on rows 2-4 only (3 rows) — row 1 is
+	// empty so the nipple terminal pokes above the casing walls.
+	const leftFull rune = 0x01 | 0x02 | 0x04 | 0x40  // rows 1-4
+	const rightFull rune = 0x08 | 0x10 | 0x20 | 0x80 // rows 1-4
+	const leftShort rune = 0x02 | 0x04 | 0x40        // rows 2-4 (no dot 1)
+	const rightShort rune = 0x10 | 0x20 | 0x80       // rows 2-4 (no dot 4)
+
+	for _, pct := range []float64{0, 12, 25, 37, 50, 63, 75, 87, 100} {
+		topL, _, topR, botL, _, botR := brailleBattery(pct)
+		// Top chars: short walls (rows 2-4), row 1 must be empty on sides.
+		if topL&0xFF&leftShort != leftShort {
+			t.Errorf("pct=%.0f: topL %U missing left casing bits (rows 2-4)", pct, topL)
+		}
+		if topL&0x01 != 0 {
+			t.Errorf("pct=%.0f: topL %U has dot 1 set — wall extends into nipple row", pct, topL)
+		}
+		if topR&0xFF&rightShort != rightShort {
+			t.Errorf("pct=%.0f: topR %U missing right casing bits (rows 2-4)", pct, topR)
+		}
+		if topR&0x08 != 0 {
+			t.Errorf("pct=%.0f: topR %U has dot 4 set — wall extends into nipple row", pct, topR)
+		}
+		// Bottom chars: full-height walls.
+		if botL&0xFF&leftFull != leftFull {
+			t.Errorf("pct=%.0f: botL %U missing left casing bits", pct, botL)
+		}
+		if botR&0xFF&rightFull != rightFull {
+			t.Errorf("pct=%.0f: botR %U missing right casing bits", pct, botR)
+		}
+	}
+}
+
+func TestBattery_ShoulderAlwaysPresent(t *testing.T) {
+	// Row 2 of top chars forms the shoulder — the step-down from the
+	// narrow nipple to the wider body. topL's right column and topR's
+	// left column must always be lit on row 2, closing the battery outline.
+	const shoulderL rune = 0x10 // dot 5 — right column, row 2 of topL
+	const shoulderR rune = 0x02 // dot 2 — left column, row 2 of topR
+
+	for _, pct := range []float64{0, 25, 50, 75, 100} {
+		topL, _, topR, _, _, _ := brailleBattery(pct)
+		if topL&shoulderL == 0 {
+			t.Errorf("pct=%.0f: topL %U missing shoulder bit (dot 5)", pct, topL)
+		}
+		if topR&shoulderR == 0 {
+			t.Errorf("pct=%.0f: topR %U missing shoulder bit (dot 2)", pct, topR)
+		}
 	}
 }
 

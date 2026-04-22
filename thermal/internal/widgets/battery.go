@@ -161,19 +161,31 @@ func (b *Battery) severityFg() color.Color {
 }
 
 // Battery outline bits OR'd into the top row regardless of fill level.
-// Wall: dots 7+8 (bottom row of top char) — the casing's top edge.
-// Nipple: dots 1+4 (top row of top char) — the terminal, floating above
-// the wall with a visible gap at low fill. The .:.  silhouette emerges
-// from the gap between nipple and wall in the center char.
+// Nipple: dots 1+4 (top row of center top char) — the terminal.
+// Shoulder: row 2 inner dots on side chars — the step-down from the
+// narrow nipple to the wider body, closing the battery outline.
+const (
+	battNippleBits rune = 0x01 | 0x08 // ⠉ — terminal at top of center char
+	battShoulderL  rune = 0x10        // dot 5 — right col row 2 of topL
+	battShoulderR  rune = 0x02        // dot 2 — left col row 2 of topR
+)
+
+// Casing walls: outer columns always lit to form the battery outline.
+// Bottom chars get full-height walls (4 rows). Top chars get short walls
+// (rows 2-4) so the nipple terminal pokes above the casing on row 1.
 var (
-	battWallBits        = leftBits[1] | rightBits[1] // ⣀ — wall top edge
-	battNippleBits rune = 0x01 | 0x08                // ⠉ — terminal at top of center char
+	casingL    = leftBits[4]  // full left column — bottom char left wall
+	casingR    = rightBits[4] // full right column — bottom char right wall
+	casingTopL = leftBits[3]  // rows 2-4 — top char left wall, below nipple
+	casingTopR = rightBits[3] // rows 2-4 — top char right wall, below nipple
 )
 
 // brailleBattery returns six braille runes (3 top, 3 bottom) forming a
-// battery shape. The center top char includes the nipple terminal, side
-// top chars include the wall top edge. Fill rises bottom-to-top with
-// charge level. Reuses levelSplit/leftBits/rightBits from sparkline.go.
+// battery shape. Side chars have permanent casing walls (outer column
+// always on) with a shoulder step-down below the nipple; interior
+// columns fill bottom-to-top with charge level. The center top char
+// includes the nipple terminal. Reuses levelSplit/leftBits/rightBits
+// from sparkline.go.
 func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
 	level := int(pct*8.0/100.0 + 0.5)
 	if level < 0 {
@@ -187,15 +199,14 @@ func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
 	}
 	b, t := levelSplit(level)
 
-	fill := leftBits[t] | rightBits[t]
-	botFill := leftBits[b] | rightBits[b]
-
-	topL = 0x2800 | fill | battWallBits
-	topC = 0x2800 | fill | battWallBits | battNippleBits
-	topR = 0x2800 | fill | battWallBits
-	botL = 0x2800 | botFill
-	botC = 0x2800 | botFill
-	botR = 0x2800 | botFill
+	// Side chars: outer column = casing (always on), inner column = fill.
+	// Center char: both columns = fill (pure interior).
+	topL = 0x2800 | casingTopL | rightBits[t] | battShoulderL
+	topC = 0x2800 | leftBits[t] | rightBits[t] | battNippleBits
+	topR = 0x2800 | leftBits[t] | casingTopR | battShoulderR
+	botL = 0x2800 | casingL | rightBits[b]
+	botC = 0x2800 | leftBits[b] | rightBits[b]
+	botR = 0x2800 | leftBits[b] | casingR
 	return
 }
 
