@@ -56,6 +56,66 @@ load test_helper
   grep -q '"agent_count":1' "$COOLANT_EVENTS"
 }
 
+@test "agent-stop emits duration_s when start was recorded" {
+  echo "1" > "$COOLANT_COUNTER"
+  printf 'abc123\t%s\n' "$(($(date +%s) - 2))" > "$COOLANT_AGENT_STARTS"
+  echo '{"session_id":"s1","agent_id":"abc123","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  grep -qE '"duration_s":[0-9]+' "$COOLANT_EVENTS"
+}
+
+@test "agent-stop duration_s is a non-negative integer" {
+  echo "1" > "$COOLANT_COUNTER"
+  printf 'abc123\t%s\n' "$(($(date +%s) - 5))" > "$COOLANT_AGENT_STARTS"
+  echo '{"session_id":"s1","agent_id":"abc123","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  local duration
+  duration=$(grep -oE '"duration_s":[0-9]+' "$COOLANT_EVENTS" | head -1 | cut -d: -f2)
+  [ -n "$duration" ]
+  [ "$duration" -ge 5 ]
+  [ "$duration" -lt 60 ]
+}
+
+@test "agent-stop omits duration_s for orphan stops (no recorded start)" {
+  echo "1" > "$COOLANT_COUNTER"
+  echo '{"session_id":"s1","agent_id":"orphan","agent_type":""}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  ! grep -q '"duration_s"' "$COOLANT_EVENTS"
+}
+
+@test "agent-stop removes matched line from state file" {
+  echo "1" > "$COOLANT_COUNTER"
+  printf 'abc123\t%s\n' "$(($(date +%s) - 2))" > "$COOLANT_AGENT_STARTS"
+  echo '{"session_id":"s1","agent_id":"abc123","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  ! grep -q "^abc123	" "$COOLANT_AGENT_STARTS" 2>/dev/null
+}
+
+@test "agent-stop preserves other agents' state entries" {
+  echo "2" > "$COOLANT_COUNTER"
+  {
+    printf 'alpha\t%s\n' "$(($(date +%s) - 10))"
+    printf 'beta\t%s\n'  "$(($(date +%s) - 5))"
+  } > "$COOLANT_AGENT_STARTS"
+  echo '{"session_id":"s1","agent_id":"alpha","agent_type":"Explore"}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  ! grep -q "^alpha	" "$COOLANT_AGENT_STARTS"
+  grep   -q "^beta	"  "$COOLANT_AGENT_STARTS"
+}
+
+@test "agent-stop prunes state entries older than 24h" {
+  echo "1" > "$COOLANT_COUNTER"
+  local now=$(date +%s)
+  {
+    printf 'stale\t%s\n' "$((now - 86500))"  # >24h old
+    printf 'fresh\t%s\n' "$((now - 60))"     # recent, unrelated
+  } > "$COOLANT_AGENT_STARTS"
+  echo '{"session_id":"s1","agent_id":"trigger","agent_type":""}' | \
+    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  ! grep -q "^stale	" "$COOLANT_AGENT_STARTS"
+  grep   -q "^fresh	" "$COOLANT_AGENT_STARTS"
+}
+
 @test "agent-stop emits parallel.disengaged JSONL on auto-disengage" {
   echo "1" > "$COOLANT_COUNTER"
   touch "$COOLANT_LOCKFILE"

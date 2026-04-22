@@ -16,6 +16,7 @@ fi
 current=$(_read_counter)
 next=$((current + 1))
 echo "$next" > "$COOLANT_COUNTER"
+_record_agent_start "$_agent_id" "$(date +%s)"
 coolant_unlock
 
 coolant_log "agent started ($next active)"
