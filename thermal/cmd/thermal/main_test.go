@@ -1,14 +1,23 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
+	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
+
+func TestMain(m *testing.M) {
+	zone.NewGlobal()
+	os.Exit(m.Run())
+}
 
 func newTestModel(t *testing.T) model {
 	t.Helper()
@@ -69,5 +78,106 @@ func TestKeyConsumedInFullMode(t *testing.T) {
 	case <-m.done:
 		t.Errorf("'q' in full mode should not have closed done channel")
 	default:
+	}
+}
+
+func TestCategoryKeybindings(t *testing.T) {
+	m := newTestModel(t)
+	// Seed smoothed cats so cycling has visible categories.
+	state := m.layout.State()
+	state.SmoothedCats["build"] = 2.0
+	state.SmoothedCats["shell"] = 1.0
+	state.SmoothedCats["node"] = 3.0
+
+	// ] → forward from empty → first visible
+	m, _ = pressKey(t, m, "]")
+	if got := m.layout.State().CategoryFilter; got != "build" {
+		t.Errorf("after ']': got %q, want %q", got, "build")
+	}
+
+	// [ → backward → wraps to empty
+	m, _ = pressKey(t, m, "[")
+	if got := m.layout.State().CategoryFilter; got != "" {
+		t.Errorf("after '[' from first: got %q, want empty", got)
+	}
+
+	// ] twice → second visible
+	m, _ = pressKey(t, m, "]")
+	m, _ = pressKey(t, m, "]")
+	if got := m.layout.State().CategoryFilter; got != "shell" {
+		t.Errorf("after two ']': got %q, want %q", got, "shell")
+	}
+
+	// \ → clear
+	m, _ = pressKey(t, m, "\\")
+	if got := m.layout.State().CategoryFilter; got != "" {
+		t.Errorf("after '\\': got %q, want empty", got)
+	}
+}
+
+func TestMouseToggle(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+
+	// Default: mouse enabled
+	v := m.View()
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("default MouseMode = %v, want CellMotion", v.MouseMode)
+	}
+
+	// Press 'm' → mouse disabled
+	m, _ = pressKey(t, m, "m")
+	v = m.View()
+	if v.MouseMode != tea.MouseModeNone {
+		t.Errorf("after 'm' MouseMode = %v, want None", v.MouseMode)
+	}
+
+	// Press 'm' again → mouse re-enabled
+	m, _ = pressKey(t, m, "m")
+	v = m.View()
+	if v.MouseMode != tea.MouseModeCellMotion {
+		t.Errorf("after second 'm' MouseMode = %v, want CellMotion", v.MouseMode)
+	}
+}
+
+func TestTmuxHintFiresOnce(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1/default,12345,0")
+
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+
+	// First snapshot should trigger the tmux hint alert.
+	snap := collector.Snapshot{Online: true}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	alerts := m.layout.State().Alerts
+	found := false
+	for i := 0; i < alerts.Len(); i++ {
+		if strings.Contains(alerts.At(i).Message, "tmux set -g mouse on") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("first snapshot in TMUX should push tmux hint alert")
+	}
+
+	// Second snapshot should NOT push a duplicate.
+	countBefore := alerts.Len()
+	out, _ = m.Update(snapshotMsg(snap))
+	m = out.(model)
+	countAfter := m.layout.State().Alerts.Len()
+
+	// The second snapshot pushes through State().Update which may add
+	// threat-transition alerts, but should NOT add another tmux hint.
+	for i := countBefore; i < countAfter; i++ {
+		if strings.Contains(m.layout.State().Alerts.At(i).Message, "tmux set -g mouse on") {
+			t.Error("tmux hint should fire only once")
+		}
 	}
 }

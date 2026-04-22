@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
@@ -296,10 +297,16 @@ const headlineRightMargin = 2
 
 // visibleCategories returns categories that should appear in the headline:
 // fixed categories (build, shell) always, dynamic runtimes only when count >= 0.5.
+// Delegates to model.VisibleCategoryNames for the name list so the cycle
+// logic in model can share the same visibility rule without an import cycle.
 func visibleCategories(smoothed map[string]float64) []collector.Category {
+	nameSet := make(map[string]bool)
+	for _, name := range model.VisibleCategoryNames(smoothed) {
+		nameSet[name] = true
+	}
 	var visible []collector.Category
 	for _, cat := range collector.Categories {
-		if collector.FixedCategories[cat.Name] || smoothed[cat.Name] >= 0.5 {
+		if nameSet[cat.Name] {
 			visible = append(visible, cat)
 		}
 	}
@@ -308,10 +315,15 @@ func visibleCategories(smoothed map[string]float64) []collector.Category {
 
 // renderCatCell renders a single category box at the given width.
 // Fixed categories show "name:NNN", dynamic runtimes show just "name".
-func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidth int, th *theme.Theme) string {
+// When filter is non-empty and doesn't match cat.Name, the cell renders
+// one gradient step lower (dimmed) so the matching cell pops visually.
+func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidth int, th *theme.Theme, filter string) string {
 	s := smoothed[cat.Name]
 	count := int(math.Round(s))
 	level := thermalLevelFor(cat.Name, count)
+	if filter != "" && cat.Name != filter && level > 0 {
+		level--
+	}
 	thermal := th.CategoryGradient[level]
 
 	var content string
@@ -332,10 +344,11 @@ func renderCatCell(cat collector.Category, smoothed map[string]float64, cellWidt
 	}
 
 	padded := strings.Repeat(" ", padLeft) + content + strings.Repeat(" ", padRight)
-	return lipgloss.NewStyle().
+	styled := lipgloss.NewStyle().
 		Foreground(thermal.Fg).
 		Background(thermal.Bg).
 		Render(padded)
+	return zone.Mark(ui.CatZoneID(cat.Name), styled)
 }
 
 // View returns the headline's rendered strip, with rows joined by '\n' when
@@ -384,13 +397,13 @@ func (h *Headline) ViewLines() []string {
 	if h.state.Current != nil {
 		sessions = h.state.Current.Sessions
 	}
-	sessionStr, sessionWidth := renderSessionDiamonds(sessions, iconBg, h.theme)
+	sessionStr, sessionWidth := renderSessionDiamonds(sessions, iconBg, h.theme, h.state.CategoryFilter)
 	ghostStr, activeStr, ghostWidth, activeWidth := h.agents.RenderSplit(ui.AgentGlyphHollow, ui.AgentGlyphMid, ui.AgentGlyphFilled, iconBg, 0)
 	sessAgents := h.renderSessionsAgentsStack(sessionStr, sessionWidth, activeStr, activeWidth, iconBg)
 
 	var dynamic []collector.Category
-	for _, cat := range collector.Categories {
-		if !collector.FixedCategories[cat.Name] && h.state.SmoothedCats[cat.Name] >= 0.5 {
+	for _, cat := range visibleCategories(h.state.SmoothedCats) {
+		if !collector.FixedCategories[cat.Name] {
 			dynamic = append(dynamic, cat)
 		}
 	}
@@ -462,7 +475,7 @@ func (h *Headline) ViewLines() []string {
 
 	var runtimeCells strings.Builder
 	for _, cat := range dynamic {
-		runtimeCells.WriteString(renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth, h.theme))
+		runtimeCells.WriteString(renderCatCell(cat, h.state.SmoothedCats, dynamicCellWidth, h.theme, h.state.CategoryFilter))
 	}
 	runtimeTop := runtimeCells.String()
 
@@ -559,8 +572,10 @@ func (h *Headline) offlineViewLines() []string {
 }
 
 // renderSessionDiamonds renders phase-colored ⌬ icons for each session,
-// placed on the given background. Returns the rendered string and its visual width.
-func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color, th *theme.Theme) (string, int) {
+// placed on the given background. When filter is non-empty, sessions whose
+// dominant category doesn't match render dimmed. Returns the rendered
+// string and its visual width.
+func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color, th *theme.Theme, filter string) (string, int) {
 	if len(sessions) == 0 {
 		return "", 0
 	}
@@ -581,10 +596,23 @@ func renderSessionDiamonds(sessions []collector.SessionTree, bg color.Color, th 
 		} else {
 			c = sessionPhaseColor(&g, th)
 		}
+		if filter != "" && !sessionMatchesFilter(&g, filter) {
+			c = th.DimColor
+		}
 		sb.WriteString(lipgloss.NewStyle().Foreground(c).Background(bg).Render(ui.SessionDiamondGlyph))
 		visWidth++
 	}
 	return sb.String(), visWidth
+}
+
+// sessionMatchesFilter checks whether a session's dominant category matches
+// the filter. A session matches if it has any processes in the filtered
+// category.
+func sessionMatchesFilter(g *sessionGroup, filter string) bool {
+	if idx, ok := catIndex[filter]; ok {
+		return g.cats[idx] > 0
+	}
+	return false
 }
 
 // truncRunes returns s truncated to at most n runes (not bytes) so

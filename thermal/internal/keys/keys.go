@@ -5,10 +5,14 @@ package keys
 import "charm.land/bubbles/v2/key"
 
 type KeyMap struct {
-	Help       key.Binding
-	Quit       key.Binding
-	Collapse   key.Binding
-	PurgeStale key.Binding
+	Help          key.Binding
+	Quit          key.Binding
+	Collapse      key.Binding
+	PurgeStale    key.Binding
+	CategoryPrev  key.Binding
+	CategoryNext  key.Binding
+	CategoryClear key.Binding
+	MouseToggle   key.Binding
 }
 
 func Default() KeyMap {
@@ -29,18 +33,35 @@ func Default() KeyMap {
 			key.WithKeys("x"),
 			key.WithHelp("x", "purge stale agents"),
 		),
+		CategoryPrev: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "prev category"),
+		),
+		CategoryNext: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "next category"),
+		),
+		CategoryClear: key.NewBinding(
+			key.WithKeys("\\"),
+			key.WithHelp("\\", "clear filter"),
+		),
+		MouseToggle: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "toggle mouse"),
+		),
 	}
 }
 
 // ShortHelp satisfies bubbles/help.KeyMap. Order is load-bearing — tests
 // assert left-to-right rendering.
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Quit, k.Collapse, k.PurgeStale}
+	return []key.Binding{k.Help, k.Quit, k.Collapse, k.PurgeStale, k.CategoryPrev, k.CategoryNext, k.CategoryClear, k.MouseToggle}
 }
 
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Help, k.Quit},
 		{k.Collapse, k.PurgeStale},
+		{k.CategoryPrev, k.CategoryNext, k.CategoryClear, k.MouseToggle},
 	}
 }

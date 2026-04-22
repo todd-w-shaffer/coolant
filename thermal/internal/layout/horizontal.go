@@ -195,6 +195,9 @@ func (h *Horizontal) helpView() []string {
 		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphMid) + dim(ui.AgentGlyphFilled) + " " +
 			ct(d, "subagents — tidal wave hollow/mid/filled, ghosts KITT-scan") + "  " +
 			dim("categories track process types in the headline bar"),
+		" " + dim("filter") + " " + ct(d, "[ prev") + "  " + ct(d, "] next") + "  " + ct(d, "\\ clear") + "  " +
+			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
+			dim("click a headline category to filter"),
 		" " + dim("press any key to dismiss"),
 	}
 }

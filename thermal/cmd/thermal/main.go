@@ -10,14 +10,18 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+
 	"github.com/toddwshaffer/coolant/thermal/internal/demo"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
+	appmodel "github.com/toddwshaffer/coolant/thermal/internal/model"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/updater"
 	"github.com/toddwshaffer/coolant/thermal/internal/version"
 )
@@ -32,27 +36,30 @@ type updateAvailableMsg string
 // ── Model ───────────────────────────────────────────────────
 
 type model struct {
-	width      int
-	height     int
-	layout     *layout.Horizontal
-	keys       keys.KeyMap
-	done       chan struct{}
-	demoMode   bool
-	snapChan   chan collector.Snapshot
-	eventChan  chan collector.GateEvent
-	updateChan chan string
+	width         int
+	height        int
+	layout        *layout.Horizontal
+	keys          keys.KeyMap
+	done          chan struct{}
+	demoMode      bool
+	mouseEnabled  bool
+	tmuxHintShown bool
+	snapChan      chan collector.Snapshot
+	eventChan     chan collector.GateEvent
+	updateChan    chan string
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 	km := keys.Default()
 	return model{
-		layout:     layout.NewHorizontal(th, ap, km),
-		keys:       km,
-		done:       make(chan struct{}),
-		demoMode:   demoMode,
-		snapChan:   make(chan collector.Snapshot, 16),
-		eventChan:  make(chan collector.GateEvent, 32),
-		updateChan: make(chan string, 1),
+		layout:       layout.NewHorizontal(th, ap, km),
+		keys:         km,
+		done:         make(chan struct{}),
+		demoMode:     demoMode,
+		mouseEnabled: true,
+		snapChan:     make(chan collector.Snapshot, 16),
+		eventChan:    make(chan collector.GateEvent, 32),
+		updateChan:   make(chan string, 1),
 	}
 }
 
@@ -159,6 +166,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout.ToggleCollapse()
 		case key.Matches(msg, m.keys.PurgeStale):
 			m.layout.State().PurgeStaleAgents()
+		case key.Matches(msg, m.keys.CategoryNext):
+			m.layout.State().CycleCategoryFilter(+1)
+		case key.Matches(msg, m.keys.CategoryPrev):
+			m.layout.State().CycleCategoryFilter(-1)
+		case key.Matches(msg, m.keys.CategoryClear):
+			m.layout.State().SetCategoryFilter("")
+		case key.Matches(msg, m.keys.MouseToggle):
+			m.mouseEnabled = !m.mouseEnabled
 		}
 
 	case tea.WindowSizeMsg:
@@ -170,6 +185,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		snap := collector.Snapshot(msg)
 		m.layout.State().Update(snap)
 		m.layout.Update(m.layout.State())
+		if !m.tmuxHintShown && os.Getenv("TMUX") != "" {
+			m.tmuxHintShown = true
+			m.layout.State().PushAlert(appmodel.AlertEntry{
+				Time:    snap.Timestamp,
+				Message: "mouse mode active; if clicks don't register run: tmux set -g mouse on",
+				Level:   appmodel.ThreatCool,
+			})
+		}
 		return m, waitForSnapshot(m.snapChan)
 
 	case gateEventMsg:
@@ -179,6 +202,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case updateAvailableMsg:
 		m.layout.State().UpdateAvailable = true
+
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			for _, cat := range collector.Categories {
+				if zi := zone.Get(ui.CatZoneID(cat.Name)); zi != nil && zi.InBounds(msg) {
+					m.layout.State().ToggleCategoryFilter(cat.Name)
+					break
+				}
+			}
+		}
 
 	case animTickMsg:
 		m.layout.AnimTick()
@@ -191,11 +224,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
 	if m.width == 0 || m.height == 0 {
 		return v
 	}
-	v.Content = m.layout.View()
+	content := m.layout.View()
+	if m.mouseEnabled {
+		v.MouseMode = tea.MouseModeCellMotion
+		v.Content = zone.Scan(content)
+	} else {
+		v.MouseMode = tea.MouseModeNone
+		v.Content = content
+	}
 	return v
 }
 
@@ -274,6 +313,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	zone.NewGlobal()
 
 	m := newModel(*demoMode, th, ap)
 	if highScore {

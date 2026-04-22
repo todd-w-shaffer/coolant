@@ -1297,3 +1297,141 @@ func TestShortID(t *testing.T) {
 		}
 	}
 }
+
+// ── CategoryFilter ──────────────────────────────────────────
+
+func TestSetCategoryFilter(t *testing.T) {
+	s := NewAppState()
+	s.SetCategoryFilter("build")
+	if s.CategoryFilter != "build" {
+		t.Errorf("got %q, want %q", s.CategoryFilter, "build")
+	}
+	s.SetCategoryFilter("")
+	if s.CategoryFilter != "" {
+		t.Errorf("got %q, want empty", s.CategoryFilter)
+	}
+}
+
+func TestToggleCategoryFilter(t *testing.T) {
+	s := NewAppState()
+
+	// First toggle sets
+	s.ToggleCategoryFilter("build")
+	if s.CategoryFilter != "build" {
+		t.Errorf("first toggle: got %q, want %q", s.CategoryFilter, "build")
+	}
+
+	// Same name clears
+	s.ToggleCategoryFilter("build")
+	if s.CategoryFilter != "" {
+		t.Errorf("second toggle: got %q, want empty", s.CategoryFilter)
+	}
+
+	// Different name sets to new
+	s.ToggleCategoryFilter("build")
+	s.ToggleCategoryFilter("shell")
+	if s.CategoryFilter != "shell" {
+		t.Errorf("different toggle: got %q, want %q", s.CategoryFilter, "shell")
+	}
+}
+
+func TestCycleCategoryFilter(t *testing.T) {
+	s := NewAppState()
+	// Seed smoothed cats so build (fixed) + shell (fixed) + node are visible
+	s.SmoothedCats["build"] = 2.0
+	s.SmoothedCats["shell"] = 1.0
+	s.SmoothedCats["node"] = 3.0
+
+	visible := VisibleCategoryNames(s.SmoothedCats)
+
+	// Forward from empty → first visible
+	s.CycleCategoryFilter(+1)
+	if s.CategoryFilter != visible[0] {
+		t.Errorf("forward from empty: got %q, want %q", s.CategoryFilter, visible[0])
+	}
+
+	// Forward through all → wraps to empty
+	for range visible[1:] {
+		s.CycleCategoryFilter(+1)
+	}
+	// Should be on last
+	if s.CategoryFilter != visible[len(visible)-1] {
+		t.Errorf("forward to last: got %q, want %q", s.CategoryFilter, visible[len(visible)-1])
+	}
+	s.CycleCategoryFilter(+1)
+	if s.CategoryFilter != "" {
+		t.Errorf("forward past last: got %q, want empty", s.CategoryFilter)
+	}
+
+	// Backward from empty → last visible
+	s.CycleCategoryFilter(-1)
+	if s.CategoryFilter != visible[len(visible)-1] {
+		t.Errorf("backward from empty: got %q, want %q", s.CategoryFilter, visible[len(visible)-1])
+	}
+
+	// direction=0 is a no-op
+	prev := s.CategoryFilter
+	s.CycleCategoryFilter(0)
+	if s.CategoryFilter != prev {
+		t.Errorf("direction=0: got %q, want %q (unchanged)", s.CategoryFilter, prev)
+	}
+}
+
+func TestVisibleCategoryNames(t *testing.T) {
+	smoothed := map[string]float64{
+		"build": 0,   // fixed — always visible
+		"shell": 0,   // fixed — always visible
+		"node":  5.0, // dynamic, above threshold
+		"go":    0.3, // dynamic, below threshold
+		"rust":  0.5, // dynamic, at threshold
+	}
+	got := VisibleCategoryNames(smoothed)
+
+	want := map[string]bool{"build": true, "shell": true, "node": true, "rust": true}
+	gotSet := map[string]bool{}
+	for _, name := range got {
+		gotSet[name] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want keys %v", got, want)
+	}
+	for name := range want {
+		if !gotSet[name] {
+			t.Errorf("missing %q in result", name)
+		}
+	}
+	if gotSet["go"] {
+		t.Error("go should not be visible (0.3 < 0.5)")
+	}
+
+	// Verify order matches collector.Categories
+	prevOrder := -1
+	for _, name := range got {
+		for _, cat := range collector.Categories {
+			if cat.Name == name && cat.Order < prevOrder {
+				t.Errorf("order violation: %q (order %d) after order %d", name, cat.Order, prevOrder)
+			}
+			if cat.Name == name {
+				prevOrder = cat.Order
+			}
+		}
+	}
+}
+
+func TestPushAlert(t *testing.T) {
+	s := NewAppState()
+	alert := AlertEntry{
+		Time:    time.Now(),
+		Message: "test alert",
+		Level:   ThreatWarm,
+	}
+	s.PushAlert(alert)
+
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	got := s.Alerts.Peek()
+	if got.Message != "test alert" {
+		t.Errorf("alert message = %q, want %q", got.Message, "test alert")
+	}
+}

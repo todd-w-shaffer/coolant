@@ -313,7 +313,7 @@ func captureThermalLevels() string {
 	var sb strings.Builder
 	for _, count := range counts {
 		smoothed := map[string]float64{"build": float64(count)}
-		cell := renderCatCell(cat, smoothed, fixedCellWidth, th)
+		cell := renderCatCell(cat, smoothed, fixedCellWidth, th, "")
 		sb.WriteString(fmt.Sprintf("count=%02d:%s\n", count, cell))
 	}
 	return sb.String()
