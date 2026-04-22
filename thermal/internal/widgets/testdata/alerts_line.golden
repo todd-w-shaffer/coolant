@@ -1,3 +1,3 @@
  [90m12:00:00[m  [32magent research started (abc12345)[m
- [90m12:00:01[m  [33mgate: tsc --noEmit suppressed (build suppressed)[m
+ [90m12:00:01[m  [33mblocked: tsc --noEmit (parallel mode — /coolant to release)[m
  [90m12:00:02[m  [38;5;208mparallel mode engaged[m

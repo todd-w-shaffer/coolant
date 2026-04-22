@@ -109,8 +109,8 @@ emit_deny() {
   local safe_cmd
   safe_cmd=$(_json_escape "$cmd")
   coolant_event '"event":"gate.suppress","tool":"Bash","command":"'"$safe_cmd"'","reason":"parallel_mode"'
-  coolant_log "$cmd suppressed (parallel mode)"
-  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[coolant] %s suppressed — parallel mode active"}}\n' "$safe_cmd"
+  coolant_log "blocked: $cmd (parallel mode)"
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"[coolant] blocked: %s (parallel mode — /coolant to release)"}}\n' "$safe_cmd"
 }
 
 # Cap: allow with rewritten command
@@ -120,7 +120,7 @@ emit_cap() {
   safe_orig=$(_json_escape "$orig")
   safe_rewritten=$(_json_escape "$rewritten")
   coolant_event '"event":"gate.cap","tool":"Bash","command":"'"$safe_orig"'","rewritten":"'"$safe_rewritten"'"'
-  coolant_log "capped: $orig -> $rewritten"
+  coolant_log "throttled: $orig -> $rewritten"
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"%s"}}}\n' "$safe_rewritten"
 }
 

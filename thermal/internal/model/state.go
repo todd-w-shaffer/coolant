@@ -279,8 +279,10 @@ type eventAlertSpec struct {
 }
 
 var eventAlerts = map[string]eventAlertSpec{
-	collector.EventGateSuppress: {func(ev collector.GateEvent) string { return "gate: " + ev.Command + " suppressed (" + ev.Reason + ")" }, ThreatWarm},
-	collector.EventGateCap:      {func(ev collector.GateEvent) string { return "gate: " + ev.Command + " capped → " + ev.Rewritten }, ThreatWarm},
+	collector.EventGateSuppress: {func(ev collector.GateEvent) string {
+		return "blocked: " + ev.Command + " (parallel mode — /coolant to release)"
+	}, ThreatWarm},
+	collector.EventGateCap: {func(ev collector.GateEvent) string { return "throttled: " + ev.Command + " → " + ev.Rewritten }, ThreatWarm},
 	collector.EventAgentStart: {func(ev collector.GateEvent) string {
 		return "agent " + ev.AgentType + " started (" + shortID(ev.AgentID) + ")"
 	}, ThreatCool},

@@ -1019,8 +1019,8 @@ func TestHandleEventGateSuppress(t *testing.T) {
 		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
 	}
 	msg := s.Alerts.At(0).Message
-	if !strings.Contains(msg, "tsc") || !strings.Contains(msg, "suppressed") {
-		t.Errorf("alert message = %q, want gate suppress details", msg)
+	if !strings.Contains(msg, "tsc") {
+		t.Errorf("alert message = %q, want command name present", msg)
 	}
 }
 
@@ -1080,8 +1080,8 @@ func TestHandleEventGateCap(t *testing.T) {
 		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
 	}
 	alert := s.Alerts.At(0)
-	if !strings.Contains(alert.Message, "capped") {
-		t.Errorf("alert message = %q, want 'capped' substring", alert.Message)
+	if !strings.Contains(alert.Message, "vitest") {
+		t.Errorf("alert message = %q, want command name present", alert.Message)
 	}
 	if alert.Level != ThreatWarm {
 		t.Errorf("alert level = %v, want ThreatWarm", alert.Level)
