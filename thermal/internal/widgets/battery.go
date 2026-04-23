@@ -48,8 +48,14 @@ func (b *Battery) AnimTick() {
 		b.meltdownPhase = 0
 	case collector.BatteryDischarging:
 		b.phase = 0
-		if b.stats.BatteryPercent < config.BatteryMeltdownPct {
-			b.meltdownPhase += meltdownPhaseStep
+		if b.stats.BatteryPercent < config.BatteryCritPct {
+			var step float64
+			if b.stats.BatteryPercent < config.BatteryMeltdownPct {
+				step = meltdownPhaseStep // aggressive: 1 cycle/s
+			} else {
+				step = meltdownPhaseStep * config.BatteryWarnBreathRate // subtle: 1 cycle/2s
+			}
+			b.meltdownPhase += step
 			if b.meltdownPhase > 2*math.Pi {
 				b.meltdownPhase -= 2 * math.Pi
 			}
@@ -84,10 +90,16 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 
 	sevFg := b.severityFg()
 
-	// Meltdown brightness multiplier (1.0 = no pulse).
+	// Brightness multiplier: warning breath (10-20%) or meltdown pulse (<10%).
 	meltdown := 1.0
 	if b.meltdownPhase != 0 {
-		meltdown = 0.6 + 0.4*(math.Sin(b.meltdownPhase)+1)/2
+		if b.stats.BatteryPercent < config.BatteryMeltdownPct {
+			meltdown = config.BatteryMeltdownBreathFloor +
+				(config.BatteryMeltdownBreathCeil-config.BatteryMeltdownBreathFloor)*sinNorm(b.meltdownPhase)
+		} else {
+			meltdown = config.BatteryWarnBreathFloor +
+				(config.BatteryWarnBreathCeil-config.BatteryWarnBreathFloor)*sinNorm(b.meltdownPhase)
+		}
 	}
 	modFg := sevFg
 	if meltdown < 1.0 {

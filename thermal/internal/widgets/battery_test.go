@@ -375,7 +375,7 @@ func TestBattery_MeltdownPulseAtCrit(t *testing.T) {
 		t.Errorf("meltdown brightness [%v, %v]: want min<=0.7, max>=0.95", minB, maxB)
 	}
 
-	// At 12% discharging, no meltdown pulse.
+	// At 12% discharging, warning breath is active (10-20% range).
 	b2 := testBattery(t)
 	b2.Update(collector.SystemStats{
 		BatteryPresent: true,
@@ -385,8 +385,22 @@ func TestBattery_MeltdownPulseAtCrit(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		b2.AnimTick()
 	}
-	if b2.meltdownPhase != 0 {
-		t.Errorf("12%% discharging: meltdown phase = %v, want 0", b2.meltdownPhase)
+	if b2.meltdownPhase == 0 {
+		t.Error("12%% discharging: warning breath should be active")
+	}
+
+	// At 25% discharging, no breath or pulse.
+	b3 := testBattery(t)
+	b3.Update(collector.SystemStats{
+		BatteryPresent: true,
+		BatteryPercent: 25,
+		BatteryState:   collector.BatteryDischarging,
+	})
+	for i := 0; i < 30; i++ {
+		b3.AnimTick()
+	}
+	if b3.meltdownPhase != 0 {
+		t.Errorf("25%% discharging: meltdown phase = %v, want 0", b3.meltdownPhase)
 	}
 }
 
@@ -480,6 +494,45 @@ func TestBattery_ShoulderAlwaysPresent(t *testing.T) {
 		if topR&shoulderR == 0 {
 			t.Errorf("pct=%.0f: topR %U missing shoulder bit (dot 2)", pct, topR)
 		}
+	}
+}
+
+func TestBattery_WarnBreathAt15Pct(t *testing.T) {
+	b := testBattery(t)
+	b.Update(collector.SystemStats{
+		BatteryPresent: true,
+		BatteryPercent: 15,
+		BatteryState:   collector.BatteryDischarging,
+	})
+
+	// Phase must advance (warning breath active).
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	if b.meltdownPhase == 0 {
+		t.Error("15%% discharging: meltdown phase did not advance (warning breath should be active)")
+	}
+
+	// Brightness must stay in the subtle range (0.85–1.0), NOT the
+	// aggressive meltdown range (0.6–1.0). Continue from the same instance.
+	var values []float64
+	for i := 0; i < 200; i++ {
+		brightness := config.BatteryWarnBreathFloor +
+			(config.BatteryWarnBreathCeil-config.BatteryWarnBreathFloor)*sinNorm(b.meltdownPhase)
+		values = append(values, brightness)
+		b.AnimTick()
+	}
+	minV, maxV := values[0], values[0]
+	for _, v := range values {
+		if v < minV {
+			minV = v
+		}
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if minV < 0.84 || maxV > 1.01 {
+		t.Errorf("warning breath brightness [%v, %v]: want within [0.85, 1.0]", minV, maxV)
 	}
 }
 
