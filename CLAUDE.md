@@ -6,6 +6,22 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 **NEVER delete files or directories without explicit permission.** No exceptions. No "cleanup." No "safe to delete." ASK FIRST. Always. Even if the file looks stale, orphaned, or unnecessary. Even if you created it. Even if it's untracked. The user runs with permissive settings — that trust must not be abused for destructive operations.
 
+## Cross-repo spec access
+
+TUI specs live in the private companion repo at
+`~/Desktop/apps/thermal-enterprise/docs/backlog/tui/`. A gitignored
+symlink at `docs/.tui-specs` points there for ergonomic reads — use
+either path interchangeably when reading specs for `/spec-to-ship`.
+
+**Read-only from this CWD.** Writing specs, archiving shipped specs, and
+committing to thermal-enterprise all require a CWD switch to that repo.
+The CWD discipline rule has no exceptions.
+
+Spec lifecycle:
+1. **Stub/expand/audit** — thermal-enterprise CWD
+2. **Implement** — coolant CWD, read spec via `docs/.tui-specs/` or absolute path
+3. **Archive** — thermal-enterprise CWD, `git mv` spec to `backlog/tui/archive/`
+
 ## Quick reference
 
 ```bash
@@ -15,6 +31,32 @@ cd thermal && go build -o ../bin/thermo ./cmd/thermal/  # build
 ./bin/thermo --demo                      # run with synthetic data
 ./bin/thermo                             # run with live data
 ```
+
+## Contributor setup
+
+After cloning, run once:
+
+```bash
+./scripts/install-hooks.sh
+```
+
+This sets `core.hooksPath=.githooks`, which activates the
+commit-classification pre-push hook (blocks private/strategy content from
+leaking into this public repo). A companion Claude Code PreToolUse hook at
+`.claude/hooks/classify-staged.sh` runs the same checks on `git commit`
+calls. Rules live in `.githooks/{blocklist,allowlist}.txt`; see
+`.githooks/README.md` for the short version.
+
+**If you use graphify:** `install-hooks.sh` will warn if
+`.git/hooks/post-commit` (graphify's knowledge-graph regenerator) is
+present, because `core.hooksPath` makes git stop running `.git/hooks/`.
+Mirror it into `.githooks/post-commit` yourself before running the
+installer, or re-run with `--force` and type `MIGRATE` at the prompt
+to acknowledge graphify will stop firing.
+
+**Running tests cold:** `tests/test_helper.bash::setup_git_tmprepo`
+chmods the hook scripts executable on demand, so `bats tests/` works in
+a fresh clone even before `install-hooks.sh` has been run.
 
 ## Commit style
 
@@ -48,6 +90,9 @@ event bus" convention below).
 - `tests/` — bats tests for the bash layer
 - `skills/coolant/SKILL.md` — the `/coolant` skill entry
 - `assets/` — VHS tapes + demo GIFs
+- `.githooks/` — pre-push commit-classification hook + blocklist/allowlist
+  data files (activated by `scripts/install-hooks.sh`)
+- `.claude/hooks/classify-staged.sh` — companion Claude PreToolUse hook
 
 **Thermal dashboard (`thermal/internal/`) — conceptual groups:**
 - **Sampling** — `collector/` gathers system metrics (CPU/MEM/procs/GPU/battery/network,

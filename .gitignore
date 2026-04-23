@@ -15,6 +15,9 @@ dev/otel/data/
 # git worktrees used for parallel/preview work
 .worktrees/
 
+# Symlink to thermal-enterprise TUI specs (private repo)
+docs/.tui-specs
+
 # Archived artifacts — historical, not in use
 docs/archive/
 scripts/archive/
