@@ -101,11 +101,15 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 				(config.BatteryWarnBreathCeil-config.BatteryWarnBreathFloor)*sinNorm(b.meltdownPhase)
 		}
 	}
+	// Gauge breathes with the meltdown/warning pulse; percent + time text
+	// stay steady so the numbers remain legible while the battery itself
+	// signals urgency.
 	modFg := sevFg
 	if meltdown < 1.0 {
 		modFg = modulateBrightness(sevFg, meltdown)
 	}
-	fgStyle := lipgloss.NewStyle().Foreground(modFg).Background(bg)
+	gaugeStyle := lipgloss.NewStyle().Foreground(modFg).Background(bg)
+	textStyle := lipgloss.NewStyle().Foreground(sevFg).Background(bg)
 
 	tL, tC, tR, bL, bC, bR := brailleBattery(b.stats.BatteryPercent)
 	topGauge := string([]rune{tL, tC, tR})
@@ -113,7 +117,7 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 	pctText := fmt.Sprintf("%03d%%", int(b.stats.BatteryPercent))
 
 	// Top row: always battery shape + percent (stable across all states).
-	topContent := fgStyle.Render(topGauge) + fgStyle.Render(" "+pctText)
+	topContent := gaugeStyle.Render(topGauge) + textStyle.Render(" "+pctText)
 	topVis := 4 + len(pctText) // battery=3 + space + pctText
 	topPad := w - topVis
 	if topPad < 0 {
@@ -136,17 +140,17 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 		}
 		boltStyle := lipgloss.NewStyle().Foreground(boltFg).Background(bg)
 		// ⚡ (U+26A1) renders as 2 cells in Ghostty/iTerm2.
-		botContent = fgStyle.Render(botGauge) + bgPad(bg, 1) + boltStyle.Render("⚡")
+		botContent = gaugeStyle.Render(botGauge) + bgPad(bg, 1) + boltStyle.Render("⚡")
 		botVis = 3 + 1 + 2 // battery + space + ⚡
 
 	case b.stats.BatteryTimeRemaining > 0:
 		timeText := formatRemaining(b.stats.BatteryTimeRemaining)
-		botContent = fgStyle.Render(botGauge) + fgStyle.Render(" "+timeText)
+		botContent = gaugeStyle.Render(botGauge) + textStyle.Render(" "+timeText)
 		botVis = 4 + len(timeText) // battery + space + timeText
 
 	default:
 		// No estimate yet — just the battery shape.
-		botContent = fgStyle.Render(botGauge)
+		botContent = gaugeStyle.Render(botGauge)
 		botVis = 3
 	}
 
