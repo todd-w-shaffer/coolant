@@ -1,0 +1,26 @@
+# Blocklist for commit-classification hooks.
+# Read by scripts/classify.sh; consulted by .githooks/pre-push and
+# .claude/hooks/classify-staged.sh.
+#
+# Two record types, distinguished by leading prefix:
+#   path:<prefix>    — case-sensitive path-prefix match
+#   keyword:<token>  — case-insensitive substring match against full path
+#
+# Comments start with #. Blank lines ignored.
+# See .githooks/README.md for the short version, or
+# thermal-enterprise/docs/repo-split.md for the full classification guide.
+
+path:docs/backlog/
+path:docs/perplexity-investigations/
+path:docs/enterprise-otel/
+path:dev/otel/loki
+path:dev/otel/otelcol
+path:dev/otel/dashboards/coolant-gate-events
+path:dev/otel/dashboards/coolant-agent-intel
+path:dev/otel/provisioning/datasources/loki
+
+keyword:cloud-spec
+keyword:roadmap
+keyword:strategy
+keyword:persona
+keyword:enterprise-otel

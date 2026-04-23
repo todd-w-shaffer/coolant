@@ -1,0 +1,62 @@
+#!/bin/bash
+set -euo pipefail
+# Git pre-push hook: belt layer that blocks pushes containing paths
+# classified as private. Runs under `core.hooksPath=.githooks` (set by
+# scripts/install-hooks.sh). Reads refspec pairs on stdin per git's
+# pre-push protocol.
+#
+# Bypass: `git push --no-verify` (git short-circuits the hook) or the
+# equivalent `git -c core.hooksPath=/dev/null push`. Both deliberate.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/classify.sh"
+
+ZERO=0000000000000000000000000000000000000000
+EMPTY_TREE=$(git hash-object -t tree /dev/null)
+
+# Resolve a safe diff range for (local_sha, remote_sha). Echoes the range
+# spec; falls back to origin/main or the empty tree when remote_sha is
+# missing or unreachable (force-push after history rewrite).
+_resolve_range() {
+  local local_sha="$1" remote_sha="$2"
+  if [ "$remote_sha" != "$ZERO" ] \
+     && git rev-parse --verify "$remote_sha^{commit}" >/dev/null 2>&1; then
+    echo "$remote_sha..$local_sha"
+  elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+    echo "origin/main..$local_sha"
+  else
+    echo "$EMPTY_TREE..$local_sha"
+  fi
+}
+
+tmp="${TMPDIR:-/tmp}/coolant-pre-push.$$"
+trap 'rm -f "$tmp"' EXIT
+: > "$tmp"
+
+while IFS=' ' read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+  [ "$local_sha" = "$ZERO" ] && continue
+  range=$(_resolve_range "$local_sha" "$remote_sha")
+  git diff -z --name-only --diff-filter=ACMR "$range" >> "$tmp" 2>/dev/null || true
+done
+
+if [ ! -s "$tmp" ]; then
+  exit 0
+fi
+
+# NUL-delimited → positional args.
+set --
+while IFS= read -r -d '' path; do
+  set -- "$@" "$path"
+done < "$tmp"
+
+if [ "$#" -eq 0 ]; then
+  exit 0
+fi
+
+if classify_paths "$@"; then
+  exit 0
+fi
+exit 1

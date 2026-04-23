@@ -1,0 +1,36 @@
+# Allowlist — wins over all blocklist rules.
+# Read by scripts/classify.sh from HEAD:.githooks/allowlist.txt (NOT the
+# working tree), so allowlist extensions must land in a prior commit.
+#
+# Two record types:
+#   path:<prefix>    — prefix match (whole-subtree allow)
+#   <exact-path>     — single-file allow
+#
+# Keep sorted within each group; tests/classify.bats enforces this.
+
+# Whole-subtree allows (existing tracked-public dirs).
+path:docs/archive/
+path:docs/theming/
+
+# Single-file allows under blocked or default-private rules.
+docs/agent-instrumentation-plan.md
+docs/animation-axis.md
+docs/backlog/README.md
+docs/backlog/agent-behavior-findings.md
+docs/backlog/battery-gauge.spec.md
+docs/backlog/bubblezone-click-regions.spec.md
+docs/backlog/event-bus-test-gaps.md
+docs/backlog/frappe-phase-3a-handoff.md
+docs/backlog/frappe-phase-3a.md
+docs/backlog/grafana-chrome-theming.md
+docs/backlog/grafana-continuous-gradients.md
+docs/backlog/headline-golden.md
+docs/backlog/headline-top-row-content.md
+docs/backlog/invisible-distribution-staleness.md
+docs/backlog/phase1-launch-prompts.md
+docs/backlog/threat-transition-smoothing.md
+docs/config-scaffold-spec.md
+docs/event-schema.md
+docs/gate-system-report.md
+docs/go-design.md
+docs/session-agent-icons-and-categories.md

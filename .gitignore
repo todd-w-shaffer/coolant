@@ -12,6 +12,12 @@ graphify-out/
 # Local OTEL dogfood data (Prometheus TSDB, Grafana state)
 dev/otel/data/
 
+# .claude/ runtime state (only hooks/ and settings.json are tracked)
+.claude/projects/
+.claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
 # git worktrees used for parallel/preview work
 .worktrees/
 
