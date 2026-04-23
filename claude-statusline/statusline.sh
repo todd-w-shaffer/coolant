@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VERSION: 0.11.0
+# VERSION: 0.13.0
 # Braille progress bar status line for Claude Code
 # Thermometer coloring on sesh: green < 50%, yellow 50-70%, red >= 70%
 # Format: context ⣿⣿⣿⣿⣦⠀⠀⠀⠀⠀⡇  sesh ⣿⣿⣦⠀⠀⡇  week ⣿⣤⠀⠀⠀⡇
@@ -52,7 +52,7 @@ build_thermo_bar() {
 }
 
 # ── update check ─────────────────────────────────────
-COOLANT_INSTALLED_VERSION="0.11.0"
+COOLANT_INSTALLED_VERSION="0.13.0"
 _coolant_cache="${TMPDIR:-/tmp/}coolant-${USER}.latest-version"
 _coolant_ttl=${COOLANT_UPDATE_TTL:-1440}
 _coolant_upgrade_glyph=""
