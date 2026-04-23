@@ -21,6 +21,11 @@ dev/otel/data/
 # git worktrees used for parallel/preview work
 .worktrees/
 
+# Local-only hooks copied from .git/hooks/ by install-hooks.sh (e.g., graphify)
+.githooks/post-commit
+.githooks/post-checkout
+.githooks/pre-commit
+
 # Symlink to thermal-enterprise TUI specs (private repo)
 docs/.tui-specs
 

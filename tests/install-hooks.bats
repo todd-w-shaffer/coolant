@@ -59,27 +59,33 @@ setup() {
   [ "$status" -ne 0 ]
 }
 
-@test "install-hooks warns about existing .git/hooks/ files" {
-  echo "#!/bin/sh" > .git/hooks/post-commit
+@test "install-hooks copies existing .git/hooks/ files into .githooks/" {
+  echo '#!/bin/sh' > .git/hooks/post-commit
+  echo '#!/bin/sh' > .git/hooks/pre-commit
+  chmod +x .git/hooks/post-commit .git/hooks/pre-commit
+  run scripts/install-hooks.sh
+  [ "$status" -eq 0 ]
+  [ -f .githooks/post-commit ]
+  [ -f .githooks/pre-commit ]
+  [ -x .githooks/post-commit ]
+  [ -x .githooks/pre-commit ]
+}
+
+@test "install-hooks does not overwrite existing .githooks/ files during copy" {
+  echo '#!/bin/sh
+echo original' > .githooks/post-commit
+  echo '#!/bin/sh
+echo from-git-hooks' > .git/hooks/post-commit
+  run scripts/install-hooks.sh
+  [ "$status" -eq 0 ]
+  # The pre-existing .githooks/post-commit should be preserved.
+  [[ "$(cat .githooks/post-commit)" == *"original"* ]]
+}
+
+@test "install-hooks reports which hooks were copied" {
+  echo '#!/bin/sh' > .git/hooks/post-commit
   chmod +x .git/hooks/post-commit
   run scripts/install-hooks.sh
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"post-commit"* ]]
-  [ -z "$(git config --get core.hooksPath || true)" ]
-}
-
-@test "install-hooks --force with typed MIGRATE proceeds past warning" {
-  echo "#!/bin/sh" > .git/hooks/post-commit
-  chmod +x .git/hooks/post-commit
-  run bash -c 'echo MIGRATE | scripts/install-hooks.sh --force'
   [ "$status" -eq 0 ]
-  [ "$(git config --get core.hooksPath)" = ".githooks" ]
-}
-
-@test "install-hooks --force rejects wrong typed confirmation" {
-  echo "#!/bin/sh" > .git/hooks/post-commit
-  chmod +x .git/hooks/post-commit
-  run bash -c 'echo yes | scripts/install-hooks.sh --force'
-  [ "$status" -ne 0 ]
-  [ -z "$(git config --get core.hooksPath || true)" ]
+  [[ "$output" == *"post-commit"* ]]
 }

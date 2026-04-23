@@ -47,12 +47,10 @@ leaking into this public repo). A companion Claude Code PreToolUse hook at
 calls. Rules live in `.githooks/{blocklist,allowlist}.txt`; see
 `.githooks/README.md` for the short version.
 
-**If you use graphify:** `install-hooks.sh` will warn if
-`.git/hooks/post-commit` (graphify's knowledge-graph regenerator) is
-present, because `core.hooksPath` makes git stop running `.git/hooks/`.
-Mirror it into `.githooks/post-commit` yourself before running the
-installer, or re-run with `--force` and type `MIGRATE` at the prompt
-to acknowledge graphify will stop firing.
+Any existing hooks in `.git/hooks/` (e.g., graphify's `post-commit`)
+are automatically copied into `.githooks/` so they keep running under
+the new `core.hooksPath`. Copied hooks are gitignored — they stay
+local-only.
 
 **Running tests cold:** `tests/test_helper.bash::setup_git_tmprepo`
 chmods the hook scripts executable on demand, so `bats tests/` works in
