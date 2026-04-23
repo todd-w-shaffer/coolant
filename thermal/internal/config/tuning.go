@@ -193,10 +193,15 @@ const (
 
 // Battery cell rendering.
 const (
-	BatteryCellWidth         = 8    // 3 braille (battery shape) + space + text
-	BatteryChargeBreathFloor = 0.35 // brightness floor during charging breath
-	BatteryChargeBreathCeil  = 0.80 // brightness ceiling during charging breath
-	BatteryBreathRate        = 0.35 // multiplier on BreathePhaseStep — slower than agent dots
+	BatteryCellWidth           = 8    // 3 braille (battery shape) + space + text
+	BatteryChargeBreathFloor   = 0.35 // brightness floor during charging breath
+	BatteryChargeBreathCeil    = 0.80 // brightness ceiling during charging breath
+	BatteryBreathRate          = 0.35 // multiplier on BreathePhaseStep — slower than agent dots
+	BatteryMeltdownBreathFloor = 0.6  // aggressive brightness floor for <10% meltdown pulse
+	BatteryMeltdownBreathCeil  = 1.0  // brightness ceiling for meltdown pulse
+	BatteryWarnBreathFloor     = 0.85 // subtle brightness floor for 10-20% warning breath
+	BatteryWarnBreathCeil      = 1.0  // brightness ceiling for warning breath
+	BatteryWarnBreathRate      = 0.5  // 1 cycle per 2 seconds at AnimFPS=60
 )
 
 // ── Headroom warnings ──────────────────────────────────────
