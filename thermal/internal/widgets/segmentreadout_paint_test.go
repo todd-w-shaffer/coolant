@@ -27,10 +27,6 @@ func settle(t *testing.T, s *SegmentReadout, value, level int) {
 	if s.value != value {
 		t.Fatalf("spring failed to converge to %d (stuck at %d)", value, s.value)
 	}
-	// One more tick to consume any pending level-up flash so Render hits the
-	// steady-state branch (the flash branch is a whole-line invert and doesn't
-	// participate in per-digit span caching).
-	s.AnimTick()
 }
 
 // expectedTensSpan reconstructs the byte sequence the tens digit's styled
@@ -137,20 +133,5 @@ func TestSegmentReadout_DegreeSpanChangesAcrossLevels(t *testing.T) {
 	want := expectedDegreeSpan(s.theme, 3)
 	if !strings.Contains(top30hot, want) {
 		t.Errorf("render at level 3 missing level-3 degree span")
-	}
-}
-
-// TestSegmentReadout_GhostNeverArms — ghost-trail logic is removed; even on
-// a large jump the ghostTicks counter must remain zero throughout.
-func TestSegmentReadout_GhostNeverArms(t *testing.T) {
-	s := newPaintSegment(t)
-	s.Update(20, 1)
-	s.AnimTick()
-	s.Update(80, 3) // big jump
-	for i := 0; i < 30; i++ {
-		s.AnimTick()
-		if s.ghostTicks > 0 {
-			t.Fatalf("tick %d: ghost armed (ticks=%d) — arming should be removed", i, s.ghostTicks)
-		}
 	}
 }

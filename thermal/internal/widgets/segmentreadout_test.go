@@ -43,15 +43,13 @@ func TestSegmentReadout_RenderShape(t *testing.T) {
 	}
 }
 
-// settleTo drives Update + AnimTicks until the spring lands on the target
-// and any pending level-flash has expired.
+// settleTo drives Update + AnimTicks until the spring lands on the target.
 func settleTo(t *testing.T, s *SegmentReadout, value, level int) {
 	t.Helper()
 	s.Update(value, level)
 	for i := 0; i < 90 && s.value != value; i++ {
 		s.AnimTick()
 	}
-	s.AnimTick() // consume any 1-tick level-up flash
 }
 
 // TestSegmentReadout_ValueColors — different values produce different ANSI
@@ -159,34 +157,26 @@ func TestSegmentReadout_OfflineOnlineCycle(t *testing.T) {
 	}
 }
 
-// TestSegmentReadout_FlashOnUpwardTransition — bumping the level upward
-// arms a 1-tick inverted frame. The inverted frame differs from the
-// steady-state frame.
-func TestSegmentReadout_FlashOnUpwardTransition(t *testing.T) {
+// TestSegmentReadout_NoFlashOnAnyTransition — upward and downward level
+// moves produce identical frames before and after AnimTick. No flash.
+func TestSegmentReadout_NoFlashOnAnyTransition(t *testing.T) {
 	s := newTestSegment(t)
 	bg := color.RGBA{0, 0, 0, 255}
 	s.Update(50, 1)
 	_, _, _ = s.Render(bg)
-	s.Update(50, 2) // upward: value unchanged (so no ghost), level up → flash
-	flash, _, _ := s.Render(bg)
-	s.AnimTick()
-	post, _, _ := s.Render(bg)
-	if flash == post {
-		t.Errorf("flash frame should differ from post-flash frame")
-	}
-}
-
-// TestSegmentReadout_NoFlashOnDownwardTransition — downward level moves
-// don't pop; the render is identical before and after AnimTick.
-func TestSegmentReadout_NoFlashOnDownwardTransition(t *testing.T) {
-	s := newTestSegment(t)
-	bg := color.RGBA{0, 0, 0, 255}
+	// Upward: should NOT flash.
 	s.Update(50, 3)
-	_, _, _ = s.Render(bg)
-	s.Update(50, 1) // downward
 	pre, _, _ := s.Render(bg)
 	s.AnimTick()
 	post, _, _ := s.Render(bg)
+	if pre != post {
+		t.Errorf("upward transition should not flash; frames differ")
+	}
+	// Downward: should NOT flash.
+	s.Update(50, 1)
+	pre, _, _ = s.Render(bg)
+	s.AnimTick()
+	post, _, _ = s.Render(bg)
 	if pre != post {
 		t.Errorf("downward transition should not flash; frames differ")
 	}

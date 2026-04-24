@@ -13,29 +13,12 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
-// ghostTickCount is how many animation ticks the previous value lingers on
-// screen (dimmed) after a value change. At 30fps this yields ~167ms — long
-// enough to read as a trail, short enough not to delay the new reading.
-const ghostTickCount = 5
-
-// ghostDeltaThreshold is the minimum value change that arms the ghost
-// trail. Small jitter from EMA smoothing (1–2 points) must NOT trigger a
-// ghost, otherwise the readout re-arms every snapshot and is stuck
-// permanently in the dimmed prev-value state.
-const ghostDeltaThreshold = 3
-
 // SegmentReadout renders the 7-segment-style temperature number for the
-// headline. It owns value + level + a sub-second ghost-trail state machine
-// and a single-tick threshold flash that fires on upward level transitions.
+// headline. It owns value + level, with spring-smoothed easing between
+// numeric positions to eliminate boundary flicker on EMA jitter.
 type SegmentReadout struct {
-	value      int // 0..99, clamped
-	prevValue  int
-	ghostTicks int
-
-	level      int // 0..4
-	prevLevel  int
-	hasLevel   bool
-	flashTicks int
+	value int // 0..99, clamped
+	level int // 0..4
 
 	// Spring-smoothed numeric position. rawTarget is the latest value passed
 	// to Update (clamped to 0..99); tempPos/tempVel are advanced by AnimTick
@@ -60,10 +43,7 @@ func NewSegmentReadout(th *theme.Theme, ap *anim.Profile) *SegmentReadout {
 	}
 }
 
-// Update sets the temperature value and the overall thermal level. Arms
-// two animations: a ghost trail on value change (previous value lingers
-// dimmed) and a 1-tick inverted flash on a monotonic upward level move.
-// Downward transitions are silent — relief shouldn't pop.
+// Update sets the temperature value and the overall thermal level.
 func (s *SegmentReadout) Update(value, level int) {
 	if level < 0 {
 		level = 0
@@ -86,22 +66,11 @@ func (s *SegmentReadout) Update(value, level int) {
 		s.value = value
 		s.seeded = true
 	}
-	// Ghost-trail arming was removed: spring smoothing now does the easing
-	// the ghost was approximating, and the dim→snap transition fought the
-	// spring's continuous walk. ghostTicks/prevValue/ghost render branch
-	// remain as dead code paths pending a post-merge cleanup pass.
-	if s.hasLevel && level > s.prevLevel {
-		s.flashTicks = 1
-	}
 	s.level = level
-	s.prevLevel = level
-	s.hasLevel = true
 }
 
 // AnimTick advances the spring toward the raw target, then updates the
-// displayed integer with boundary hysteresis (ghost may fire when the
-// displayed int crosses ghostDeltaThreshold). Flash/ghost countdowns tick
-// last so a freshly-armed ghost gets its full window.
+// displayed integer with boundary hysteresis.
 func (s *SegmentReadout) AnimTick() {
 	if s.seeded {
 		s.tempPos, s.tempVel = s.tempSpring.Update(s.tempPos, s.tempVel, s.rawTarget)
@@ -117,31 +86,10 @@ func (s *SegmentReadout) AnimTick() {
 			s.value--
 		}
 	}
-	if s.ghostTicks > 0 {
-		s.ghostTicks--
-	}
-	if s.flashTicks > 0 {
-		s.flashTicks--
-	}
 }
 
-// Render paints both braille rows, honoring the active animation state in
-// priority order: ghost trail > threshold flash > steady state.
+// Render paints both braille rows as three per-digit styled spans.
 func (s *SegmentReadout) Render(bg color.Color) (top, bot string, visWidth int) {
-	if s.ghostTicks > 0 {
-		rawTop, rawBot, w := RenderTemperature(s.prevValue)
-		fgEsc := s.theme.OverallTemperatureFgDimmed(s.prevValue)
-		bgStyle := lipgloss.NewStyle().Background(bg)
-		return paintFg(bgStyle, fgEsc, rawTop), paintFg(bgStyle, fgEsc, rawBot), w
-	}
-	if s.flashTicks > 0 {
-		// Inverted frame: swap the level's fg/bg for one render tick.
-		levelFg := s.theme.OverallGradient[s.level].Fg
-		levelBg := s.theme.OverallGradient[s.level].Bg
-		style := lipgloss.NewStyle().Foreground(levelBg).Background(levelFg)
-		rawTop, rawBot, w := RenderTemperature(s.value)
-		return style.Render(rawTop), style.Render(rawBot), w
-	}
 	// Three per-digit styled spans so cells stay byte-identical when only
 	// part of the readout changes. Tens span is colored by its band anchor
 	// (value/10 * 10) so it's stable across any in-band ones change. Degree
