@@ -190,6 +190,15 @@ const (
 	battShoulderR  rune = 0x02        // dot 2 — left col row 2 of topR
 )
 
+// Floor: the bottom-most dot row is structural, giving the battery a
+// visible vessel floor at every fill level (including 0%). Excluded
+// from the 22-dot fill budget.
+const (
+	battFloorL rune = 0x80        // dot 8 — right col row 4 of botL
+	battFloorC rune = 0x40 | 0x80 // dots 7+8 — both cols row 4 of botC
+	battFloorR rune = 0x40        // dot 7 — left col row 4 of botR
+)
+
 // Casing walls: outer columns always lit to form the battery outline.
 // Bottom chars get full-height walls (4 rows). Top chars get short walls
 // (rows 2-4) so the nipple terminal pokes above the casing on row 1.
@@ -200,34 +209,73 @@ var (
 	casingTopR = rightBits[3] // rows 2-4 — top char right wall, below nipple
 )
 
-// brailleBattery returns six braille runes (3 top, 3 bottom) forming a
-// battery shape. Side chars have permanent casing walls (outer column
-// always on) with a shoulder step-down below the nipple; interior
-// columns fill bottom-to-top with charge level. The center top char
-// includes the nipple terminal. Reuses levelSplit/leftBits/rightBits
-// from sparkline.go.
-func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
-	level := int(pct*8.0/100.0 + 0.5)
-	if level < 0 {
-		level = 0
-	}
-	// Cap at 7 so the side top chars never fully fill — the nipple
-	// always pokes one row above the sides, preserving the battery
-	// silhouette at every charge level. The percent text carries precision.
-	if level > 7 {
-		level = 7
-	}
-	b, t := levelSplit(level)
+// Char index into the 6-rune battery tuple — used by batteryFillOrder
+// to route each dot to the correct char without string keys.
+const (
+	bTopL = iota
+	bTopC
+	bTopR
+	bBotL
+	bBotC
+	bBotR
+)
 
-	// Side chars: outer column = casing (always on), inner column = fill.
-	// Center char: both columns = fill (pure interior).
-	topL = 0x2800 | casingTopL | rightBits[t] | battShoulderL
-	topC = 0x2800 | leftBits[t] | rightBits[t] | battNippleBits
-	topR = 0x2800 | leftBits[t] | casingTopR | battShoulderR
-	botL = 0x2800 | casingL | rightBits[b]
-	botC = 0x2800 | leftBits[b] | rightBits[b]
-	botR = 0x2800 | leftBits[b] | casingR
-	return
+// fillDot is one entry in the bottom-up, left-to-right dot stream.
+type fillDot struct {
+	char int
+	bits rune
+}
+
+// batteryFillOrder is the 22-dot stream: each entry lights up the n-th
+// fill dot as the battery charges. Rows are traversed bottom-up starting
+// at row G (row H is structural floor); within each row, positions go
+// left-to-right. The shoulder row (row B / top char row 2) has only
+// two fillable positions — its side dots are permanent silhouette.
+var batteryFillOrder = [22]fillDot{
+	// Row G — bot char row 3
+	{bBotL, 0x20}, {bBotC, 0x04}, {bBotC, 0x20}, {bBotR, 0x04},
+	// Row F — bot char row 2
+	{bBotL, 0x10}, {bBotC, 0x02}, {bBotC, 0x10}, {bBotR, 0x02},
+	// Row E — bot char row 1
+	{bBotL, 0x08}, {bBotC, 0x01}, {bBotC, 0x08}, {bBotR, 0x01},
+	// Row D — top char row 4
+	{bTopL, 0x80}, {bTopC, 0x40}, {bTopC, 0x80}, {bTopR, 0x40},
+	// Row C — top char row 3
+	{bTopL, 0x20}, {bTopC, 0x04}, {bTopC, 0x20}, {bTopR, 0x04},
+	// Row B — top char row 2, shoulder row. Only center positions
+	// fillable; side positions are permanent shoulder silhouette.
+	{bTopC, 0x02}, {bTopC, 0x10},
+}
+
+// brailleBattery returns six braille runes (3 top, 3 bottom) forming a
+// battery shape. Silhouette (casing, nipple, shoulder, floor) is always
+// lit; the 22 remaining interior positions form a dot stream that fills
+// bottom-up / left-to-right as `pct` rises. One fill dot ≈ 4.55% charge,
+// giving ~22 discrete visible states across 0-100%. The final two dots
+// (shoulder row centers) only light at 100% — a "crown" that makes the
+// topped-off state unambiguous.
+func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
+	n := int(pct*22.0/100.0 + 0.5)
+	if n < 0 {
+		n = 0
+	}
+	if n > 22 {
+		n = 22
+	}
+
+	chars := [6]rune{
+		bTopL: 0x2800 | casingTopL | battShoulderL,
+		bTopC: 0x2800 | battNippleBits,
+		bTopR: 0x2800 | casingTopR | battShoulderR,
+		bBotL: 0x2800 | casingL | battFloorL,
+		bBotC: 0x2800 | battFloorC,
+		bBotR: 0x2800 | casingR | battFloorR,
+	}
+	for i := 0; i < n; i++ {
+		d := batteryFillOrder[i]
+		chars[d.char] |= d.bits
+	}
+	return chars[bTopL], chars[bTopC], chars[bTopR], chars[bBotL], chars[bBotC], chars[bBotR]
 }
 
 // formatRemaining renders a time.Duration as "X.Xh" (under 10 hours)

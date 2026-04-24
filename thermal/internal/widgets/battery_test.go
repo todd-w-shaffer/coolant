@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"math"
+	"math/bits"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,32 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
+
+// Silhouette masks — derived from the production always-on bits so
+// tests can't drift from battery.go's structural definitions.
+var (
+	silhouetteTopL = casingTopL | battShoulderL
+	silhouetteTopC = battNippleBits
+	silhouetteTopR = casingTopR | battShoulderR
+	silhouetteBotL = casingL | battFloorL
+	silhouetteBotC = battFloorC
+	silhouetteBotR = casingR | battFloorR
+)
+
+// countFillDots returns the number of fill-stream dots lit across the
+// rendered battery — silhouette bits (casing, shoulder, nipple, floor)
+// are subtracted out.
+func countFillDots(topL, topC, topR, botL, botC, botR rune) int {
+	pairs := []struct{ r, mask rune }{
+		{topL, silhouetteTopL}, {topC, silhouetteTopC}, {topR, silhouetteTopR},
+		{botL, silhouetteBotL}, {botC, silhouetteBotC}, {botR, silhouetteBotR},
+	}
+	n := 0
+	for _, p := range pairs {
+		n += bits.OnesCount(uint((p.r & 0xFF) &^ p.mask))
+	}
+	return n
+}
 
 func testBattery(t *testing.T) *Battery {
 	t.Helper()
@@ -58,29 +85,91 @@ func TestBattery_DischargingRender(t *testing.T) {
 	}
 }
 
-func TestBattery_BrailleLevelMapping(t *testing.T) {
+func TestBattery_FloorAlwaysPresent(t *testing.T) {
+	// Row H (the bottom-most row) is structural — always lit as the
+	// vessel floor, independent of fill. Check across the full range.
+	for _, pct := range []float64{0, 1, 9, 25, 50, 83, 95, 100} {
+		_, _, _, botL, botC, botR := brailleBattery(pct)
+		if botL&0x80 == 0 {
+			t.Errorf("pct=%.0f: botL %U missing floor bit (0x80)", pct, botL)
+		}
+		if botC&0xC0 != 0xC0 {
+			t.Errorf("pct=%.0f: botC %U missing floor bits (0xC0)", pct, botC)
+		}
+		if botR&0x40 == 0 {
+			t.Errorf("pct=%.0f: botR %U missing floor bit (0x40)", pct, botR)
+		}
+	}
+}
+
+func TestBattery_FillDotCount(t *testing.T) {
+	// dots_lit = round(pct * 22 / 100). Fill count excludes the always-on
+	// silhouette (casing, shoulder, nipple, floor).
 	tests := []struct {
-		pct        float64
-		wantTop    int // top half fill level 0-4
-		wantBottom int // bottom half fill level 0-4
+		pct      float64
+		wantDots int
 	}{
-		{0, 0, 0},
-		{12, 0, 1},
-		{25, 0, 2},
-		{50, 0, 4},
-		{63, 1, 4},
-		{87, 3, 4},
-		{100, 3, 4}, // capped at level 7 to preserve nipple shape
+		{0, 0},
+		{4, 1},  // first dot appears — trace charge above the floor
+		{14, 3}, // bottom-above-floor row nearly full
+		{25, 6},
+		{50, 11},
+		{75, 17}, // round(16.5) — banker's rounding lands at 17 in Go's int+0.5 convention
+		{83, 18},
+		{95, 21},
+		{100, 22},
 	}
 	for _, tt := range tests {
 		t.Run("", func(t *testing.T) {
-			_, _, _, botL, _, _ := brailleBattery(tt.pct)
-			// Bottom chars have pure fill (no outline bits).
-			gotBot := decodeBrailleLevel(botL)
-			if gotBot != tt.wantBottom {
-				t.Errorf("pct=%.0f: bot level=%d, want %d", tt.pct, gotBot, tt.wantBottom)
+			got := countFillDots(brailleBattery(tt.pct))
+			if got != tt.wantDots {
+				t.Errorf("pct=%.0f: fill dots=%d, want %d", tt.pct, got, tt.wantDots)
 			}
 		})
+	}
+}
+
+func TestBattery_MonotonicFill(t *testing.T) {
+	// Ascending pct must never clear a previously-lit bit — the fill
+	// stream only adds dots.
+	var prev [6]rune
+	prev[0], prev[1], prev[2], prev[3], prev[4], prev[5] = brailleBattery(0)
+	for pct := 1; pct <= 100; pct++ {
+		var cur [6]rune
+		cur[0], cur[1], cur[2], cur[3], cur[4], cur[5] = brailleBattery(float64(pct))
+		for i := 0; i < 6; i++ {
+			if prev[i]&^cur[i] != 0 {
+				t.Errorf("pct=%d: char[%d] lost a bit (%U → %U)", pct, i, prev[i], cur[i])
+			}
+		}
+		prev = cur
+	}
+}
+
+func TestBattery_83NotSameAs100(t *testing.T) {
+	// Core regression: 83% and 100% used to render identically due to the
+	// 7-level cap. Under the 22-dot scheme they must differ.
+	a := [6]rune{}
+	a[0], a[1], a[2], a[3], a[4], a[5] = brailleBattery(83)
+	b := [6]rune{}
+	b[0], b[1], b[2], b[3], b[4], b[5] = brailleBattery(100)
+	if a == b {
+		t.Errorf("83%% and 100%% render identically: %U", a)
+	}
+}
+
+func TestBattery_CrownOnlyAt100(t *testing.T) {
+	// The shoulder-row center dots (topC 0x02 and 0x10) — the "crown" —
+	// are the last two dots in the fill stream. They light up iff fill
+	// reaches 22 dots (i.e., pct rounds to 22).
+	const crownBits rune = 0x02 | 0x10
+	for pct := 0; pct <= 100; pct++ {
+		_, topC, _, _, _, _ := brailleBattery(float64(pct))
+		hasCrown := topC&crownBits == crownBits
+		wantCrown := int(float64(pct)*22.0/100.0+0.5) == 22
+		if hasCrown != wantCrown {
+			t.Errorf("pct=%d: crown=%v, want %v (topC=%U)", pct, hasCrown, wantCrown, topC)
+		}
 	}
 }
 
