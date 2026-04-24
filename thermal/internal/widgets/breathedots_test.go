@@ -2,8 +2,11 @@ package widgets
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
@@ -638,6 +641,60 @@ func TestHoverClearsOnEmpty(t *testing.T) {
 	if bright >= 1.0 {
 		t.Errorf("after clearing hover, brightness should revert, got %f", bright)
 	}
+}
+
+// TestBreatheInterpolatesFromBg asserts the ±1/channel midpoint tolerance
+// (uint8 truncation) and the nil-bg → (0,0,0) fallback. Without the latter,
+// every existing dark-theme breath test would regress.
+func TestBreatheInterpolatesFromBg(t *testing.T) {
+	ar, ag, ab := theme.Classic().AccentR, theme.Classic().AccentG, theme.Classic().AccentB
+
+	cases := []struct {
+		name      string
+		bg        color.Color
+		bgR, g, b uint8
+	}{
+		{"nil bg (pre-latte)", nil, 0, 0, 0},
+		{"synthetic black", lipgloss.Color("#000000"), 0, 0, 0},
+		{"synthetic white", lipgloss.Color("#ffffff"), 0xff, 0xff, 0xff},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotR, gotG, gotB := rgb8(BreatheFg(ar, ag, ab, 0, tc.bg))
+			if gotR != tc.bgR || gotG != tc.g || gotB != tc.b {
+				t.Errorf("brightness=0: got (%d,%d,%d), want bg (%d,%d,%d)",
+					gotR, gotG, gotB, tc.bgR, tc.g, tc.b)
+			}
+
+			gotR, gotG, gotB = rgb8(BreatheFg(ar, ag, ab, 1, tc.bg))
+			if gotR != uint8(ar) || gotG != uint8(ag) || gotB != uint8(ab) {
+				t.Errorf("brightness=1: got (%d,%d,%d), want accent (%d,%d,%d)",
+					gotR, gotG, gotB, uint8(ar), uint8(ag), uint8(ab))
+			}
+
+			midR := uint8(float64(tc.bgR) + (ar-float64(tc.bgR))*0.5)
+			midG := uint8(float64(tc.g) + (ag-float64(tc.g))*0.5)
+			midB := uint8(float64(tc.b) + (ab-float64(tc.b))*0.5)
+			gotR, gotG, gotB = rgb8(BreatheFg(ar, ag, ab, 0.5, tc.bg))
+			if absDiff(gotR, midR) > 1 || absDiff(gotG, midG) > 1 || absDiff(gotB, midB) > 1 {
+				t.Errorf("brightness=0.5: got (%d,%d,%d), want (%d,%d,%d) ±1",
+					gotR, gotG, gotB, midR, midG, midB)
+			}
+		})
+	}
+}
+
+func rgb8(c color.Color) (uint8, uint8, uint8) {
+	r, g, b, _ := c.RGBA()
+	return uint8(r >> 8), uint8(g >> 8), uint8(b >> 8)
+}
+
+func absDiff(a, b uint8) uint8 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 func TestBreatheDotRenderMaxDots(t *testing.T) {

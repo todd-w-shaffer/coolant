@@ -308,11 +308,7 @@ func (b *BreatheDots) writeDot(buf *strings.Builder, visWidth *int, glyph string
 		}
 	}
 
-	fg := lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
-		uint8(b.theme.AccentR*brightness),
-		uint8(b.theme.AccentG*brightness),
-		uint8(b.theme.AccentB*brightness),
-	))
+	fg := BreatheFg(b.theme.AccentR, b.theme.AccentG, b.theme.AccentB, brightness, bg)
 	style := lipgloss.NewStyle().Foreground(fg)
 	if bg != nil {
 		style = style.Background(bg)
@@ -384,6 +380,23 @@ func (b *BreatheDots) kittGaussian(dist float64) float64 {
 // sinNorm maps a sine wave to [0, 1].
 func sinNorm(x float64) float64 {
 	return 0.5 + 0.5*math.Sin(x)
+}
+
+// BreatheFg interpolates linearly from bg toward (ar, ag, ab) as brightness
+// sweeps 0→1. A nil bg is treated as (0,0,0) so dark themes — where the
+// rendered backdrop is ≈ black — reduce to the historical "scale accent by
+// brightness" behavior. Exported so cmd/swatch can mirror the dashboard math.
+func BreatheFg(ar, ag, ab, brightness float64, bg color.Color) color.Color {
+	var bgR, bgG, bgB uint8
+	if bg != nil {
+		r, g, b, _ := bg.RGBA()
+		bgR, bgG, bgB = uint8(r>>8), uint8(g>>8), uint8(b>>8)
+	}
+	return lipgloss.Color(fmt.Sprintf("#%02x%02x%02x",
+		uint8(float64(bgR)+(ar-float64(bgR))*brightness),
+		uint8(float64(bgG)+(ag-float64(bgG))*brightness),
+		uint8(float64(bgB)+(ab-float64(bgB))*brightness),
+	))
 }
 
 // RenderedAgentIDs returns the cached snapshot of completed-agent IDs that

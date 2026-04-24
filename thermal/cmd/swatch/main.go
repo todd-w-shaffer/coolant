@@ -16,8 +16,6 @@ import (
 	"os"
 	"strings"
 
-	colorful "github.com/lucasb-eyer/go-colorful"
-
 	"charm.land/lipgloss/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
@@ -236,17 +234,17 @@ func renderGaugeDots(th *theme.Theme) string {
 }
 
 // renderAgentIcons renders agent hexagon glyphs at 5 brightness levels.
+// Uses OverallGradient[0].Bg as the interpolation backdrop — the idle
+// cold-cell bg the dashboard actually renders agent dots against — so
+// previews reflect how the theme will look in thermo.
 func renderAgentIcons(th *theme.Theme) string {
 	glyphs := []string{"⬡", "⏣", "⬢", "⏣", "⬡"}
 	levels := []float64{0.2, 0.4, 0.6, 0.8, 1.0}
+	bg := th.OverallGradient[0].Bg
 	var sb strings.Builder
 	for i, brightness := range levels {
-		r := th.AccentR * brightness / 255.0
-		g := th.AccentG * brightness / 255.0
-		b := th.AccentB * brightness / 255.0
-		c := colorful.Color{R: r, G: g, B: b}
-		ri, gi, bi := c.RGB255()
-		sb.WriteString(fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", ri, gi, bi, glyphs[i]))
+		r, g, b, _ := widgets.BreatheFg(th.AccentR, th.AccentG, th.AccentB, brightness, bg).RGBA()
+		sb.WriteString(fmt.Sprintf("\033[38;2;%d;%d;%dm%s\033[0m", r>>8, g>>8, b>>8, glyphs[i]))
 		if i < len(levels)-1 {
 			sb.WriteRune(' ')
 		}

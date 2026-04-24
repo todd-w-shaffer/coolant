@@ -11,6 +11,7 @@ var Registry = map[string]func() *Theme{
 	"iron":    Iron,
 	"mono":    Mono,
 	"frappe":  Frappe,
+	"latte":   Latte,
 }
 
 // Get returns a fully initialized Theme by name, or an error if not found.

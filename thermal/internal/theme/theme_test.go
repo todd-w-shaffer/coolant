@@ -2,9 +2,104 @@ package theme
 
 import (
 	"fmt"
+	"image/color"
+	"math"
 	"strings"
 	"testing"
 )
+
+// relLuminance returns the WCAG 2.x relative luminance of a color.Color,
+// in [0,1].
+func relLuminance(c color.Color) float64 {
+	r, g, b, _ := c.RGBA()
+	chanLin := func(v uint32) float64 {
+		x := float64(v) / 65535.0
+		if x <= 0.03928 {
+			return x / 12.92
+		}
+		return math.Pow((x+0.055)/1.055, 2.4)
+	}
+	return 0.2126*chanLin(r) + 0.7152*chanLin(g) + 0.0722*chanLin(b)
+}
+
+// contrastRatio returns WCAG contrast ratio between two colors.
+func contrastRatio(a, b color.Color) float64 {
+	la, lb := relLuminance(a), relLuminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// TestDimRecedesMoreThanHelp is a cross-theme invariant: DimColor's luminance
+// distance from OverallGradient[0].Bg must be smaller than HelpColor's. That
+// is, on any backdrop, dim recedes more than help does. Mode-agnostic —
+// dark themes have dim above bg, light themes have dim below bg.
+func TestDimRecedesMoreThanHelp(t *testing.T) {
+	for _, name := range Names() {
+		th, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		bgLum := relLuminance(th.OverallGradient[0].Bg)
+		dimDist := math.Abs(relLuminance(th.DimColor) - bgLum)
+		helpDist := math.Abs(relLuminance(th.HelpColor) - bgLum)
+		if dimDist >= helpDist {
+			t.Errorf("theme %q: dim distance (%.3f) should be < help distance (%.3f) from bg (lum=%.3f)",
+				name, dimDist, helpDist, bgLum)
+		}
+	}
+}
+
+// TestColdIsOnlyRecessedLevel is a cross-theme invariant: cold (level 0) has
+// the lowest Fg/Bg contrast among non-alarm levels; levels 1..3 each assert
+// more than cold. Level [4] is exempt because alarm-chamber designs (Classic:
+// red on dark-red; Frappe: red on raised grey surface) intentionally reduce
+// Fg/Bg contrast to shift the alarm register from contrast to hue
+// saturation — that's a design pattern, not a bug. Cold's contrast must be
+// ≥ 1.25:1 so it recedes rather than disappears entirely (low-vision floor).
+func TestColdIsOnlyRecessedLevel(t *testing.T) {
+	const coldFloor = 1.25
+	for _, name := range Names() {
+		th, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		coldContrast := contrastRatio(th.OverallGradient[0].Fg, th.OverallGradient[0].Bg)
+		if coldContrast < coldFloor {
+			t.Errorf("theme %q: cold contrast %.3f < floor %.3f (cold recedes, not disappears)",
+				name, coldContrast, coldFloor)
+		}
+		for i := 1; i <= 3; i++ {
+			c := contrastRatio(th.OverallGradient[i].Fg, th.OverallGradient[i].Bg)
+			if c <= coldContrast {
+				t.Errorf("theme %q: level[%d] contrast %.3f <= cold %.3f (non-alarm levels must assert)",
+					name, i, c, coldContrast)
+			}
+		}
+	}
+}
+
+// TestDimAndHelpStayDistinct is a cross-theme invariant: DimColor and
+// HelpColor must stay perceptually separable so the focused-intel overlay's
+// dim() field labels don't flatten against its ct() data values. Floor is
+// 1.9:1 — the real-world minimum across existing dark themes. Latte was the
+// motivator (its savor pass surfaced the overlay failure mode); its
+// laOverlay0/laSubtext1 pairing clears the bar comfortably at ~2.4:1.
+func TestDimAndHelpStayDistinct(t *testing.T) {
+	const floor = 1.9
+	for _, name := range Names() {
+		th, err := Get(name)
+		if err != nil {
+			t.Fatalf("Get(%q): %v", name, err)
+		}
+		c := contrastRatio(th.DimColor, th.HelpColor)
+		if c < floor {
+			t.Errorf("theme %q: contrast(Dim, Help) = %.3f, want >= %.3f",
+				name, c, floor)
+		}
+	}
+}
 
 // colorString stringifies a color for assertion. lipgloss.Color in v2 is
 // a string alias, so %v yields the ANSI code or hex literal.
@@ -40,8 +135,10 @@ func TestAllThemesProvideBloomRamp(t *testing.T) {
 // offline frame is a transient that ships before the first snapshot
 // lands; saturated theme colors here read as a "flash" on startup
 // (iron's dark magenta, classic's steel blue). Each themed pre-data
-// backdrop must be a dim neutral (ANSI 234-236) — frappe is exempt
-// because its catppuccin surface is already perceptually neutral.
+// backdrop must be a dim neutral (ANSI 234-236) — frappe and latte are
+// both exempt by omission (not allowlist): their Catppuccin surfaces
+// (frMantle, laMantle) are palette-native perceptual neutrals, so the
+// vivid-flash failure mode this test catches does not apply.
 func TestOfflineBgIsNeutral(t *testing.T) {
 	allowed := map[string]bool{"234": true, "235": true, "236": true}
 	for _, name := range []string{"classic", "iron", "mono"} {
@@ -56,10 +153,24 @@ func TestOfflineBgIsNeutral(t *testing.T) {
 	}
 }
 
-func TestClassicInit(t *testing.T) {
-	th := Classic()
+// TestAllThemesInitialize walks every registered theme and asserts every
+// exported palette field is non-nil / non-empty after Init. Replaces per-theme
+// init tests — every new theme inherits coverage just by landing in Registry.
+func TestAllThemesInitialize(t *testing.T) {
+	for _, name := range Names() {
+		t.Run(name, func(t *testing.T) {
+			th, err := Get(name)
+			if err != nil {
+				t.Fatalf("Get(%q): %v", name, err)
+			}
+			assertThemeInitialized(t, th)
+		})
+	}
+}
 
-	// LUTs must be populated (non-empty strings)
+func assertThemeInitialized(t *testing.T, th *Theme) {
+	t.Helper()
+
 	for i := 0; i <= 100; i++ {
 		if th.lowMidLUT[i] == "" {
 			t.Fatalf("lowMidLUT[%d] is empty", i)
@@ -68,8 +179,6 @@ func TestClassicInit(t *testing.T) {
 			t.Fatalf("midHighLUT[%d] is empty", i)
 		}
 	}
-
-	// Cached ANSI strings
 	if th.lowANSI == "" {
 		t.Fatal("lowANSI is empty")
 	}
@@ -77,7 +186,6 @@ func TestClassicInit(t *testing.T) {
 		t.Fatal("highANSI is empty")
 	}
 
-	// GaugeDots must have formatted strings
 	for i, dot := range th.GaugeDots {
 		if dot.Formatted == "" {
 			t.Fatalf("GaugeDots[%d].Formatted is empty", i)
@@ -93,7 +201,6 @@ func TestClassicInit(t *testing.T) {
 		}
 	}
 
-	// All ThermalLevel fields must be non-nil
 	for i, level := range th.OverallGradient {
 		if level.Fg == nil {
 			t.Fatalf("OverallGradient[%d].Fg is nil", i)
@@ -111,14 +218,12 @@ func TestClassicInit(t *testing.T) {
 		}
 	}
 
-	// ThreatColors
 	for i, c := range th.ThreatColors {
 		if c == nil {
 			t.Fatalf("ThreatColors[%d] is nil", i)
 		}
 	}
 
-	// SessionPhase
 	if th.SessionPhase.Idle == nil {
 		t.Fatal("SessionPhase.Idle is nil")
 	}
@@ -135,7 +240,6 @@ func TestClassicInit(t *testing.T) {
 		t.Fatal("SessionPhase.Explosion is nil")
 	}
 
-	// Offline
 	if th.OfflineFg == nil {
 		t.Fatal("OfflineFg is nil")
 	}
@@ -146,7 +250,6 @@ func TestClassicInit(t *testing.T) {
 		t.Fatal("OfflineSparkColors is empty")
 	}
 
-	// Chrome
 	if th.DimColor == nil {
 		t.Fatal("DimColor is nil")
 	}
@@ -154,7 +257,6 @@ func TestClassicInit(t *testing.T) {
 		t.Fatal("HelpColor is nil")
 	}
 
-	// Rate colors
 	if th.SpawnColor == nil {
 		t.Fatal("SpawnColor is nil")
 	}
@@ -288,7 +390,7 @@ func TestRegistryGet(t *testing.T) {
 
 func TestRegistryNames(t *testing.T) {
 	names := Names()
-	want := []string{"classic", "frappe", "iron", "mono"}
+	want := []string{"classic", "frappe", "iron", "latte", "mono"}
 	if len(names) != len(want) {
 		t.Fatalf("Names() returned %d entries, want %d: %v", len(names), len(want), names)
 	}

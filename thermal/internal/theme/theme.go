@@ -20,7 +20,7 @@ type SparkThresholds struct {
 
 // Theme defines the complete visual palette for the thermal dashboard.
 type Theme struct {
-	Name string // "classic", "iron", "mono", "frost"
+	Name string // registered theme name — see Registry in registry.go
 
 	// -- Severity gradient (sparklines) --
 	GradientLow  colorful.Color // e.g. green (#22c55e)

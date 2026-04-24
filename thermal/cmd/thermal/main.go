@@ -280,7 +280,7 @@ func (m model) View() tea.View {
 
 func main() {
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
-	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frappe)")
+	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frappe, latte)")
 	animName := flag.String("animation", "", "Animation profile (default, calm, intense)")
 	listThemes := flag.Bool("list-themes", false, "List available themes and exit")
 	listAnims := flag.Bool("list-animations", false, "List available animation profiles and exit")
