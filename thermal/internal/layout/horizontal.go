@@ -36,17 +36,18 @@ const (
 //	Line 10:   rates (system stats, spawn/death/net, short help)
 //	Lines 11+: alerts
 type Horizontal struct {
-	width     int
-	height    int
-	state     *model.AppState
-	headline  *widgets.Headline
-	gauges    *widgets.Gauges
-	rates     *widgets.Rates
-	alerts    *widgets.Alerts
-	helpMode  int8
-	intelMode bool
-	collapsed bool
-	theme     *theme.Theme
+	width          int
+	height         int
+	state          *model.AppState
+	headline       *widgets.Headline
+	gauges         *widgets.Gauges
+	rates          *widgets.Rates
+	alerts         *widgets.Alerts
+	helpMode       int8
+	intelMode      bool
+	focusedAgentID string // non-empty → focused-agent sub-mode within intel
+	collapsed      bool
+	theme          *theme.Theme
 }
 
 func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizontal {
@@ -74,6 +75,17 @@ func (h *Horizontal) SetSize(w, height int) {
 	h.alerts.SetSize(w, 2)
 }
 
+// RenderedAgentIDs returns the cached snapshot of completed-agent IDs that
+// were zone-marked in the most recent render. Delegates to Headline.
+func (h *Horizontal) RenderedAgentIDs() []string {
+	return h.headline.RenderedAgentIDs()
+}
+
+// SetHoveredAgent sets the agent ID that should render at full brightness.
+func (h *Horizontal) SetHoveredAgent(id string) {
+	h.headline.SetHoveredAgent(id)
+}
+
 // SetHighScoreMode toggles KITT-as-highscore on the agent dot display.
 func (h *Horizontal) SetHighScoreMode(on bool) {
 	h.headline.SetHighScoreMode(on)
@@ -85,6 +97,7 @@ func (h *Horizontal) HelpMode() int8 {
 
 func (h *Horizontal) ToggleHelp() {
 	h.intelMode = false
+	h.focusedAgentID = ""
 	if h.helpMode == HelpFull {
 		h.helpMode = HelpShort
 		return
@@ -102,11 +115,32 @@ func (h *Horizontal) IntelMode() bool {
 
 func (h *Horizontal) ToggleIntel() {
 	h.helpMode = HelpShort
-	h.intelMode = !h.intelMode
+	if h.intelMode && h.focusedAgentID != "" {
+		// Focused → session summary: clear focus, keep intel.
+		h.focusedAgentID = ""
+	} else {
+		// Session summary → neutral, or neutral → session summary.
+		h.intelMode = !h.intelMode
+		h.focusedAgentID = ""
+	}
 }
 
 func (h *Horizontal) DismissIntel() {
 	h.intelMode = false
+	h.focusedAgentID = ""
+}
+
+// FocusAgent enters the focused-agent intel sub-mode for the given agent ID.
+// Enters intel mode if not already active.
+func (h *Horizontal) FocusAgent(id string) {
+	h.helpMode = HelpShort
+	h.intelMode = true
+	h.focusedAgentID = id
+}
+
+// FocusedAgentID returns the currently focused agent ID, or "" if none.
+func (h *Horizontal) FocusedAgentID() string {
+	return h.focusedAgentID
 }
 
 func (h *Horizontal) ToggleCollapse() {
@@ -121,6 +155,7 @@ func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
 	if state.IsIdle() {
 		h.intelMode = false // dismiss stale intel on idle transition
+		h.focusedAgentID = ""
 	}
 	h.headline.Update(state)
 	h.gauges.Update(state)
@@ -220,8 +255,8 @@ func (h *Horizontal) helpView() []string {
 			diamond(sp.Build) + " " + ct(d, "build") + "  " +
 			diamond(sp.Explosion) + " " + ct(d, "shells (30+)"),
 		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphMid) + dim(ui.AgentGlyphFilled) + " " +
-			ct(d, "subagents — tidal wave hollow/mid/filled, ghosts KITT-scan") + "  " +
-			dim("categories track process types in the headline bar"),
+			ct(d, "subagents — tidal wave, ghosts KITT-scan") + dim(" · ") +
+			ct(d, "click dot for details"),
 		" " + dim("filter") + " " + ct(d, "[ prev") + "  " + ct(d, "] next") + "  " + ct(d, "\\ clear") + "  " +
 			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
 			dim("click a headline category to filter"),
@@ -232,6 +267,11 @@ func (h *Horizontal) helpView() []string {
 }
 
 func (h *Horizontal) intelView() []string {
+	// Focused-agent sub-mode: render single-agent view.
+	if h.focusedAgentID != "" {
+		return h.focusedIntelView()
+	}
+
 	dim := ui.DimText
 	ct := func(s string) string { return ui.ColorText(h.theme.HelpColor, s) }
 	sep := dim(" · ")
@@ -333,6 +373,73 @@ func (h *Horizontal) intelView() []string {
 	orphanStr := ct(fmt.Sprintf("%d orphans", s.OrphanStopCount()))
 	driftStr := ct(fmt.Sprintf("drift %d", s.CounterDrift()))
 	row5 := " " + dim("output") + "    " + bytesStr + sep + orphanStr + sep + driftStr
+
+	return []string{row1, row2, row3, row4, row5}
+}
+
+// focusedIntelView renders the single-agent focused view. Nil-guards
+// LookupAgent on every render frame — if the record was evicted, clears
+// focusedAgentID and falls back to session summary.
+func (h *Horizontal) focusedIntelView() []string {
+	rec := h.state.LookupAgent(h.focusedAgentID)
+	if rec == nil {
+		h.focusedAgentID = ""
+		return h.intelView() // re-enters intelView which now takes session path
+	}
+
+	dim := ui.DimText
+	ct := func(s string) string { return ui.ColorText(h.theme.HelpColor, s) }
+	sep := dim(" · ")
+
+	// Row 1: agent ID + type + duration
+	idStr := ct(rec.AgentID)
+	typeStr := ct(rec.AgentType)
+	var durStr string
+	switch {
+	case rec.Purged:
+		durStr = dim("purged")
+	case rec.Orphan:
+		durStr = dim("orphan (no start event)")
+	case rec.Duration > 0:
+		durStr = ct(formatDuration(rec.Duration))
+	default:
+		durStr = dim("active")
+	}
+	row1 := " " + dim("agent") + "     " + idStr + sep + typeStr + sep + durStr
+
+	// Row 2: project + permission mode
+	var row2Parts []string
+	if rec.Project != "" {
+		row2Parts = append(row2Parts, ct(rec.Project))
+	}
+	if rec.PermissionMode != "" {
+		row2Parts = append(row2Parts, ct(rec.PermissionMode))
+	}
+	row2 := " " + dim("context") + "   "
+	if len(row2Parts) > 0 {
+		row2 += strings.Join(row2Parts, sep)
+	} else {
+		row2 += dim("none")
+	}
+
+	// Row 3: transcript size + path
+	var row3 string
+	if rec.TranscriptBytes > 0 {
+		row3 = " " + dim("size") + "      " + ct(formatBytesCompact(rec.TranscriptBytes)) + " " + dim("transcript")
+	} else {
+		row3 = " " + dim("size") + "      " + dim("no transcript")
+	}
+
+	// Row 4: transcript path
+	var row4 string
+	if rec.TranscriptPath != "" {
+		row4 = " " + dim("path") + "      " + dim(rec.TranscriptPath)
+	} else {
+		row4 = " " + dim("path") + "      " + dim("—")
+	}
+
+	// Row 5: hint
+	row5 := " " + dim("i session summary · any key to dismiss")
 
 	return []string{row1, row2, row3, row4, row5}
 }

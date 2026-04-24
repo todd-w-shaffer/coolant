@@ -8,9 +8,11 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/harmonica"
+	zone "github.com/lrstanley/bubblezone/v2"
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
+	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
 // breatheDot tracks one dot's animation state.
@@ -25,16 +27,18 @@ type breatheDot struct {
 // BreatheDots manages a set of spring-animated breathing dots that track
 // an integer count. Dots fade in on increase and fade out on decrease.
 type BreatheDots struct {
-	spring         harmonica.Spring
-	dots           []breatheDot
-	nextPhase      float64
-	lastStale      int     // dirty check for SetStaleCount
-	staleSweep     float64 // KITT scanner position — continuous, bounces across stale/completed dots
-	tidalPhase     float64 // tidal wave phase for active dots — slow rolling swell
-	theme          *theme.Theme
-	anim           *anim.Profile
-	highScore      bool // when true, KITT scans completed agents instead of stale ones
-	completedCount int  // number of completed agents (highscore KITT dots)
+	spring           harmonica.Spring
+	dots             []breatheDot
+	nextPhase        float64
+	lastStale        int     // dirty check for SetStaleCount
+	staleSweep       float64 // KITT scanner position — continuous, bounces across stale/completed dots
+	tidalPhase       float64 // tidal wave phase for active dots — slow rolling swell
+	theme            *theme.Theme
+	anim             *anim.Profile
+	highScore        bool     // when true, KITT scans completed agents instead of stale ones
+	completedIDs     []string // agent IDs for completed agents (highscore KITT dots)
+	renderedAgentIDs []string // cached snapshot of IDs zone-marked in last RenderSplit
+	hoveredAgentID   string   // when non-empty, this dot renders at full brightness
 }
 
 func NewBreatheDots(th *theme.Theme, ap *anim.Profile) *BreatheDots {
@@ -138,7 +142,7 @@ func (b *BreatheDots) prepareDots(maxDots int) (frames []dotFrame, sweepPos floa
 	}
 	kittCount := staleCount
 	if b.highScore {
-		kittCount = b.completedCount
+		kittCount = len(b.completedIDs)
 		if kittCount > config.KITTMaxDots {
 			kittCount = config.KITTMaxDots
 		}
@@ -185,13 +189,23 @@ func (b *BreatheDots) computeDot(f dotFrame, sweepPos float64, hasStales bool, g
 }
 
 // highscoreCompletedBrightness computes the KITT brightness for the ci'th
-// completed-agent dot rendered in highscore mode.
+// completed-agent dot rendered in highscore mode. When the dot's agent ID
+// matches hoveredAgentID, returns full intensity (bypass KITT gaussian).
 func (b *BreatheDots) highscoreCompletedBrightness(ci int, sweepPos float64) float64 {
-	if b.completedCount == 1 {
+	if b.hoveredAgentID != "" && ci < len(b.completedIDs) && b.completedIDs[ci] == b.hoveredAgentID {
+		return 1.0
+	}
+	if len(b.completedIDs) == 1 {
 		return b.anim.BreatheStaleDim * b.anim.KITTSingleBright
 	}
 	dist := math.Abs(float64(ci) - sweepPos)
 	return b.anim.BreatheStaleDim * b.kittGaussian(dist)
+}
+
+// SetHoveredAgent sets the agent ID that should render at full brightness
+// (hover feedback). Pass "" to clear.
+func (b *BreatheDots) SetHoveredAgent(id string) {
+	b.hoveredAgentID = id
 }
 
 // Render produces the styled dot string and its visible cell width.
@@ -200,7 +214,7 @@ func (b *BreatheDots) highscoreCompletedBrightness(ci int, sweepPos float64) flo
 // bg is the cell background for transparency (nil = no background).
 // maxDots caps visible dots (0 = unlimited).
 func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color.Color, maxDots int) (string, int) {
-	if len(b.dots) == 0 && (!b.highScore || b.completedCount == 0) {
+	if len(b.dots) == 0 && (!b.highScore || len(b.completedIDs) == 0) {
 		return "", 0
 	}
 
@@ -210,11 +224,11 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 
 	for idx, f := range frames {
 		glyph, brightness := b.computeDot(f, sweepPos, staleCount > 0, glyphHollow, glyphMid, glyphFilled)
-		b.writeDot(&buf, &visWidth, glyph, brightness, bg, idx > 0)
+		b.writeDot(&buf, &visWidth, glyph, brightness, bg, idx > 0, "")
 	}
 
-	if b.highScore && b.completedCount > 0 {
-		renderCount := b.completedCount
+	if b.highScore && len(b.completedIDs) > 0 {
+		renderCount := len(b.completedIDs)
 		if renderCount > config.KITTMaxDots {
 			renderCount = config.KITTMaxDots
 		}
@@ -222,7 +236,7 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 		for ci := 0; ci < renderCount; ci++ {
 			brightness := b.highscoreCompletedBrightness(ci, sweepPos)
 			needSep := hasPrior || ci > 0
-			b.writeDot(&buf, &visWidth, glyphFilled, brightness, bg, needSep)
+			b.writeDot(&buf, &visWidth, glyphFilled, brightness, bg, needSep, "")
 		}
 	}
 
@@ -234,7 +248,7 @@ func (b *BreatheDots) Render(glyphHollow, glyphMid, glyphFilled string, bg color
 // columns. Each side handles its own first-dot separator so the fragments
 // stand alone.
 func (b *BreatheDots) RenderSplit(glyphHollow, glyphMid, glyphFilled string, bg color.Color, maxDots int) (ghostStr, activeStr string, ghostWidth, activeWidth int) {
-	if len(b.dots) == 0 && (!b.highScore || b.completedCount == 0) {
+	if len(b.dots) == 0 && (!b.highScore || len(b.completedIDs) == 0) {
 		return "", "", 0, 0
 	}
 
@@ -245,23 +259,28 @@ func (b *BreatheDots) RenderSplit(glyphHollow, glyphMid, glyphFilled string, bg 
 	for _, f := range frames {
 		glyph, brightness := b.computeDot(f, sweepPos, staleCount > 0, glyphHollow, glyphMid, glyphFilled)
 		if f.dot.stale {
-			b.writeDot(&ghostBuf, &ghostWidth, glyph, brightness, bg, ghostSeen)
+			b.writeDot(&ghostBuf, &ghostWidth, glyph, brightness, bg, ghostSeen, "")
 			ghostSeen = true
 		} else {
-			b.writeDot(&activeBuf, &activeWidth, glyph, brightness, bg, activeSeen)
+			b.writeDot(&activeBuf, &activeWidth, glyph, brightness, bg, activeSeen, "")
 			activeSeen = true
 		}
 	}
 
-	if b.highScore && b.completedCount > 0 {
-		renderCount := b.completedCount
+	// Reset rendered agent ID cache for this frame.
+	b.renderedAgentIDs = b.renderedAgentIDs[:0]
+
+	if b.highScore && len(b.completedIDs) > 0 {
+		renderCount := len(b.completedIDs)
 		if renderCount > config.KITTMaxDots {
 			renderCount = config.KITTMaxDots
 		}
 		for ci := 0; ci < renderCount; ci++ {
+			agentID := b.completedIDs[ci]
 			brightness := b.highscoreCompletedBrightness(ci, sweepPos)
-			b.writeDot(&ghostBuf, &ghostWidth, glyphFilled, brightness, bg, ghostSeen)
+			b.writeDot(&ghostBuf, &ghostWidth, glyphFilled, brightness, bg, ghostSeen, agentID)
 			ghostSeen = true
+			b.renderedAgentIDs = append(b.renderedAgentIDs, agentID)
 		}
 	}
 
@@ -269,13 +288,23 @@ func (b *BreatheDots) RenderSplit(glyphHollow, glyphMid, glyphFilled string, bg 
 }
 
 // writeDot appends a single styled dot to the buffer and updates visWidth.
-func (b *BreatheDots) writeDot(buf *strings.Builder, visWidth *int, glyph string, brightness float64, bg color.Color, addSpace bool) {
+// When agentID is non-empty, the separator space + glyph are wrapped in a
+// zone.Mark for click targeting (2-cell hit area). Width accounting stays
+// manual — zone markers are zero-width to lipgloss.Width but inflate len().
+func (b *BreatheDots) writeDot(buf *strings.Builder, visWidth *int, glyph string, brightness float64, bg color.Color, addSpace bool, agentID string) {
+	// Hot path (30fps): write directly to buf when no zone wrapping needed.
+	dst := buf
+	var local strings.Builder
+	if agentID != "" {
+		dst = &local
+	}
+
 	if addSpace {
 		*visWidth++
 		if bg != nil {
-			buf.WriteString(lipgloss.NewStyle().Background(bg).Render(" "))
+			dst.WriteString(lipgloss.NewStyle().Background(bg).Render(" "))
 		} else {
-			buf.WriteByte(' ')
+			dst.WriteByte(' ')
 		}
 	}
 
@@ -288,8 +317,12 @@ func (b *BreatheDots) writeDot(buf *strings.Builder, visWidth *int, glyph string
 	if bg != nil {
 		style = style.Background(bg)
 	}
-	buf.WriteString(style.Render(glyph))
+	dst.WriteString(style.Render(glyph))
 	*visWidth++
+
+	if agentID != "" {
+		buf.WriteString(zone.Mark(ui.AgentZoneID(agentID), local.String()))
+	}
 }
 
 // SetStaleCount marks the last n non-dying dots as stale (orphaned).
@@ -319,12 +352,10 @@ func (b *BreatheDots) SetHighScoreMode(on bool) {
 	b.highScore = on
 }
 
-// SetCompletedCount sets the number of completed agents for highscore KITT scanning.
-func (b *BreatheDots) SetCompletedCount(n int) {
-	if n == b.completedCount {
-		return
-	}
-	b.completedCount = n
+// SetCompletedAgents sets the completed agent IDs for highscore KITT scanning.
+// Count is derived from len(ids) — one method, no desync.
+func (b *BreatheDots) SetCompletedAgents(ids []string) {
+	b.completedIDs = ids
 }
 
 // triangleWave returns a position that bounces linearly between 0 and count-1.
@@ -353,6 +384,13 @@ func (b *BreatheDots) kittGaussian(dist float64) float64 {
 // sinNorm maps a sine wave to [0, 1].
 func sinNorm(x float64) float64 {
 	return 0.5 + 0.5*math.Sin(x)
+}
+
+// RenderedAgentIDs returns the cached snapshot of completed-agent IDs that
+// were zone-marked in the most recent RenderSplit call. The click handler
+// iterates only these (at most KITTMaxDots), not the full ring buffer.
+func (b *BreatheDots) RenderedAgentIDs() []string {
+	return b.renderedAgentIDs
 }
 
 // Len returns the current number of dots (including dying).

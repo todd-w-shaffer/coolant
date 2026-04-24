@@ -60,6 +60,18 @@ func TestToggleHelpFromFullReturnsToShort(t *testing.T) {
 // TestHelpViewCoversAllBindings asserts that every keybinding registered in
 // KeyMap appears somewhere in the full help overlay. Catches drift when a
 // binding is added to keys.go but helpView() in horizontal.go isn't updated.
+func TestHelpViewMentionsClickToInspect(t *testing.T) {
+	h := newHorizontalForTest(t)
+	lines := h.helpView()
+	var combined string
+	for _, line := range lines {
+		combined += ansi.Strip(line) + " "
+	}
+	if !strings.Contains(combined, "click dot for details") {
+		t.Errorf("helpView should mention click-to-inspect: %q", combined)
+	}
+}
+
 func TestHelpViewCoversAllBindings(t *testing.T) {
 	h := newHorizontalForTest(t)
 	lines := h.helpView()

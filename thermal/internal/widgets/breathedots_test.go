@@ -58,7 +58,7 @@ func TestRenderSplit_Highscore(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
 	b.SetTarget(2)
-	b.SetCompletedCount(3)
+	b.SetCompletedAgents([]string{"a1", "b2", "c3"})
 	for i := 0; i < 40; i++ {
 		b.AnimTick()
 	}
@@ -257,7 +257,7 @@ func TestBreatheDotRenderVisWidth(t *testing.T) {
 func TestBreatheDotHighScoreRendersCompletedDots(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
-	b.SetCompletedCount(3)
+	b.SetCompletedAgents([]string{"a1", "b2", "c3"})
 	// No active dots — just 3 completed KITT dots
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
@@ -272,8 +272,8 @@ func TestBreatheDotHighScoreRendersCompletedDots(t *testing.T) {
 func TestBreatheDotHighScoreWithActiveDots(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
-	b.SetTarget(2)         // 2 active (tidal wave)
-	b.SetCompletedCount(3) // 3 completed (KITT)
+	b.SetTarget(2)                                   // 2 active (tidal wave)
+	b.SetCompletedAgents([]string{"a1", "b2", "c3"}) // 3 completed (KITT)
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
 	}
@@ -318,13 +318,13 @@ func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
 
-	b.SetCompletedCount(1)
+	b.SetCompletedAgents([]string{"a1"})
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
 	}
 	_, w1 := b.Render("⬡", "⏣", "⬢", nil, 0)
 
-	b.SetCompletedCount(3)
+	b.SetCompletedAgents([]string{"a1", "b2", "c3"})
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
 	}
@@ -338,7 +338,11 @@ func TestBreatheDotHighScoreGrowsMonotonically(t *testing.T) {
 func TestBreatheDotHighScoreCapsAtMax(t *testing.T) {
 	b := NewBreatheDots(testTheme, testAnim)
 	b.SetHighScoreMode(true)
-	b.SetCompletedCount(config.KITTMaxDots + 20)
+	ids := make([]string, config.KITTMaxDots+20)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("agent-%d", i)
+	}
+	b.SetCompletedAgents(ids)
 	for i := 0; i < 30; i++ {
 		b.AnimTick()
 	}
@@ -499,6 +503,140 @@ func TestSinNormRange(t *testing.T) {
 		if got < 0 || got > 1 {
 			t.Errorf("sinNorm(%v) = %v, out of range [0, 1]", x, got)
 		}
+	}
+}
+
+func TestRenderSplitCachesRenderedAgentIDs(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetCompletedAgents([]string{"aaa", "bbb", "ccc"})
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	ids := b.RenderedAgentIDs()
+	if len(ids) != 3 {
+		t.Fatalf("RenderedAgentIDs len = %d, want 3", len(ids))
+	}
+	want := []string{"aaa", "bbb", "ccc"}
+	for i, id := range ids {
+		if id != want[i] {
+			t.Errorf("RenderedAgentIDs[%d] = %q, want %q", i, id, want[i])
+		}
+	}
+}
+
+func TestRenderSplitCapsRenderedAgentIDs(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	ids := make([]string, config.KITTMaxDots+5)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("agent-%d", i)
+	}
+	b.SetCompletedAgents(ids)
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	rendered := b.RenderedAgentIDs()
+	if len(rendered) != config.KITTMaxDots {
+		t.Errorf("RenderedAgentIDs len = %d, want %d (capped)", len(rendered), config.KITTMaxDots)
+	}
+}
+
+func TestRenderedAgentIDsRefreshesOnNewIDs(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetCompletedAgents([]string{"old1", "old2"})
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	ids1 := b.RenderedAgentIDs()
+	if len(ids1) != 2 || ids1[0] != "old1" {
+		t.Fatalf("first render: got %v, want [old1 old2]", ids1)
+	}
+
+	// Replace with new IDs and re-render.
+	b.SetCompletedAgents([]string{"new1", "new2", "new3"})
+	b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	ids2 := b.RenderedAgentIDs()
+	if len(ids2) != 3 {
+		t.Fatalf("second render: len = %d, want 3", len(ids2))
+	}
+	if ids2[0] != "new1" || ids2[1] != "new2" || ids2[2] != "new3" {
+		t.Errorf("second render: got %v, want [new1 new2 new3]", ids2)
+	}
+}
+
+func TestRenderedAgentIDsEmptyWithoutHighscore(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetTarget(3)
+	for i := 0; i < 30; i++ {
+		b.AnimTick()
+	}
+	b.RenderSplit("⬡", "⏣", "⬢", nil, 0)
+	ids := b.RenderedAgentIDs()
+	if len(ids) != 0 {
+		t.Errorf("RenderedAgentIDs without highscore should be empty, got %d", len(ids))
+	}
+}
+
+func TestHoverOverridesBrightnessToFull(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetCompletedAgents([]string{"aaa", "bbb", "ccc"})
+	for i := 0; i < 60; i++ {
+		b.AnimTick()
+	}
+	// Without hover, completed brightness < 1.0 for non-center dots
+	normalBright := b.highscoreCompletedBrightness(2, 0) // dot 2, sweep at 0 — should be dim
+	if normalBright >= 1.0 {
+		t.Fatalf("precondition: non-center dot brightness should be < 1.0, got %f", normalBright)
+	}
+
+	// With hover on "ccc" (index 2), brightness should be 1.0
+	b.SetHoveredAgent("ccc")
+	hoveredBright := b.highscoreCompletedBrightness(2, 0)
+	if hoveredBright != 1.0 {
+		t.Errorf("hovered dot brightness = %f, want 1.0", hoveredBright)
+	}
+}
+
+func TestHoverNonExistentAgentIsNoOp(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetCompletedAgents([]string{"aaa", "bbb"})
+	for i := 0; i < 60; i++ {
+		b.AnimTick()
+	}
+	// Hover on an ID not in completedIDs — should not affect brightness.
+	b.SetHoveredAgent("zzz_nonexistent")
+	bright0 := b.highscoreCompletedBrightness(0, 0)
+	bright1 := b.highscoreCompletedBrightness(1, 0)
+	// Neither dot should be at full intensity.
+	if bright0 == 1.0 {
+		t.Error("dot 0 should not be full brightness when hovering non-existent ID")
+	}
+	if bright1 == 1.0 {
+		t.Error("dot 1 should not be full brightness when hovering non-existent ID")
+	}
+}
+
+func TestHoverClearsOnEmpty(t *testing.T) {
+	b := NewBreatheDots(testTheme, testAnim)
+	b.SetHighScoreMode(true)
+	b.SetCompletedAgents([]string{"aaa"})
+	b.SetHoveredAgent("aaa")
+	b.SetHoveredAgent("") // clear
+	// After clearing, brightness should revert to normal
+	for i := 0; i < 60; i++ {
+		b.AnimTick()
+	}
+	bright := b.highscoreCompletedBrightness(0, 0)
+	// Single dot uses KITTSingleBright, not full intensity
+	if bright >= 1.0 {
+		t.Errorf("after clearing hover, brightness should revert, got %f", bright)
 	}
 }
 

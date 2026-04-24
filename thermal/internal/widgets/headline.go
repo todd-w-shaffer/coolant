@@ -65,7 +65,16 @@ func (h *Headline) Update(state *model.AppState) {
 	}
 	h.agents.SetTarget(state.AgentCount())
 	h.agents.SetStaleCount(state.StaleAgentCount())
-	h.agents.SetCompletedCount(state.CompletedAgentCount())
+	records := state.CompletedRecords()
+	max := config.KITTMaxDots
+	if len(records) < max {
+		max = len(records)
+	}
+	ids := make([]string, max)
+	for i, rec := range records[len(records)-max:] {
+		ids[i] = rec.AgentID
+	}
+	h.agents.SetCompletedAgents(ids)
 
 	// Drive the readout from data-update cadence, not render cadence. If we
 	// updated inside ViewLines() the ghost trail would re-arm on every
@@ -77,6 +86,17 @@ func (h *Headline) Update(state *model.AppState) {
 		h.battery.Update(state.Current.System)
 	}
 	h.bloom.Update(state)
+}
+
+// RenderedAgentIDs returns the cached snapshot of completed-agent IDs that
+// were zone-marked in the most recent ViewLines render. Delegates to BreatheDots.
+func (h *Headline) RenderedAgentIDs() []string {
+	return h.agents.RenderedAgentIDs()
+}
+
+// SetHoveredAgent sets the agent ID that should render at full brightness.
+func (h *Headline) SetHoveredAgent(id string) {
+	h.agents.SetHoveredAgent(id)
 }
 
 // SetHighScoreMode toggles KITT-as-highscore on the agent dot display.

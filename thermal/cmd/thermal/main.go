@@ -44,6 +44,7 @@ type model struct {
 	demoMode      bool
 	mouseEnabled  bool
 	tmuxHintShown bool
+	lastFocusTime time.Time // debounce: swallow agent-zone clicks within 300ms
 	snapChan      chan collector.Snapshot
 	eventChan     chan collector.GateEvent
 	updateChan    chan string
@@ -144,6 +145,17 @@ func coolantTmpPath(suffix string) string {
 	return tmpDir + "coolant-" + currentUser() + "." + suffix
 }
 
+// agentUnderCursor returns the agent ID whose zone contains the mouse
+// position, or "" if none match. Shared by hover and click handlers.
+func agentUnderCursor(ids []string, msg tea.MouseMsg) string {
+	for _, id := range ids {
+		if zi := zone.Get(ui.AgentZoneID(id)); zi != nil && zi.InBounds(msg) {
+			return id
+		}
+	}
+	return ""
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case parentExitMsg:
@@ -151,9 +163,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyPressMsg:
-		// Intel mode: any key dismisses without dispatching its action.
+		// Intel mode: `i` cycles depth, any other key dismisses entirely.
 		if m.layout.IntelMode() {
-			m.layout.DismissIntel()
+			if key.Matches(msg, m.keys.Intel) {
+				m.layout.ToggleIntel()
+			} else {
+				m.layout.DismissIntel()
+			}
 			return m, nil
 		}
 		// Full-help mode: any key dismisses without dispatching its action.
@@ -207,13 +223,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gateEventMsg:
 		ev := collector.GateEvent(msg)
 		m.layout.State().HandleEvent(ev)
+		if ev.Event == collector.EventCounterReset {
+			m.layout.DismissIntel() // session stats become incoherent
+		}
 		return m, waitForEvent(m.eventChan)
 
 	case updateAvailableMsg:
 		m.layout.State().UpdateAvailable = true
 
+	case tea.MouseMotionMsg:
+		m.layout.SetHoveredAgent(agentUnderCursor(m.layout.RenderedAgentIDs(), msg))
+
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
+			// Agent zone click — debounced to prevent double-click flicker.
+			if hit := agentUnderCursor(m.layout.RenderedAgentIDs(), msg); hit != "" && time.Since(m.lastFocusTime) >= config.ClickDebounce {
+				m.layout.FocusAgent(hit)
+				m.lastFocusTime = time.Now()
+				return m, nil
+			}
+			// Category zone click.
 			for _, cat := range collector.Categories {
 				if zi := zone.Get(ui.CatZoneID(cat.Name)); zi != nil && zi.InBounds(msg) {
 					m.layout.State().ToggleCategoryFilter(cat.Name)

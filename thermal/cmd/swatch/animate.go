@@ -48,7 +48,11 @@ func newAnimModel(th *theme.Theme, ap *anim.Profile) animModel {
 	highscore := widgets.NewBreatheDots(th, ap)
 	highscore.SetHighScoreMode(true)
 	highscore.SetTarget(animHighscoreActive)
-	highscore.SetCompletedCount(animHighscoreDone)
+	hsIDs := make([]string, animHighscoreDone)
+	for i := range hsIDs {
+		hsIDs[i] = fmt.Sprintf("demo-%d", i)
+	}
+	highscore.SetCompletedAgents(hsIDs)
 
 	return animModel{
 		header: swatchHeader(fmt.Sprintf("animate: %s / %s", th.Name, ap.Name)),

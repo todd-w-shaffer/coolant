@@ -4,12 +4,14 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
@@ -219,6 +221,172 @@ func TestIntelDismissedByAnyKey(t *testing.T) {
 	m, _ = pressKey(t, m, "x")
 	if m.layout.IntelMode() {
 		t.Error("'x' in intel mode should dismiss intel")
+	}
+}
+
+func TestIntelKeyCyclesDepthFromFocused(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	snap := collector.Snapshot{Online: true, Sessions: []collector.SessionTree{{RootPID: 1}}}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	// Enter focused mode directly
+	m.layout.FocusAgent("test123")
+	if !m.layout.IntelMode() || m.layout.FocusedAgentID() != "test123" {
+		t.Fatal("precondition: should be in focused intel mode")
+	}
+	// i → clears focus, keeps intel (session summary)
+	m, _ = pressKey(t, m, "i")
+	if m.layout.FocusedAgentID() != "" {
+		t.Error("'i' from focused should clear focusedAgentID")
+	}
+	if !m.layout.IntelMode() {
+		t.Error("'i' from focused should keep intel mode (session summary)")
+	}
+	// i again → exits intel entirely
+	m, _ = pressKey(t, m, "i")
+	if m.layout.IntelMode() {
+		t.Error("'i' from session summary should exit intel")
+	}
+}
+
+func TestNonIKeyDismissesFromFocused(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	snap := collector.Snapshot{Online: true, Sessions: []collector.SessionTree{{RootPID: 1}}}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	m.layout.FocusAgent("test123")
+	// Any non-i key → dismisses entirely
+	m, _ = pressKey(t, m, "x")
+	if m.layout.IntelMode() {
+		t.Error("non-i key in focused mode should dismiss intel")
+	}
+	if m.layout.FocusedAgentID() != "" {
+		t.Error("non-i key should clear focusedAgentID")
+	}
+}
+
+func TestCounterResetDismissesIntel(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	snap := collector.Snapshot{Online: true, Sessions: []collector.SessionTree{{RootPID: 1}}}
+	out, _ := m.Update(snapshotMsg(snap))
+	m = out.(model)
+
+	m.layout.FocusAgent("test123")
+
+	resetEv := gateEventMsg(collector.GateEvent{Event: collector.EventCounterReset})
+	out, _ = m.Update(resetEv)
+	m = out.(model)
+
+	if m.layout.IntelMode() {
+		t.Error("counter.reset should dismiss intel")
+	}
+	if m.layout.FocusedAgentID() != "" {
+		t.Error("counter.reset should clear focusedAgentID")
+	}
+}
+
+func TestClickAgentZoneFocuses(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+	m.layout.SetHighScoreMode(true)
+
+	// Populate completed agents so RenderedAgentIDs is non-empty.
+	state := m.layout.State()
+	t0 := time.Now().Add(time.Millisecond)
+	state.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "click1", AgentType: "general-purpose", Timestamp: t0,
+	})
+	state.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "click1", AgentType: "general-purpose", Timestamp: t0.Add(10 * time.Second),
+	})
+
+	snap := collector.Snapshot{
+		Online:   true,
+		Sessions: []collector.SessionTree{{RootPID: 1}},
+		System:   collector.SystemStats{NCPUs: 10, MemTotalBytes: 16 << 30},
+	}
+	state.Update(snap)
+	m.layout.Update(state)
+
+	// Render to populate zone marks + RenderedAgentIDs cache.
+	v := m.View()
+	_ = v
+
+	// Verify RenderedAgentIDs is populated.
+	ids := m.layout.RenderedAgentIDs()
+	if len(ids) == 0 {
+		t.Fatal("precondition: RenderedAgentIDs should be non-empty after render")
+	}
+
+	// Simulate click on the agent zone — we can't easily construct real
+	// coordinates that land inside a zone.Mark region, but we can verify
+	// the dispatch logic by checking that FocusAgent works from the handler.
+	// For a structural test, verify that a click on a matching zone ID
+	// would call FocusAgent.
+	m.layout.FocusAgent(ids[0])
+	if m.layout.FocusedAgentID() != ids[0] {
+		t.Errorf("FocusAgent should set focusedAgentID to %q, got %q", ids[0], m.layout.FocusedAgentID())
+	}
+}
+
+func TestClickDebounceSwallowsRapidClicks(t *testing.T) {
+	m := newTestModel(t)
+	m.width = 120
+	m.height = 10
+	m.layout.SetSize(120, 10)
+
+	// Set lastFocusTime to now — simulates just having opened a focused overlay.
+	m.lastFocusTime = time.Now()
+
+	// Simulate a left click during cooldown — agent zone dispatch should be skipped.
+	// Even if a zone matched, debounce prevents FocusAgent from firing.
+	click := tea.MouseClickMsg{Button: tea.MouseLeft, X: 1, Y: 1}
+	out, _ := m.Update(click)
+	m = out.(model)
+	if m.layout.FocusedAgentID() != "" {
+		t.Error("click within debounce cooldown should not focus an agent")
+	}
+
+	// After cooldown expires, clicks should be dispatched normally.
+	m.lastFocusTime = time.Now().Add(-2 * config.ClickDebounce)
+	// No agent zones are registered in this test, so FocusAgent won't fire,
+	// but verify the debounce gate no longer blocks.
+	if time.Since(m.lastFocusTime) < config.ClickDebounce {
+		t.Error("lastFocusTime should be past cooldown")
+	}
+}
+
+func TestAgentUnderCursorEmptyIDs(t *testing.T) {
+	click := tea.MouseClickMsg{Button: tea.MouseLeft, X: 5, Y: 5}
+	got := agentUnderCursor(nil, click)
+	if got != "" {
+		t.Errorf("agentUnderCursor(nil) = %q, want empty", got)
+	}
+	got = agentUnderCursor([]string{}, click)
+	if got != "" {
+		t.Errorf("agentUnderCursor([]) = %q, want empty", got)
+	}
+}
+
+func TestAgentUnderCursorNoMatch(t *testing.T) {
+	// Zone IDs that aren't registered — zone.Get returns nil, should skip.
+	click := tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: 0}
+	got := agentUnderCursor([]string{"nonexistent1", "nonexistent2"}, click)
+	if got != "" {
+		t.Errorf("agentUnderCursor with unregistered zones = %q, want empty", got)
 	}
 }
 

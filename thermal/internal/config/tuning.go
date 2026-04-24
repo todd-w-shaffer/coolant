@@ -211,6 +211,13 @@ const (
 	HeadroomWarnBytes int64 = 4 << 30 // 4GB
 )
 
+// ── Click-to-inspect ──────────────────────────────────────
+
+// ClickDebounce is the cooldown after opening a focused-agent overlay.
+// Agent-zone clicks within this window are swallowed to prevent
+// double-click flicker from toggling the overlay open→closed.
+const ClickDebounce = 300 * time.Millisecond
+
 // ── Help panel ─────────────────────────────────────────────
 
 // HelpShortMinWidth is the minimum strip width before the short help hint

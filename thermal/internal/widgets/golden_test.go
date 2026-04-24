@@ -202,7 +202,7 @@ func captureBreatheDots() string {
 	b3 := NewBreatheDots(th, ap)
 	b3.SetHighScoreMode(true)
 	b3.SetTarget(2)
-	b3.SetCompletedCount(3)
+	b3.SetCompletedAgents([]string{"a1", "b2", "c3"})
 	for i := 0; i < 60; i++ {
 		b3.AnimTick()
 	}

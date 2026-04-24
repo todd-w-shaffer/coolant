@@ -96,3 +96,9 @@ func init() {
 func CatZoneID(name string) string {
 	return "cat:" + name
 }
+
+// AgentZoneID returns the bubblezone zone ID for a completed-agent KITT dot.
+// Used by breathedots.go (mark) and main.go (click dispatch).
+func AgentZoneID(id string) string {
+	return "agent:" + id
+}

@@ -253,6 +253,200 @@ func TestIntelViewTypeTruncation(t *testing.T) {
 	}
 }
 
+func TestRenderedAgentIDsProxy(t *testing.T) {
+	h := intelFixture(t)
+	h.SetSize(120, 10)
+	h.SetHighScoreMode(true)
+	snap := collector.Snapshot{
+		Online:   true,
+		Sessions: []collector.SessionTree{{RootPID: 1}},
+		System:   collector.SystemStats{NCPUs: 10, MemTotalBytes: 16 * 1024 * 1024 * 1024},
+	}
+	h.State().Update(snap)
+	h.Update(h.State())
+
+	// Force a render so ViewLines populates the cache.
+	h.View()
+
+	ids := h.RenderedAgentIDs()
+	// intelFixture creates 3 completed agents: aaa111, bbb222, ccc333
+	if len(ids) != 3 {
+		t.Fatalf("RenderedAgentIDs len = %d, want 3", len(ids))
+	}
+	// Newest-last ordering: aaa111, bbb222, ccc333
+	want := []string{"aaa111", "bbb222", "ccc333"}
+	for i, id := range ids {
+		if id != want[i] {
+			t.Errorf("RenderedAgentIDs[%d] = %q, want %q", i, id, want[i])
+		}
+	}
+}
+
+// ── Focused intel sub-mode ────────────────────────────────────
+
+func TestFocusAgentEntersIntelMode(t *testing.T) {
+	h := intelFixture(t)
+	h.FocusAgent("aaa111")
+	if !h.IntelMode() {
+		t.Error("FocusAgent should enter intel mode")
+	}
+	if h.FocusedAgentID() != "aaa111" {
+		t.Errorf("FocusedAgentID = %q, want %q", h.FocusedAgentID(), "aaa111")
+	}
+}
+
+func TestFocusAgentFromSessionSummary(t *testing.T) {
+	h := intelFixture(t)
+	h.ToggleIntel() // enter session summary
+	h.FocusAgent("bbb222")
+	if h.FocusedAgentID() != "bbb222" {
+		t.Errorf("FocusedAgentID = %q, want %q", h.FocusedAgentID(), "bbb222")
+	}
+	if !h.IntelMode() {
+		t.Error("should still be in intel mode")
+	}
+}
+
+func TestToggleIntelFromFocusedClearsFocus(t *testing.T) {
+	h := intelFixture(t)
+	h.FocusAgent("aaa111")
+	h.ToggleIntel() // should clear focus, keep intel (session summary)
+	if h.FocusedAgentID() != "" {
+		t.Errorf("ToggleIntel from focused should clear focusedAgentID, got %q", h.FocusedAgentID())
+	}
+	if !h.IntelMode() {
+		t.Error("should still be in intel mode (session summary)")
+	}
+}
+
+func TestToggleIntelFromSessionSummaryExits(t *testing.T) {
+	h := intelFixture(t)
+	h.ToggleIntel() // enter session summary
+	h.ToggleIntel() // exit intel
+	if h.IntelMode() {
+		t.Error("second ToggleIntel from session summary should exit intel")
+	}
+}
+
+func TestDismissIntelClearsFocus(t *testing.T) {
+	h := intelFixture(t)
+	h.FocusAgent("aaa111")
+	h.DismissIntel()
+	if h.FocusedAgentID() != "" {
+		t.Errorf("DismissIntel should clear focusedAgentID, got %q", h.FocusedAgentID())
+	}
+	if h.IntelMode() {
+		t.Error("DismissIntel should exit intel mode")
+	}
+}
+
+func TestToggleHelpClearsFocus(t *testing.T) {
+	h := intelFixture(t)
+	h.FocusAgent("aaa111")
+	h.ToggleHelp() // should dismiss intel + clear focus
+	if h.FocusedAgentID() != "" {
+		t.Errorf("ToggleHelp should clear focusedAgentID, got %q", h.FocusedAgentID())
+	}
+}
+
+func TestIdleTransitionClearsFocus(t *testing.T) {
+	h := intelFixture(t)
+	h.SetSize(120, 10)
+	snap := collector.Snapshot{
+		Online:   true,
+		Sessions: []collector.SessionTree{{RootPID: 1}},
+		System:   collector.SystemStats{NCPUs: 10, MemTotalBytes: 16 * 1024 * 1024 * 1024},
+	}
+	h.State().Update(snap)
+	h.Update(h.State())
+
+	h.FocusAgent("aaa111")
+	// Idle transition
+	idleSnap := collector.Snapshot{Online: true, System: snap.System}
+	h.State().Update(idleSnap)
+	h.Update(h.State())
+
+	if h.FocusedAgentID() != "" {
+		t.Errorf("idle transition should clear focusedAgentID, got %q", h.FocusedAgentID())
+	}
+}
+
+func TestFocusedIntelViewRendersAgentRecord(t *testing.T) {
+	h := intelFixture(t)
+	h.FocusAgent("aaa111")
+	lines := h.intelView()
+
+	stripped := make([]string, len(lines))
+	for i, l := range lines {
+		stripped[i] = ansi.Strip(l)
+	}
+	combined := strings.Join(stripped, "\n")
+
+	checks := []string{"aaa111", "general-purpose", "30s"}
+	for _, want := range checks {
+		if !strings.Contains(combined, want) {
+			t.Errorf("focused intelView missing %q\nfull:\n%s", want, combined)
+		}
+	}
+}
+
+func TestFocusedIntelNilGuardFallsBack(t *testing.T) {
+	h := newHorizontalForTest(t)
+	// Focus on a non-existent agent
+	h.FocusAgent("nonexistent")
+	lines := h.intelView()
+	// Should fall back to session summary (not panic or show empty)
+	if h.FocusedAgentID() != "" {
+		t.Error("nil-guard should have cleared focusedAgentID")
+	}
+	if len(lines) == 0 {
+		t.Error("fallback should produce non-empty view")
+	}
+}
+
+func TestFocusedIntelPurgedRecord(t *testing.T) {
+	h := newHorizontalForTest(t)
+	state := h.State()
+	// Start agent far enough in the past to exceed AgentStaleThreshold (3m).
+	t0 := time.Now().Add(-5 * time.Minute)
+	state.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStart, AgentID: "purge1", AgentType: "general-purpose", Timestamp: t0,
+	})
+	state.PurgeStaleAgents()
+
+	h.FocusAgent("purge1")
+	lines := h.intelView()
+	stripped := make([]string, len(lines))
+	for i, l := range lines {
+		stripped[i] = ansi.Strip(l)
+	}
+	combined := strings.Join(stripped, "\n")
+	if !strings.Contains(combined, "purged") {
+		t.Errorf("purged record should show 'purged' label\nfull:\n%s", combined)
+	}
+}
+
+func TestFocusedIntelOrphanRecord(t *testing.T) {
+	h := newHorizontalForTest(t)
+	state := h.State()
+	t0 := time.Now().Add(time.Millisecond)
+	// Create an orphan (stop with no matching start)
+	state.HandleEvent(collector.GateEvent{
+		Event: collector.EventAgentStop, AgentID: "orphan1", AgentType: "Explore", Timestamp: t0,
+	})
+
+	h.FocusAgent("orphan1")
+	lines := h.intelView()
+	stripped := make([]string, len(lines))
+	for i, l := range lines {
+		stripped[i] = ansi.Strip(l)
+	}
+	combined := strings.Join(stripped, "\n")
+	if !strings.Contains(combined, "orphan") {
+		t.Errorf("orphan record should show 'orphan' label\nfull:\n%s", combined)
+	}
+}
+
 func TestFormatUptime(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
