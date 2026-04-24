@@ -267,7 +267,7 @@ func (m model) View() tea.View {
 	}
 	content := m.layout.View()
 	if m.mouseEnabled {
-		v.MouseMode = tea.MouseModeCellMotion
+		v.MouseMode = tea.MouseModeAllMotion
 		v.Content = zone.Scan(content)
 	} else {
 		v.MouseMode = tea.MouseModeNone

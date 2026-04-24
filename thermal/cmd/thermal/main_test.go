@@ -125,7 +125,7 @@ func TestMouseToggle(t *testing.T) {
 
 	// Default: mouse enabled
 	v := m.View()
-	if v.MouseMode != tea.MouseModeCellMotion {
+	if v.MouseMode != tea.MouseModeAllMotion {
 		t.Errorf("default MouseMode = %v, want CellMotion", v.MouseMode)
 	}
 
@@ -139,7 +139,7 @@ func TestMouseToggle(t *testing.T) {
 	// Press 'm' again → mouse re-enabled
 	m, _ = pressKey(t, m, "m")
 	v = m.View()
-	if v.MouseMode != tea.MouseModeCellMotion {
+	if v.MouseMode != tea.MouseModeAllMotion {
 		t.Errorf("after second 'm' MouseMode = %v, want CellMotion", v.MouseMode)
 	}
 }
