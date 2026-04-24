@@ -118,7 +118,7 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 	tL, tC, tR, bL, bC, bR := brailleBattery(b.stats.BatteryPercent)
 	topGauge := string([]rune{tL, tC, tR})
 	botGauge := string([]rune{bL, bC, bR})
-	pctText := fmt.Sprintf("%03d%%", int(b.stats.BatteryPercent))
+	pctText := fmt.Sprintf("%3d%%", int(b.stats.BatteryPercent))
 
 	// Top row: always battery shape + percent (stable across all states).
 	topContent := gaugeStyle.Render(topGauge) + textStyle.Render(" "+pctText)
