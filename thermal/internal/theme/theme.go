@@ -45,9 +45,8 @@ type Theme struct {
 	// Continuous-gradient LUT for the segment-LCD temperature readout.
 	// Maps temperature value 0..99 to a truecolor fg ANSI escape produced
 	// by BlendHcl between adjacent OverallGradient[i].Fg anchors.
-	overallTempLUT    [100]string
-	overallTempDimLUT [100]string // HCL-dimmed variant for the ghost-trail frame
-	overallLevelLUT   [5]string   // band-anchor fg ANSI; stable within a threat level
+	overallTempLUT  [100]string
+	overallLevelLUT [5]string // band-anchor fg ANSI; stable within a threat level
 
 	// batteryGrainLUT maps battery grain count (0=empty, 22=full) to an HCL
 	// blend across the ok→warn→crit anchors (gradient[1..3]). Lets the
@@ -197,7 +196,6 @@ func (t *Theme) Init() {
 		ratio := pos - float64(seg)
 		blended := anchors[seg].BlendHcl(anchors[seg+1], ratio).Clamped()
 		t.overallTempLUT[v] = truecolorFg(blended)
-		t.overallTempDimLUT[v] = truecolorFg(dimColorful(blended, GhostOverlayRatio))
 	}
 
 	// Per-level fg LUT: the LCD's degree glyph reads from this so its color
@@ -261,21 +259,10 @@ func bloomLUTIndex(r float64) int {
 	return int(r * 99)
 }
 
-// GhostOverlayRatio scales the temperature color for the ghost-trail frame
-// that shows the previous value briefly after a change. Low enough to read
-// as "fading"; high enough to still be legible for a tick.
-const GhostOverlayRatio = 0.4
-
 // OverallTemperatureFg returns the precomputed truecolor fg ANSI escape for
 // a temperature value 0..99. Out-of-range values clamp.
 func (t *Theme) OverallTemperatureFg(value int) string {
 	return t.overallTempLUT[clampTemp(value)]
-}
-
-// OverallTemperatureFgDimmed returns the HCL-dimmed variant of the
-// continuous gradient entry for value, used by the ghost-trail frame.
-func (t *Theme) OverallTemperatureFgDimmed(value int) string {
-	return t.overallTempDimLUT[clampTemp(value)]
 }
 
 // OverallLevelFg returns the truecolor fg ANSI escape for a threat level
