@@ -26,8 +26,12 @@ dev/otel/data/
 .githooks/post-checkout
 .githooks/pre-commit
 
-# Symlink to thermal-enterprise TUI specs (private repo)
+# Symlink to thermal-enterprise TUI specs (private repo, read-side)
 docs/.tui-specs
+
+# Scratch dir for enterprise-bound spec drafts (private, write-side).
+# Gitignored by design — see CLAUDE.md "Cross-repo spec access."
+docs/_drafts/
 
 # Preview/debug tool binaries (go build artifacts, not shipped)
 thermal/brailletext

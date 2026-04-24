@@ -9,18 +9,48 @@ A resource management layer for Claude Code — prevents machines from melting w
 ## Cross-repo spec access
 
 TUI specs live in the private companion repo at
-`~/Desktop/apps/thermal-enterprise/docs/backlog/tui/`. A gitignored
-symlink at `docs/.tui-specs` points there for ergonomic reads — use
-either path interchangeably when reading specs for `/spec-to-ship`.
+`~/Desktop/apps/thermal-enterprise/docs/backlog/tui/`. Two gitignored
+paths in this repo coordinate with that one:
 
-**Read-only from this CWD.** Writing specs, archiving shipped specs, and
-committing to thermal-enterprise all require a CWD switch to that repo.
-The CWD discipline rule has no exceptions.
+- `docs/.tui-specs` — read-side symlink. Points at enterprise's
+  `docs/backlog/tui/`. Use for reading specs during `/spec-to-ship`
+  or any coolant-side work that needs to consult a spec.
+- `docs/_drafts/` — write-side scratch dir. Gitignored so drafts
+  never stage or commit. Write new enterprise-bound specs here when
+  they emerge mid-flow from a coolant session.
 
-Spec lifecycle:
-1. **Stub/expand/audit** — thermal-enterprise CWD
-2. **Implement** — coolant CWD, read spec via `docs/.tui-specs/` or absolute path
-3. **Archive** — thermal-enterprise CWD, `git mv` spec to `backlog/tui/archive/`
+### Rules
+
+- **Reading enterprise material from coolant CWD.** Always OK via
+  `docs/.tui-specs/` symlink or absolute path.
+- **Drafting enterprise material from coolant CWD.** Allowed into
+  `docs/_drafts/` only. Gitignored → classifier never sees it →
+  zero commit risk. No CWD switch required.
+- **Promoting drafts and committing to enterprise.** Requires a CWD
+  switch to thermal-enterprise. A sweep prompt from an enterprise
+  session reads coolant's `docs/_drafts/`, moves ready files
+  (frontmatter `status: ready`) into `docs/backlog/tui/`, and commits
+  from enterprise CWD.
+- **Editing or amending existing enterprise specs.** Requires a CWD
+  switch. A tracked enterprise file is one `git add -f` away from a
+  real leak — don't edit live enterprise specs from coolant CWD.
+
+### Readiness signal
+
+Drafts carry frontmatter `status: draft` while in flight;
+`status: ready` when the coolant session considers them ready for
+the enterprise sweep.
+
+### Spec lifecycle
+
+1. **Seed / draft** — coolant CWD, write to `docs/_drafts/`
+   (`status: draft`); or thermal-enterprise CWD, write directly.
+2. **Promote** — thermal-enterprise CWD, sweep reads coolant's
+   `_drafts/` (`status: ready`), moves to `backlog/tui/`, commits.
+3. **Audit / expand** — thermal-enterprise CWD (tracked specs only).
+4. **Implement** — coolant CWD, read spec via `docs/.tui-specs/`.
+5. **Archive** — thermal-enterprise CWD, `git mv` shipped spec to
+   `backlog/tui/archive/`.
 
 ## Quick reference
 
