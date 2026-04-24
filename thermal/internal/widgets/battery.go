@@ -13,6 +13,10 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
+// meltdownPhaseStep advances the battery meltdown/warning pulse phase per
+// AnimTick for a 1 Hz oscillation at the project's AnimFPS cadence.
+var meltdownPhaseStep = 2 * math.Pi / float64(config.AnimFPS)
+
 // Battery renders a 2-row cell showing battery percent, state, and
 // time remaining. Always visible on laptops; collapses to zero width
 // on desktops where BatteryPresent is false. Online-path-only —

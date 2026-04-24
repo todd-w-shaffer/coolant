@@ -46,9 +46,8 @@ type Theme struct {
 	// Maps temperature value 0..99 to a truecolor fg ANSI escape produced
 	// by BlendHcl between adjacent OverallGradient[i].Fg anchors.
 	overallTempLUT    [100]string
-	overallTempDimLUT [100]string         // HCL-dimmed variant for the ghost-trail frame
-	overallTempColors [100]colorful.Color // cached blend results for dynamic pulse modulation
-	overallLevelLUT   [5]string           // band-anchor fg ANSI; stable within a threat level
+	overallTempDimLUT [100]string // HCL-dimmed variant for the ghost-trail frame
+	overallLevelLUT   [5]string   // band-anchor fg ANSI; stable within a threat level
 
 	// -- Category thermal gradient (category boxes) --
 	CategoryGradient [5]ThermalLevel
@@ -191,7 +190,6 @@ func (t *Theme) Init() {
 		}
 		ratio := pos - float64(seg)
 		blended := anchors[seg].BlendHcl(anchors[seg+1], ratio).Clamped()
-		t.overallTempColors[v] = blended
 		t.overallTempLUT[v] = truecolorFg(blended)
 		t.overallTempDimLUT[v] = truecolorFg(dimColorful(blended, GhostOverlayRatio))
 	}
@@ -270,19 +268,6 @@ func (t *Theme) OverallLevelFg(level int) string {
 		level = 4
 	}
 	return t.overallLevelLUT[level]
-}
-
-// OverallTemperaturePulsedFg returns a truecolor fg escape for value,
-// dimmed on the fly by `brightness` in [0,1]. brightness >= 1 returns the
-// steady-state LUT entry; otherwise HCL chroma+lightness are scaled.
-// Called per-frame while meltdown is active; the blend reuses a cached
-// colorful.Color so only the dim+format pass runs per tick.
-func (t *Theme) OverallTemperaturePulsedFg(value int, brightness float64) string {
-	v := clampTemp(value)
-	if brightness >= 1.0 {
-		return t.overallTempLUT[v]
-	}
-	return truecolorFg(dimColorful(t.overallTempColors[v], brightness))
 }
 
 func clampTemp(v int) int {

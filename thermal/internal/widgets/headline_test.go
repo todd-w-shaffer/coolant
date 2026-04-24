@@ -345,11 +345,10 @@ func TestHeadline_SessionsAboveAgents(t *testing.T) {
 	}
 }
 
-// TestHeadline_MeltdownPulseDrivesModulation — at meltdown, successive
-// AnimTicks must change the rendered output. This proves the pulse phase
-// is owned at Headline (single oscillator) and actually reaches the
-// segment readout's fg color.
-func TestHeadline_MeltdownPulseDrivesModulation(t *testing.T) {
+// TestHeadline_NoMeltdownPulse — at meltdown, the LCD fragment must be
+// identical across AnimTicks. No pulse oscillator exists on the headline;
+// digit colors are steady-state.
+func TestHeadline_NoMeltdownPulse(t *testing.T) {
 	th := theme.Classic()
 	th.Init()
 	h := NewHeadline(th, anim.Default())
@@ -359,18 +358,19 @@ func TestHeadline_MeltdownPulseDrivesModulation(t *testing.T) {
 	state.ThreatLevel = model.ThreatMeltdown
 	h.Update(state)
 
+	iconBg := th.OverallGradient[1].Bg
 	frames := make([]string, 0, 8)
 	for i := 0; i < 8; i++ {
-		lines := h.ViewLines()
-		frames = append(frames, lines[0])
+		rp := h.renderLCDFrag(iconBg)
+		frames = append(frames, rp.top)
 		h.AnimTick()
 	}
 	distinct := map[string]bool{}
 	for _, f := range frames {
 		distinct[f] = true
 	}
-	if len(distinct) < 2 {
-		t.Errorf("meltdown pulse produced %d distinct top frames across 8 ticks, want >=2", len(distinct))
+	if len(distinct) != 1 {
+		t.Errorf("LCD fragment produced %d distinct outputs across 8 meltdown ticks, want exactly 1 (no pulse)", len(distinct))
 	}
 }
 
@@ -385,7 +385,7 @@ func TestRenderLCDFrag_OfflineZeroWidth(t *testing.T) {
 	state.Online = false
 	h.Update(state)
 
-	rp := h.renderLCDFrag(th.OfflineBg, 1.0)
+	rp := h.renderLCDFrag(th.OfflineBg)
 	if rp.visWidth != 0 {
 		t.Errorf("offline: visWidth=%d want 0", rp.visWidth)
 	}
@@ -404,7 +404,7 @@ func TestRenderLCDFrag_OnlineTwoRowsEqualWidth(t *testing.T) {
 	h.Update(fixtureState())
 
 	iconBg := th.OverallGradient[1].Bg
-	rp := h.renderLCDFrag(iconBg, 1.0)
+	rp := h.renderLCDFrag(iconBg)
 	if rp.visWidth == 0 {
 		t.Fatalf("online: visWidth=0, expected non-zero LCD")
 	}

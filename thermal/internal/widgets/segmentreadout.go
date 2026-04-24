@@ -125,17 +125,9 @@ func (s *SegmentReadout) AnimTick() {
 	}
 }
 
-// Render paints the readout on the supplied bg with no pulse modulation.
-// Equivalent to RenderWithPulse(bg, 1.0); kept for callers that don't
-// participate in the phase-locked meltdown pulse.
+// Render paints both braille rows, honoring the active animation state in
+// priority order: ghost trail > threshold flash > steady state.
 func (s *SegmentReadout) Render(bg color.Color) (top, bot string, visWidth int) {
-	return s.RenderWithPulse(bg, 1.0)
-}
-
-// RenderWithPulse paints both braille rows, honoring the active animation
-// state in priority order: ghost trail > threshold flash > pulse-modulated
-// steady state. pulseScale is the brightness multiplier (1.0 = full).
-func (s *SegmentReadout) RenderWithPulse(bg color.Color, pulseScale float64) (top, bot string, visWidth int) {
 	if s.ghostTicks > 0 {
 		rawTop, rawBot, w := RenderTemperature(s.prevValue)
 		fgEsc := s.theme.OverallTemperatureFgDimmed(s.prevValue)
@@ -160,8 +152,8 @@ func (s *SegmentReadout) RenderWithPulse(bg color.Color, pulseScale float64) (to
 	onesTop, onesBot := digitToBraille(segmentDigits[ones])
 	degTop, degBot := degreeToBraille()
 
-	tensFg := s.theme.OverallTemperaturePulsedFg(tens*10, pulseScale)
-	onesFg := s.theme.OverallTemperaturePulsedFg(s.value, pulseScale)
+	tensFg := s.theme.OverallTemperatureFg(tens * 10)
+	onesFg := s.theme.OverallTemperatureFg(s.value)
 	degFg := s.theme.OverallLevelFg(s.level)
 
 	bgStyle := lipgloss.NewStyle().Background(bg)

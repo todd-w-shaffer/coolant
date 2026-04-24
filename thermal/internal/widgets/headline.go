@@ -18,10 +18,6 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// meltdownPhaseStep advances the meltdown pulse phase per AnimTick for a
-// 1 Hz oscillation at the project's AnimFPS cadence.
-var meltdownPhaseStep = 2 * math.Pi / float64(config.AnimFPS)
-
 // Headline renders the unified thermal bar. It is a 2-row strip when online
 // (top row: quip + runtimes + sessions/agents + build/shell + LCD + battery;
 // bottom row: ghost trail + agents + shell + LCD + battery) and a 1-row strip
@@ -34,12 +30,6 @@ type Headline struct {
 	bloom   *HeatBloom
 	battery *Battery
 	theme   *theme.Theme
-
-	// pulsePhase is the single meltdown oscillator; the segment readout
-	// and any future bar-level throb consume this same phase so the whole
-	// headline throbs together.
-	pulsePhase float64
-	meltdown   bool
 
 	// Directional heat rails for the stacked build/shell cells. Each cell's
 	// rail rides CategoryGradient for live warming and eases back to
@@ -71,13 +61,11 @@ func (h *Headline) SetSize(w, height int) {
 func (h *Headline) Update(state *model.AppState) {
 	h.state = state
 	if state == nil {
-		h.meltdown = false
 		return
 	}
 	h.agents.SetTarget(state.AgentCount())
 	h.agents.SetStaleCount(state.StaleAgentCount())
 	h.agents.SetCompletedCount(state.CompletedAgentCount())
-	h.meltdown = state.Online && state.ThreatLevel == model.ThreatMeltdown
 
 	// Drive the readout from data-update cadence, not render cadence. If we
 	// updated inside ViewLines() the ghost trail would re-arm on every
@@ -97,18 +85,12 @@ func (h *Headline) SetHighScoreMode(on bool) {
 }
 
 // AnimTick advances agent icon springs, the readout's ghost/flash
-// countdowns, and (during meltdown) the single bar-wide pulse phase.
+// countdowns, bloom heat, and battery breath.
 func (h *Headline) AnimTick() {
 	h.agents.AnimTick()
 	h.temp.AnimTick()
 	h.bloom.AnimTick()
 	h.battery.AnimTick()
-	if h.meltdown {
-		h.pulsePhase += meltdownPhaseStep
-		if h.pulsePhase > 2*math.Pi {
-			h.pulsePhase -= 2 * math.Pi
-		}
-	}
 }
 
 // rowPair is a 2-row rendered fragment at a fixed visible width. visWidth
@@ -165,11 +147,11 @@ func truecolorBg(c color.Color) string {
 
 // renderLCDFrag wraps the segment readout as a rowPair. Returns a zero
 // fragment when the headline is offline or the readout is suppressed.
-func (h *Headline) renderLCDFrag(iconBg color.Color, pulseScale float64) rowPair {
+func (h *Headline) renderLCDFrag(iconBg color.Color) rowPair {
 	if h.state == nil || !h.state.Online {
 		return rowPair{}
 	}
-	top, bot, w := h.temp.RenderWithPulse(iconBg, pulseScale)
+	top, bot, w := h.temp.Render(iconBg)
 	if w == 0 {
 		return rowPair{}
 	}
@@ -382,11 +364,7 @@ func (h *Headline) ViewLines() []string {
 	// across OverallGradient levels fought the bloom for the same channel.
 	iconBg := h.theme.OverallGradient[1].Bg
 
-	pulseScale := 1.0
-	if h.meltdown {
-		pulseScale = 0.6 + 0.4*(math.Sin(h.pulsePhase)+1)/2
-	}
-	lcd := h.renderLCDFrag(iconBg, pulseScale)
+	lcd := h.renderLCDFrag(iconBg)
 
 	bTop, bBot, bW := h.battery.ViewLines(iconBg)
 	battery := rowPair{top: bTop, bot: bBot, visWidth: bW}

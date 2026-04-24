@@ -2,7 +2,6 @@ package widgets
 
 import (
 	"image/color"
-	"math"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -151,26 +150,5 @@ func TestSegmentReadout_Smoothing_LargeJumpCompletes(t *testing.T) {
 	}
 	if v := renderInt(t, s); v != 85 {
 		t.Errorf("after large jump + 60 ticks: displayed %d, want 85", v)
-	}
-}
-
-// TestSegmentReadout_Smoothing_MeltdownPulseIndependent — pulse modulation
-// still produces distinct outputs at a stable smoothed value.
-func TestSegmentReadout_Smoothing_MeltdownPulseIndependent(t *testing.T) {
-	s := newSmoothingSegment(t)
-	bg := color.RGBA{0, 0, 0, 255}
-	s.Update(90, 4)
-	// Let spring settle.
-	for i := 0; i < 60; i++ {
-		s.AnimTick()
-	}
-	seen := map[string]bool{}
-	for _, ph := range []float64{0, 1, 2, 3, 4, 5} {
-		pulse := 0.6 + 0.4*((math.Sin(ph)+1)/2)
-		top, _, _ := s.RenderWithPulse(bg, pulse)
-		seen[top] = true
-	}
-	if len(seen) < 2 {
-		t.Errorf("pulse modulation at stable value produced %d distinct outputs, want ≥2", len(seen))
 	}
 }

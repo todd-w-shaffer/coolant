@@ -40,7 +40,7 @@ func expectedTensSpan(th *theme.Theme, value int) string {
 	band := (value / 10) * 10
 	digit := value / 10
 	top, _ := digitToBraille(segmentDigits[digit])
-	fg := th.OverallTemperaturePulsedFg(band, 1.0)
+	fg := th.OverallTemperatureFg(band)
 	return fg + string(top[:]) + "\033[39m"
 }
 
@@ -137,23 +137,6 @@ func TestSegmentReadout_DegreeSpanChangesAcrossLevels(t *testing.T) {
 	want := expectedDegreeSpan(s.theme, 3)
 	if !strings.Contains(top30hot, want) {
 		t.Errorf("render at level 3 missing level-3 degree span")
-	}
-}
-
-// TestSegmentReadout_DegreeNotPulsedAtMeltdown — at meltdown, varying
-// pulseScale must NOT change the degree span (degree color is level-derived,
-// not pulse-modulated). Digits may still pulse.
-func TestSegmentReadout_DegreeNotPulsedAtMeltdown(t *testing.T) {
-	s := newPaintSegment(t)
-	bg := color.RGBA{0, 0, 0, 255}
-	settle(t, s, 90, 4)
-
-	want := expectedDegreeSpan(s.theme, 4)
-	for _, p := range []float64{0.4, 0.7, 1.0} {
-		top, _, _ := s.RenderWithPulse(bg, p)
-		if !strings.Contains(top, want) {
-			t.Errorf("pulse=%.2f: degree span changed (degree should be pulse-independent)", p)
-		}
 	}
 }
 

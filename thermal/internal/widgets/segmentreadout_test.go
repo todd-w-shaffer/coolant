@@ -2,7 +2,6 @@ package widgets
 
 import (
 	"image/color"
-	"math"
 	"strings"
 	"testing"
 
@@ -193,20 +192,22 @@ func TestSegmentReadout_NoFlashOnDownwardTransition(t *testing.T) {
 	}
 }
 
-// TestSegmentReadout_MeltdownPulseModulates — varying pulse scale across
-// the sine cycle produces distinct rendered outputs (sanity that the
-// modulation actually reaches the ANSI escape).
-func TestSegmentReadout_MeltdownPulseModulates(t *testing.T) {
+// TestSegmentReadout_SteadyAtMeltdown — at meltdown level (4), Render
+// produces identical output across ticks. No pulse modulation exists.
+func TestSegmentReadout_SteadyAtMeltdown(t *testing.T) {
 	s := newTestSegment(t)
 	bg := color.RGBA{0, 0, 0, 255}
 	s.Update(90, 4)
-	seen := map[string]bool{}
-	for _, ph := range []float64{0, 1, 2, 3, 4, 5} {
-		pulse := 0.6 + 0.4*((math.Sin(ph)+1)/2)
-		top, _, _ := s.RenderWithPulse(bg, pulse)
-		seen[top] = true
+	// Let spring settle so value is stable.
+	for i := 0; i < 60; i++ {
+		s.AnimTick()
 	}
-	if len(seen) < 2 {
-		t.Errorf("pulse modulation produced %d distinct outputs, want >=2", len(seen))
+	ref, _, _ := s.Render(bg)
+	for i := 0; i < 8; i++ {
+		s.AnimTick()
+		top, _, _ := s.Render(bg)
+		if top != ref {
+			t.Fatalf("tick %d: Render output changed at meltdown level (no pulse expected)", i)
+		}
 	}
 }
