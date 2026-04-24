@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"image/color"
 	"math"
 	"math/bits"
 	"strings"
@@ -212,65 +213,80 @@ func decodeBrailleLevel(r rune) int {
 	return level
 }
 
-func TestBattery_SeverityBucketGreen(t *testing.T) {
+// approxSameColor returns true when two color.Color values agree on their
+// 16-bit RGB channels within 0x0200 — accommodates HCL round-trip drift
+// at anchor endpoints.
+func approxSameColor(a, b color.Color) bool {
+	ar, ag, ab, _ := a.RGBA()
+	br, bg, bb, _ := b.RGBA()
+	const tol = 0x0200
+	diff := func(x, y uint32) uint32 {
+		if x > y {
+			return x - y
+		}
+		return y - x
+	}
+	return diff(ar, br) <= tol && diff(ag, bg) <= tol && diff(ab, bb) <= tol
+}
+
+func TestBattery_SeverityAnchors(t *testing.T) {
+	// Cool at full, warn at midpoint, hot at empty — the three anchor points
+	// in the HCL gradient must land on their theme-color anchors exactly.
 	b := testBattery(t)
-	b.Update(collector.SystemStats{
-		BatteryPresent: true,
-		BatteryPercent: 80,
-		BatteryState:   collector.BatteryDischarging,
-	})
-	fg := b.severityFg()
-	th := b.theme
-	want := th.OverallGradient[1].Fg
-	if fg != want {
-		t.Errorf("80%% should be green: got %v, want %v", fg, want)
+	cases := []struct {
+		pct       float64
+		gradIndex int
+		label     string
+	}{
+		{100, 1, "full→cool"},
+		{50, 2, "half→warn"},
+		{0, 3, "empty→hot"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: tc.pct, BatteryState: collector.BatteryDischarging})
+			got := b.severityFg()
+			want := b.theme.OverallGradient[tc.gradIndex].Fg
+			if !approxSameColor(got, want) {
+				t.Errorf("%s: got %v, want gradient[%d] %v", tc.label, got, tc.gradIndex, want)
+			}
+		})
 	}
 }
 
-func TestBattery_SeverityBucketAmber(t *testing.T) {
+func TestBattery_SeverityQuantizedPerGrain(t *testing.T) {
+	// Hue ticks once per grain: pct values sharing a grain count produce the
+	// same color; crossing a grain boundary produces a different one.
 	b := testBattery(t)
-	b.Update(collector.SystemStats{
-		BatteryPresent: true,
-		BatteryPercent: 35,
-		BatteryState:   collector.BatteryDischarging,
-	})
-	fg := b.severityFg()
-	th := b.theme
-	want := th.OverallGradient[2].Fg
-	if fg != want {
-		t.Errorf("35%% should be amber: got %v, want %v", fg, want)
+
+	b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: 95, BatteryState: collector.BatteryDischarging})
+	at95 := b.severityFg()
+	b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: 96, BatteryState: collector.BatteryDischarging})
+	at96 := b.severityFg()
+	if !approxSameColor(at95, at96) {
+		t.Errorf("95%% and 96%% share grain count — colors should match: %v vs %v", at95, at96)
+	}
+
+	b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: 100, BatteryState: collector.BatteryDischarging})
+	at100 := b.severityFg()
+	if approxSameColor(at95, at100) {
+		t.Errorf("95%% and 100%% span different grains — colors should differ: %v vs %v", at95, at100)
 	}
 }
 
-func TestBattery_SeverityBucketRed(t *testing.T) {
+func TestBattery_SeverityProducesTwentyThreeDistinctColors(t *testing.T) {
+	// Sweeping pct 0..100 exposes exactly 23 distinct colors — one per grain
+	// count in [0,22]. Guards against quantization breaking.
 	b := testBattery(t)
-	b.Update(collector.SystemStats{
-		BatteryPresent: true,
-		BatteryPercent: 10,
-		BatteryState:   collector.BatteryDischarging,
-	})
-	fg := b.severityFg()
-	th := b.theme
-	want := th.OverallGradient[3].Fg
-	if fg != want {
-		t.Errorf("10%% should be red: got %v, want %v", fg, want)
+	seen := map[uint32]bool{}
+	for pct := 0; pct <= 100; pct++ {
+		b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: float64(pct), BatteryState: collector.BatteryDischarging})
+		r, g, bb, _ := b.severityFg().RGBA()
+		key := (r>>8)<<16 | (g>>8)<<8 | (bb >> 8)
+		seen[key] = true
 	}
-}
-
-func TestBattery_SeverityBucketBoundaryExact(t *testing.T) {
-	b := testBattery(t)
-	th := b.theme
-
-	// 20% is exactly at BatteryCritPct → red (< uses strict less-than)
-	b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: 20, BatteryState: collector.BatteryDischarging})
-	if got := b.severityFg(); got != th.OverallGradient[2].Fg {
-		t.Errorf("20%% should be amber (>=critPct): got %v", got)
-	}
-
-	// 50% is exactly at BatteryWarnPct → green (>= warnPct means green)
-	b.Update(collector.SystemStats{BatteryPresent: true, BatteryPercent: 50, BatteryState: collector.BatteryDischarging})
-	if got := b.severityFg(); got != th.OverallGradient[1].Fg {
-		t.Errorf("50%% should be green (>=warnPct): got %v", got)
+	if len(seen) != 23 {
+		t.Errorf("grain color count = %d, want 23 (one per n in [0,22])", len(seen))
 	}
 }
 

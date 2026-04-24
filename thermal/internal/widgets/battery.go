@@ -168,16 +168,32 @@ func (b *Battery) ViewLines(bg color.Color) (top, bot string, width int) {
 		w
 }
 
-// severityFg returns the foreground color for the current battery percent.
+// severityFg returns the foreground color for the current battery percent,
+// HCL-blended across the OverallGradient ok→warn→crit anchors and quantized
+// to the 22-dot fill grid so the hue ticks exactly once per grain as the
+// battery drains. Full reads as gradient[1] (cool), half reads as
+// gradient[2] (warn), empty reads as gradient[3] (hot).
 func (b *Battery) severityFg() color.Color {
-	switch {
-	case b.stats.BatteryPercent < config.BatteryCritPct:
-		return b.theme.OverallGradient[3].Fg
-	case b.stats.BatteryPercent < config.BatteryWarnPct:
-		return b.theme.OverallGradient[2].Fg
-	default:
-		return b.theme.OverallGradient[1].Fg
+	return b.theme.BatteryGrainColor(batteryGrainCount(b.stats.BatteryPercent))
+}
+
+// batteryFillDots is the number of fillable dots in the battery silhouette.
+// Both the braille fill stream and the per-grain color LUT quantize against
+// this constant, so the two always stay in lockstep.
+const batteryFillDots = 22
+
+// batteryGrainCount converts a battery percent into its grain count in
+// [0, batteryFillDots]. The battery widget's fill geometry and color
+// quantization both key off this single rounding rule.
+func batteryGrainCount(pct float64) int {
+	n := int(pct*float64(batteryFillDots)/100.0 + 0.5)
+	if n < 0 {
+		return 0
 	}
+	if n > batteryFillDots {
+		return batteryFillDots
+	}
+	return n
 }
 
 // Battery outline bits OR'd into the top row regardless of fill level.
@@ -231,7 +247,7 @@ type fillDot struct {
 // at row G (row H is structural floor); within each row, positions go
 // left-to-right. The shoulder row (row B / top char row 2) has only
 // two fillable positions — its side dots are permanent silhouette.
-var batteryFillOrder = [22]fillDot{
+var batteryFillOrder = [batteryFillDots]fillDot{
 	// Row G — bot char row 3
 	{bBotL, 0x20}, {bBotC, 0x04}, {bBotC, 0x20}, {bBotR, 0x04},
 	// Row F — bot char row 2
@@ -255,13 +271,7 @@ var batteryFillOrder = [22]fillDot{
 // (shoulder row centers) only light at 100% — a "crown" that makes the
 // topped-off state unambiguous.
 func brailleBattery(pct float64) (topL, topC, topR, botL, botC, botR rune) {
-	n := int(pct*22.0/100.0 + 0.5)
-	if n < 0 {
-		n = 0
-	}
-	if n > 22 {
-		n = 22
-	}
+	n := batteryGrainCount(pct)
 
 	chars := [6]rune{
 		bTopL: 0x2800 | casingTopL | battShoulderL,

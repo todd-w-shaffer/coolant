@@ -49,6 +49,12 @@ type Theme struct {
 	overallTempDimLUT [100]string // HCL-dimmed variant for the ghost-trail frame
 	overallLevelLUT   [5]string   // band-anchor fg ANSI; stable within a threat level
 
+	// batteryGrainLUT maps battery grain count (0=empty, 22=full) to an HCL
+	// blend across the ok→warn→crit anchors (gradient[1..3]). Lets the
+	// battery widget tick one hue step per grain without recomputing the
+	// blend on every render.
+	batteryGrainLUT [23]color.Color
+
 	// -- Category thermal gradient (category boxes) --
 	CategoryGradient [5]ThermalLevel
 
@@ -200,6 +206,21 @@ func (t *Theme) Init() {
 		t.overallLevelLUT[i] = truecolorFg(colorfulFromColor(t.OverallGradient[i].Fg))
 	}
 
+	// Battery grain LUT: 23 entries, one per grain count in [0,22]. Spans
+	// gradient[1]→[2]→[3] with gradient[2] at the midpoint so the battery
+	// reads cool at full, warn at half, hot at empty.
+	for n := 0; n <= 22; n++ {
+		tt := 1.0 - float64(n)/22.0
+		var blended colorful.Color
+		if tt <= 0.5 {
+			blended = anchors[1].BlendHcl(anchors[2], tt*2).Clamped()
+		} else {
+			blended = anchors[2].BlendHcl(anchors[3], (tt-0.5)*2).Clamped()
+		}
+		r, g, b := blended.RGB255()
+		t.batteryGrainLUT[n] = color.NRGBA{R: r, G: g, B: b, A: 255}
+	}
+
 	// Heat-bloom LUT: 100 heat rows × 100 radial columns. Between the four
 	// BloomRamp stops we have 3 segments; within each segment, HCL-blend
 	// both Core and Edge anchors, then HCL-blend Core→Edge across radial.
@@ -268,6 +289,18 @@ func (t *Theme) OverallLevelFg(level int) string {
 		level = 4
 	}
 	return t.overallLevelLUT[level]
+}
+
+// BatteryGrainColor returns the pre-blended HCL color for a battery grain
+// count in [0,22]. Out-of-range values clamp.
+func (t *Theme) BatteryGrainColor(n int) color.Color {
+	if n < 0 {
+		n = 0
+	}
+	if n > 22 {
+		n = 22
+	}
+	return t.batteryGrainLUT[n]
 }
 
 func clampTemp(v int) int {
