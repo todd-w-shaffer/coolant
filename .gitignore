@@ -29,6 +29,17 @@ dev/otel/data/
 # Symlink to thermal-enterprise TUI specs (private repo)
 docs/.tui-specs
 
+# Preview/debug tool binaries (go build artifacts, not shipped)
+thermal/brailletext
+thermal/sparkdebug
+thermal/swatch
+
+# Python bytecode (OTEL scripts)
+dev/otel/scripts/__pycache__/
+
+# Superpowers brainstorm sessions (private)
+.superpowers/
+
 # Archived artifacts — historical, not in use
 docs/archive/
 scripts/archive/
