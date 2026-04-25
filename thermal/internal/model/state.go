@@ -9,6 +9,7 @@ import (
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats"
 )
 
 // AgentRecord captures the full lifecycle of a single subagent,
@@ -98,6 +99,10 @@ type AppState struct {
 	IdleCycle  int
 	idleTicker int
 	stableQuip string
+
+	// nil-safe — HandleEvent skips Fold when unset (test paths and
+	// degraded init both run without it).
+	aggregator *stats.Aggregator
 }
 
 // NewAppState creates an initialized AppState.
@@ -296,9 +301,20 @@ var eventAlerts = map[string]eventAlertSpec{
 	collector.EventPreflightWarn:      {func(ev collector.GateEvent) string { return "preflight: " + ev.Reason }, ThreatWarm},
 }
 
+func (s *AppState) AttachAggregator(a *stats.Aggregator) {
+	s.aggregator = a
+}
+
+func (s *AppState) Aggregator() *stats.Aggregator {
+	return s.aggregator
+}
+
 // HandleEvent processes an external event from the JSONL event log
 // and generates appropriate alerts.
 func (s *AppState) HandleEvent(ev collector.GateEvent) {
+	if s.aggregator != nil {
+		s.aggregator.Fold(ev, 0)
+	}
 	if spec, ok := eventAlerts[ev.Event]; ok {
 		s.addAlert(AlertEntry{Time: ev.Timestamp, Message: spec.msg(ev), Level: spec.level})
 	}

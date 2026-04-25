@@ -22,22 +22,27 @@ const (
 
 // GateEvent represents a parsed JSONL event from the coolant event log.
 type GateEvent struct {
-	Timestamp      time.Time `json:"ts"`
-	Event          string    `json:"event"`
-	SessionID      string    `json:"session_id,omitempty"`
-	AgentID        string    `json:"agent_id,omitempty"`
-	AgentType      string    `json:"agent_type,omitempty"`
-	Cwd            string    `json:"cwd,omitempty"`
-	Project        string    `json:"project,omitempty"`
-	PermissionMode string    `json:"permission_mode,omitempty"`
-	TranscriptPath string    `json:"transcript_path,omitempty"`
-	Tool           string    `json:"tool,omitempty"`
-	Command        string    `json:"command,omitempty"`
-	Reason         string    `json:"reason,omitempty"`
-	AgentCount     int       `json:"agent_count,omitempty"`
-	Threshold      int       `json:"threshold,omitempty"`
-	Original       string    `json:"original,omitempty"`
-	Rewritten      string    `json:"rewritten,omitempty"`
+	Timestamp time.Time `json:"ts"`
+	// Schema is the envelope shape version. 0 = pre-versioning event
+	// (silently filtered by the stats schema gate). 1 = current shape
+	// emitted by coolant_event in scripts/common.sh after the
+	// schema-and-lock spec landed.
+	Schema         int    `json:"schema,omitempty"`
+	Event          string `json:"event"`
+	SessionID      string `json:"session_id,omitempty"`
+	AgentID        string `json:"agent_id,omitempty"`
+	AgentType      string `json:"agent_type,omitempty"`
+	Cwd            string `json:"cwd,omitempty"`
+	Project        string `json:"project,omitempty"`
+	PermissionMode string `json:"permission_mode,omitempty"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
+	Tool           string `json:"tool,omitempty"`
+	Command        string `json:"command,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+	AgentCount     int    `json:"agent_count,omitempty"`
+	Threshold      int    `json:"threshold,omitempty"`
+	Original       string `json:"original,omitempty"`
+	Rewritten      string `json:"rewritten,omitempty"`
 }
 
 // TailEvents tails the JSONL event file, sending parsed events to ch.

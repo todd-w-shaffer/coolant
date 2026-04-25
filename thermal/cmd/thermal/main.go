@@ -20,6 +20,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 	appmodel "github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/updater"
@@ -48,20 +49,31 @@ type model struct {
 	snapChan      chan collector.Snapshot
 	eventChan     chan collector.GateEvent
 	updateChan    chan string
+	aggregator    *stats.Aggregator
+	// checkpointDone closes after the checkpoint goroutine's final
+	// flush. main() waits on it post-Run so process exit can't race
+	// the fsync — without this, a quit during the 30s tick window
+	// loses the unwritten delta.
+	checkpointDone chan struct{}
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 	km := keys.Default()
-	return model{
-		layout:       layout.NewHorizontal(th, ap, km),
-		keys:         km,
-		done:         make(chan struct{}),
-		demoMode:     demoMode,
-		mouseEnabled: true,
-		snapChan:     make(chan collector.Snapshot, 16),
-		eventChan:    make(chan collector.GateEvent, 32),
-		updateChan:   make(chan string, 1),
+	agg := stats.New(productionStatsConfig())
+	m := model{
+		layout:         layout.NewHorizontal(th, ap, km),
+		keys:           km,
+		done:           make(chan struct{}),
+		demoMode:       demoMode,
+		mouseEnabled:   true,
+		snapChan:       make(chan collector.Snapshot, 16),
+		eventChan:      make(chan collector.GateEvent, 32),
+		updateChan:     make(chan string, 1),
+		aggregator:     agg,
+		checkpointDone: make(chan struct{}),
 	}
+	m.layout.State().AttachAggregator(agg)
+	return m
 }
 
 func (m model) Init() tea.Cmd {
@@ -76,6 +88,25 @@ func (m model) Init() tea.Cmd {
 		evPath = coolantTmpPath("events.jsonl")
 	}
 	go collector.TailEvents(m.eventChan, evPath, config.EventInterval, m.done)
+
+	if m.aggregator != nil {
+		go func() {
+			defer close(m.checkpointDone)
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-m.done:
+					_ = m.aggregator.Checkpoint()
+					return
+				case <-ticker.C:
+					_ = m.aggregator.Checkpoint()
+				}
+			}
+		}()
+	} else {
+		close(m.checkpointDone)
+	}
 
 	cmds := []tea.Cmd{waitForSnapshot(m.snapChan), waitForEvent(m.eventChan), animTick()}
 
@@ -276,9 +307,42 @@ func (m model) View() tea.View {
 	return v
 }
 
+// productionStatsConfig falls through to in-memory-only when HOME
+// can't be resolved — empty CachePath disables persistence but keeps
+// the aggregator usable.
+func productionStatsConfig() stats.Config {
+	jsonl := os.Getenv("COOLANT_EVENTS")
+	if jsonl == "" {
+		jsonl = coolantTmpPath("events.jsonl")
+	}
+	cfg := stats.Config{
+		JSONLPath:    jsonl,
+		DegradedPath: coolantTmpPath("degraded.count"),
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		cfg.CachePath = filepath.Join(home, ".coolant", "stats.json")
+	}
+	return cfg
+}
+
 // ── Main ────────────────────────────────────────────────────
 
 func main() {
+	// Dispatch BEFORE flag.Parse — otherwise flag.Parse errors on
+	// bare-word verbs.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "statsdump":
+			folded, err := runStatsdump(os.Stdout, productionStatsConfig())
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "statsdump: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "statsdump: folded %d schema:1 events\n", folded)
+			os.Exit(0)
+		}
+	}
+
 	demoMode := flag.Bool("demo", false, "Generate synthetic data")
 	themeName := flag.String("theme", "", "Color theme (classic, iron, mono, frappe, latte)")
 	animName := flag.String("animation", "", "Animation profile (default, calm, intense)")
@@ -367,4 +431,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	// Block on the checkpoint goroutine's final flush so process exit
+	// can't race the fsync. parentExitMsg / Quit closes m.done, the
+	// goroutine then runs its terminal Checkpoint and closes
+	// checkpointDone. Bounded by the disk I/O — typically <50ms.
+	<-m.checkpointDone
 }

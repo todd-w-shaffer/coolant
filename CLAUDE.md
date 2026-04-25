@@ -134,8 +134,11 @@ event bus" convention below).
   `CatZoneID`), `keys/` (shared keybinding registry)
 - **Plumbing** — `config/` (timing, thresholds, EMA, animation defaults),
   `demo/` (scripted 6-phase narrative for `--demo`), `version/` (ldflags-injected
-  build version), `updater/` (daily-TTL staleness check against `VERSION` on main)
-- **Entry points** — `cmd/thermal/` (bubbletea app), `cmd/swatch/` and
+  build version), `updater/` (daily-TTL staleness check against `VERSION` on main),
+  `stats/` (cross-session JSONL aggregator — Aggregator/Snapshot/Records persisted
+  to `~/.coolant/stats.json`)
+- **Entry points** — `cmd/thermal/` (bubbletea app + first-arg subcommand
+  dispatch for hidden dev tools like `thermo statsdump`), `cmd/swatch/` and
   `cmd/brailletext/` (preview tools)
 
 For the full package inventory, call graph, and community structure,
@@ -216,6 +219,8 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 - `GaugeDotColor.ANSIOverride` lets Classic use 16-color ANSI escapes while other themes use truecolor. If set, `Init()` uses the override; otherwise derives truecolor from `Color`.
 - Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. Timing, thresholds, and EMA alphas live in `internal/config/tuning.go`; animation defaults also live there but are consumed via `anim.Default()` rather than directly.
 - Braille rendering done natively in Go (no awk, no subshells).
+- **Stats engine durability split.** `internal/stats` separates streaming source (`$TMPDIR/coolant-$USER.events.jsonl`, ephemeral, OS may purge on reboot) from durable history (`~/.coolant/stats.json`, survives macOS purge). Lifetime totals are *always* `sum(daily)` — never stored separately, eliminating cache-vs-live drift. Schema gate at parse time (`1 <= Schema <= MaxKnownSchema`) silently filters pre-versioning events; the JSONL is never rewritten ("virtual chop"). Cache is loaded permissively on schema mismatch — primary fields (records, daily, first_seen, by_type, by_project) survive future schema bumps.
+- **Single-binary subcommand dispatch.** New CLI verbs land as `os.Args[1]`-matched cases at the top of `cmd/thermal/main.go`, BEFORE `flag.Parse()` (otherwise flag.Parse errors on bare-word verbs). Hidden dev tools like `thermo statsdump` follow this pattern; future user-facing `thermo stats` will too. No new `cmd/<verb>/` directories — release-matrix and install-script complexity scales with binary count, not subcommand count.
 - For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
 - **bubblezone v2 is incompatible with `lipgloss.Canvas` / the v2 compositor.** We register clickable zones via `github.com/lrstanley/bubblezone/v2`. The maintainer warns that bubblezone may not work when using the lipgloss v2 canvas/compositor — the marker-scan model assumes a flat string. Coolant composes layouts via string concatenation in `layout/horizontal.go`; do not introduce `lipgloss.Canvas` without re-evaluating the zone story.
 - **Zone ID naming convention:** `<widget>:<entity-id>` — e.g. `cat:build`, `agent:abc123`, `stat:cpu`. Avoids cross-widget collisions without `zone.NewPrefix()` overhead.

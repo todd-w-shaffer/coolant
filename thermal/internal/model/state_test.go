@@ -10,6 +10,7 @@ import (
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats"
 )
 
 func TestFirstUpdateSeedsState(t *testing.T) {
@@ -1574,5 +1575,50 @@ func TestAgentTypeCounts(t *testing.T) {
 	}
 	if counts["Plan"] != 1 {
 		t.Errorf("Plan = %d, want 1", counts["Plan"])
+	}
+}
+
+func TestHandleEventForwardsToAttachedAggregator(t *testing.T) {
+	dir := t.TempDir()
+	agg := stats.New(stats.Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	})
+	s := NewAppState()
+	s.AttachAggregator(agg)
+
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	s.HandleEvent(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStart,
+		AgentID: "a1", SessionID: "s1", AgentType: "Explore", Project: "coolant",
+		Timestamp: now,
+	})
+
+	if got := agg.Snapshot().Lifetime().AgentsStarted; got != 1 {
+		t.Errorf("aggregator did not see forwarded event; want 1 start, got %d", got)
+	}
+}
+
+func TestHandleEventNilAggregatorIsSafe(t *testing.T) {
+	s := NewAppState()
+	// No AttachAggregator — must not panic.
+	s.HandleEvent(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStart, AgentID: "a1",
+		Timestamp: time.Now(),
+	})
+}
+
+func TestAggregatorReturnsAttached(t *testing.T) {
+	dir := t.TempDir()
+	agg := stats.New(stats.Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	})
+	s := NewAppState()
+	s.AttachAggregator(agg)
+	if s.Aggregator() != agg {
+		t.Error("Aggregator() should return the attached instance")
 	}
 }
