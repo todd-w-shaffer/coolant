@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"fmt"
 	"image/color"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -430,9 +431,13 @@ func (h *Horizontal) focusedIntelView() []string {
 		row3 = " " + dim("size") + "      " + dim("no transcript")
 	}
 
-	// Row 4: transcript path
+	// Row 4: transcript path — OSC 8 clickable link for absolute paths
 	var row4 string
-	if rec.TranscriptPath != "" {
+	if strings.HasPrefix(rec.TranscriptPath, "/") {
+		styled := ui.ColorText(h.theme.HelpColor, rec.TranscriptPath)
+		fileURI := (&url.URL{Scheme: "file", Path: rec.TranscriptPath}).String()
+		row4 = " " + dim("path") + "      " + ui.OSC8Link(fileURI, styled)
+	} else if rec.TranscriptPath != "" {
 		row4 = " " + dim("path") + "      " + dim(rec.TranscriptPath)
 	} else {
 		row4 = " " + dim("path") + "      " + dim("—")

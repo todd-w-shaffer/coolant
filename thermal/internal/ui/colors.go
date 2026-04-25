@@ -90,6 +90,14 @@ func init() {
 	}
 }
 
+// OSC8Link wraps text in an OSC 8 hyperlink escape sequence.
+// Terminals that support OSC 8 (Ghostty, iTerm2, WezTerm) render it as
+// a clickable link; others display the text unchanged.
+// Uses BEL (\a) as the string terminator for widest terminal compatibility.
+func OSC8Link(uri, text string) string {
+	return "\033]8;;" + uri + "\a" + text + "\033]8;;\a"
+}
+
 // CatZoneID returns the bubblezone zone ID for a category cell.
 // Used by headline.go (mark) and main.go (click dispatch) — keeping the
 // string construction in one place prevents silent drift.
