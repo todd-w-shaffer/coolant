@@ -22,13 +22,21 @@ setup() {
 # Backslashes and quotes in command/cwd are escaped for valid JSON.
 make_pre_tool_use() {
   local tool="$1" cmd="$2" cwd="${3:-}"
-  cmd="${cmd//\\/\\\\}"; cmd="${cmd//\"/\\\"}"
+  cmd="${cmd//\\/\\\\}"; cmd="${cmd//\"/\\\"}"; cmd="${cmd//$'\n'/\\n}"
   if [ -n "$cwd" ]; then
     cwd="${cwd//\\/\\\\}"; cwd="${cwd//\"/\\\"}"
     printf '{"session_id":"test-s","tool_name":"%s","tool_input":{"command":"%s","description":"test"},"hook_event_name":"PreToolUse","cwd":"%s"}' "$tool" "$cmd" "$cwd"
   else
     printf '{"session_id":"test-s","tool_name":"%s","tool_input":{"command":"%s","description":"test"},"hook_event_name":"PreToolUse"}' "$tool" "$cmd"
   fi
+}
+
+# Build a PreToolUse stdin JSON payload for the Agent tool. $1=prompt.
+# Quotes/backslashes/newlines in the prompt are JSON-escaped.
+make_pre_tool_use_agent() {
+  local prompt="$1"
+  prompt="${prompt//\\/\\\\}"; prompt="${prompt//\"/\\\"}"; prompt="${prompt//$'\n'/\\n}"
+  printf '{"session_id":"test-s","tool_name":"Agent","tool_input":{"description":"d","subagent_type":"general-purpose","prompt":"%s"},"hook_event_name":"PreToolUse"}' "$prompt"
 }
 
 # Create a throwaway git repo at $TEST_TMPDIR/repo with the classification

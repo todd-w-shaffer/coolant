@@ -11,6 +11,10 @@ COOLANT_AGENT_STARTS="${COOLANT_AGENT_STARTS:-${_COOLANT_DIR}coolant-${USER}.age
 # band from JSONL so a torn line in the degraded path can't itself
 # corrupt the event log. Aggregator reads `wc -l` for total count.
 COOLANT_DEGRADED_COUNT="${COOLANT_DEGRADED_COUNT:-${_COOLANT_DIR}coolant-${USER}.degraded.count}"
+# Per-session JSONL audit log of review-shaped Agent invocations.
+# Populated by .claude/hooks/audit-review-agents.sh, gated against by
+# .claude/hooks/enforce-spec-to-ship-reviews.sh. Truncated by preflight.
+COOLANT_REVIEW_AUDIT="${COOLANT_REVIEW_AUDIT:-${_COOLANT_DIR}coolant-${USER}.review-audit.jsonl}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
 _COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 

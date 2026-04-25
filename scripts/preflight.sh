@@ -18,6 +18,10 @@ coolant_event '"event":"counter.reset"'
 # instead of "this session," confusing per-session diagnostics.
 : > "$COOLANT_DEGRADED_COUNT"
 
+# Truncate the review-gate audit log so the pre-commit gate is scoped
+# per-session. Same pattern as $COOLANT_DEGRADED_COUNT above.
+: > "$COOLANT_REVIEW_AUDIT"
+
 cwd=$(echo "$input" | _json_field cwd)
 if [ -z "$cwd" ]; then
   exit 0

@@ -77,6 +77,8 @@ leaking into this public repo). A companion Claude Code PreToolUse hook at
 calls. Rules live in `.githooks/{blocklist,allowlist}.txt`; see
 `.githooks/README.md` for the short version.
 
+A second hook pair (`.claude/hooks/{audit-review-agents,enforce-spec-to-ship-reviews}.sh`) gates `git commit` on whether `/simplify` and `/observations` ran. Substantive commits (>`$COOLANT_GATE_THRESHOLD_LINES` lines, default 200) require ≥3 distinct simplify kinds + ≥2 distinct observations kinds in the per-session audit log. Override with `[skip-review]` trailer in the commit body. Tunables in the hook headers.
+
 Any existing hooks in `.git/hooks/` (e.g., graphify's `post-commit`)
 are automatically copied into `.githooks/` so they keep running under
 the new `core.hooksPath`. Copied hooks are gitignored — they stay
