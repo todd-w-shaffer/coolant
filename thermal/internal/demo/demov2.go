@@ -108,19 +108,25 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			if agentCount > prevAgents {
 				for i := prevAgents; i < agentCount; i++ {
 					eventCh <- collector.GateEvent{
+						Schema:    1,
 						Timestamp: now,
 						Event:     collector.EventAgentStart,
 						AgentID:   fmt.Sprintf("demo-agent-%d", allSessionPIDs[i]),
 						AgentType: "general-purpose",
+						Project:   "demo",
+						SessionID: "demo-session",
 					}
 				}
 			} else {
 				for i := agentCount; i < prevAgents; i++ {
 					eventCh <- collector.GateEvent{
+						Schema:    1,
 						Timestamp: now,
 						Event:     collector.EventAgentStop,
 						AgentID:   fmt.Sprintf("demo-agent-%d", allSessionPIDs[i]),
 						AgentType: "general-purpose",
+						Project:   "demo",
+						SessionID: "demo-session",
 					}
 				}
 			}

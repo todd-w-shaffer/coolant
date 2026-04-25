@@ -4,17 +4,18 @@ load test_helper
 
 # ── envelope shape ─────────────────────────────────────────
 
-@test "coolant_event injects schema:1 into envelope" {
+@test "coolant_event injects schema:1 between ts and body" {
   source "$PROJECT_ROOT/scripts/common.sh"
   coolant_event '"event":"smoke"'
 
   [ -f "$COOLANT_EVENTS" ]
   local line
   line=$(tail -1 "$COOLANT_EVENTS")
-  # Schema field present plus existing ts and caller body preserved.
-  [[ "$line" == *'"schema":1'* ]] \
-    && [[ "$line" == *'"ts":'* ]] \
-    && [[ "$line" == *'"event":"smoke"'* ]]
+  # Anchored regex — `schema":1` must follow ts and precede caller body,
+  # not just appear somewhere on the line. A field-position regression
+  # (schema appended at end, schema before ts, etc.) would slip past a
+  # bare substring check.
+  [[ "$line" =~ ^\{\"ts\":\"[^\"]+\",\"schema\":1,\"event\":\"smoke\"\}$ ]]
 }
 
 # ── parallel write lock ────────────────────────────────────

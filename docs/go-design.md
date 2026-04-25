@@ -33,3 +33,21 @@ Collector samples at 150ms, animation tick runs at 30fps (~33ms). Springs interp
 ## CPU sampling
 
 Caches the mach host port (avoids port leak) and holds the last computed CPU% when tick deltas are zero (avoids false 0% gaps at 150ms).
+
+## Stats engine
+
+`internal/stats/` persists cross-session agent aggregates that the in-memory ring buffer can't answer ("how many agents this month?", "all-time peak concurrent?"). The on-disk shape is `~/.coolant/stats.json` — distinct from `$TMPDIR/coolant-$USER.events.jsonl` because macOS may purge `$TMPDIR` on reboot.
+
+**Durability split.** JSONL is the streaming source of truth; the cache is durable history. Several fields are *primary* — they cannot be reconstructed from a post-rotation JSONL and must survive every cache-discard / migration path: `records`, `daily` buckets, `first_seen`, `by_type`, `by_project`. Lifetime totals are *always* `sum(daily)` computed on demand — never stored separately, eliminating cache-vs-live drift.
+
+**Schema gate (virtual chop).** `Aggregator.Fold` drops events whose `Schema` falls outside `[1, MaxKnownSchema]`. Pre-versioning events (no schema field, parsed as 0) are silently skipped; future schema-N events on an old binary are also skipped. The JSONL is never rewritten — old and new envelopes coexist line-by-line.
+
+**Delta-merge checkpoint dance.** Each Aggregator tracks a `baseline` Snapshot (the on-disk state at last load/checkpoint). At Checkpoint time: re-read disk → compute `delta = current - baseline` → per-key additive merge for `byType`/`byProject`/`daily` → max-merge `records` (newest-`At` tiebreak) → fsync tempfile → rename → fsync parent dir → adopt as new baseline. This handles two thermos checkpointing concurrently without losing increments.
+
+**Concurrency.** `sync.RWMutex` guards all mutable state. `Fold` and `Checkpoint` take the write lock; `Snapshot` takes the read lock. A process-local `sync.Mutex` (`processLock`) serializes Checkpoint within a binary; cross-process `flock` is deferred — the delta-merge math is correct under single-binary concurrency.
+
+**Stale prune.** `Checkpoint` calls `pruneStale(now)` to drop `agentStarts`/`agentMeta` entries older than 24h. Mirrors the bash `_compute_agent_duration` cutoff for agents that crash without emitting `agent.stop`.
+
+**Wiring.** `cmd/thermal/main.go::newModel` constructs the aggregator via `productionStatsConfig()` and calls `AppState.AttachAggregator`. `AppState.HandleEvent` fan-outs to `aggregator.Fold` when attached (nil-safe for tests). A 30s checkpoint goroutine in `Init` final-flushes on graceful shutdown via the `checkpointDone` channel `main()` blocks on post-Run, so process exit can't race the fsync.
+
+**Hidden subcommand.** `thermo statsdump` (dispatched via first-arg matching in `cmd/thermal/main.go` BEFORE `flag.Parse`) folds the JSONL once into a fresh aggregator and dumps the snapshot as JSON — dev/debug tool, distinct from the future user-facing `thermo stats` (separate spec).

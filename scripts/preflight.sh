@@ -12,6 +12,12 @@ input=$(cat)
 # Reset agent counter epoch — new session starts fresh
 coolant_event '"event":"counter.reset"'
 
+# Truncate the degraded-write counter — bash fallback line in coolant_event
+# accumulates one newline per torn-write incident. Without per-session
+# truncation the aggregator's `wc -l` reports cumulative-since-install
+# instead of "this session," confusing per-session diagnostics.
+: > "$COOLANT_DEGRADED_COUNT"
+
 cwd=$(echo "$input" | _json_field cwd)
 if [ -z "$cwd" ]; then
   exit 0

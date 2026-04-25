@@ -73,6 +73,12 @@ func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 		checkpointDone: make(chan struct{}),
 	}
 	m.layout.State().AttachAggregator(agg)
+	// Self-check the wire-up so a future refactor that drops the
+	// AttachAggregator call fails at startup instead of silently
+	// shipping a TUI that records zero lifetime stats forever.
+	if m.layout.State().Aggregator() == nil {
+		panic("thermo: stats aggregator wire-up missing — AppState.Aggregator() returned nil after AttachAggregator")
+	}
 	return m
 }
 

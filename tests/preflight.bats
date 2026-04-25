@@ -108,3 +108,16 @@ EOF
   run_preflight "$TEST_TMPDIR/project" > /dev/null
   grep -q '"event":"preflight.warn"' "$COOLANT_EVENTS"
 }
+
+@test "preflight truncates COOLANT_DEGRADED_COUNT" {
+  mkdir -p "$TEST_TMPDIR/project"
+  # Pre-seed a stale counter from a prior session.
+  printf '\n\n\n\n\n' > "$COOLANT_DEGRADED_COUNT"
+  [ "$(wc -l < "$COOLANT_DEGRADED_COUNT")" -eq 5 ]
+
+  run_preflight "$TEST_TMPDIR/project" > /dev/null
+
+  # File still exists but is empty — cumulative-since-install bug fixed.
+  [ -f "$COOLANT_DEGRADED_COUNT" ]
+  [ "$(wc -l < "$COOLANT_DEGRADED_COUNT")" -eq 0 ]
+}

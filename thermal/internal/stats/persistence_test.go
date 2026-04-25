@@ -209,6 +209,49 @@ func TestCheckpointCreatesParentDir(t *testing.T) {
 	}
 }
 
+// ── stale-agent prune ─────────────────────────────────────
+
+func TestCheckpointPrunesStaleAgents(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	a := New(cfg)
+
+	now := time.Now().UTC()
+	// Stale agent: started 25h ago, never stopped (crash / kill -9 case).
+	stale := mkEvent(1, "agent.start", "stale-1", "s1", now.Add(-25*time.Hour))
+	a.Fold(stale, 0)
+	// Fresh agent: still active.
+	a.Fold(mkEvent(1, "agent.start", "fresh-1", "s1", now.Add(-1*time.Hour)), 0)
+
+	// Pre-checkpoint: both entries present.
+	if _, ok := a.agentStarts["stale-1"]; !ok {
+		t.Fatalf("precondition: stale-1 should be tracked")
+	}
+	if _, ok := a.agentStarts["fresh-1"]; !ok {
+		t.Fatalf("precondition: fresh-1 should be tracked")
+	}
+
+	if err := a.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	// Post-checkpoint: stale dropped, fresh kept.
+	if _, ok := a.agentStarts["stale-1"]; ok {
+		t.Errorf("stale-1 should have been pruned (>24h old)")
+	}
+	if _, ok := a.agentStarts["fresh-1"]; !ok {
+		t.Errorf("fresh-1 should still be tracked (<24h old)")
+	}
+	// agentMeta tracks alongside; verify both deleted together.
+	if _, ok := a.agentMeta["stale-1"]; ok {
+		t.Errorf("agentMeta[stale-1] should have been pruned alongside agentStarts")
+	}
+}
+
 // ── max-merge records ─────────────────────────────────────
 
 func TestRecordsMaxMergedAcrossCheckpoints(t *testing.T) {
