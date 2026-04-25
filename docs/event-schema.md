@@ -11,7 +11,32 @@ Every event has:
 | Field | Type | Description |
 |-------|------|-------------|
 | `ts` | string | ISO 8601 timestamp (UTC) |
+| `schema` | int | Envelope shape version. Currently `1`. Pure-additive field changes preserve the version; renames or removals bump it. |
 | `event` | string | Event type (see below) |
+
+### Envelope versioning
+
+`schema:1` is a **shape contract**, not a deployment marker — any
+emitter producing the documented envelope shape may set it. Events
+from before this field was introduced remain in the log unmodified;
+the Go aggregator's schema gate (`internal/stats`) filters them at
+parse time so versioned and unversioned events coexist without
+truncation.
+
+### Write serialization
+
+Bash hooks emit through `coolant_event()` in `scripts/common.sh`,
+which serializes `>>` appends behind `coolant_lock` (a non-reentrant
+mkdir-mutex). The lock prevents parallel hooks from splicing large
+payloads when an unsynchronized append would exceed the kernel's
+atomic-write threshold. **All callers of `coolant_event` MUST NOT
+already hold `coolant_lock`** — that path deadlocks for ~1s and
+falls through to an unsynchronized write.
+
+On lock-acquisition timeout, the event is still emitted (signal
+preservation > silent drop) and a single newline is appended to
+`$COOLANT_DEGRADED_COUNT` — an out-of-band counter file the
+aggregator reads via `wc -l` to surface degraded-write totals.
 
 ## Event types
 

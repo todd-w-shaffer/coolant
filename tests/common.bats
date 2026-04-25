@@ -198,3 +198,33 @@ load test_helper
   [ "$result" = "0" ]
   [ "$(cat "$COOLANT_COUNTER")" = "0" ]
 }
+
+@test "reconcile counts mixed pre-versioning and schema:1 events" {
+  echo "0" > "$COOLANT_COUNTER"
+  # Pre-versioning shape (no schema field) — historical events still in file.
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.stop","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  # Post-deploy shape (schema:1) — same events should fold identically.
+  printf '{"ts":"2025-01-01T00:00:02Z","schema":1,"event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","schema":1,"event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  # 3 starts - 1 stop = 2 active across both eras.
+  [ "$(cat "$COOLANT_COUNTER")" = "2" ]
+}
+
+@test "reconcile ignores event substrings inside other fields" {
+  echo "0" > "$COOLANT_COUNTER"
+  # Real agent.start.
+  printf '{"ts":"2025-01-01T00:00:00Z","schema":1,"event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  # Pathological line: a future or hand-crafted event leaks the literal
+  # bytes "event":"agent.start" inside another field's value, unescaped
+  # (followed by a space, not a JSON value-closer). The naive grep
+  # treats this as a second agent.start; the anchored awk pattern
+  # `"event":"agent\.start"[,}]` only matches when followed by , or },
+  # i.e. the actual end of the event field's value.
+  echo '{"ts":"2025-01-01T00:00:01Z","schema":1,"event":"gate.cap","leak":"foo "event":"agent.start" bar"}' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
+}

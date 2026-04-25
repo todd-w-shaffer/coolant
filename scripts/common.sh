@@ -7,6 +7,10 @@ COOLANT_COUNTER="${COOLANT_COUNTER:-${_COOLANT_DIR}coolant-agents-${USER}.count}
 COOLANT_LOG="${COOLANT_LOG:-${_COOLANT_DIR}coolant-${USER}.log}"
 COOLANT_EVENTS="${COOLANT_EVENTS:-${_COOLANT_DIR}coolant-${USER}.events.jsonl}"
 COOLANT_AGENT_STARTS="${COOLANT_AGENT_STARTS:-${_COOLANT_DIR}coolant-${USER}.agent-starts}"
+# Degraded-write counter: one newline per lock-failure fallback. Out of
+# band from JSONL so a torn line in the degraded path can't itself
+# corrupt the event log. Aggregator reads `wc -l` for total count.
+COOLANT_DEGRADED_COUNT="${COOLANT_DEGRADED_COUNT:-${_COOLANT_DIR}coolant-${USER}.degraded.count}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
 _COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -15,9 +19,28 @@ coolant_log() {
 }
 
 coolant_event() {
-  local ts
+  local ts line
   ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-  printf '{"ts":"%s",%s}\n' "$ts" "$1" >> "$COOLANT_EVENTS"
+  # Format outside the lock — pure-string work, no syscalls. The
+  # critical section is just the append.
+  printf -v line '{"ts":"%s","schema":1,%s}\n' "$ts" "$1"
+  # mkdir-mutex is NOT reentrant: callers already holding coolant_lock
+  # (e.g. agent-start.sh) MUST release it before invoking coolant_event.
+  if coolant_lock; then
+    printf '%s' "$line" >> "$COOLANT_EVENTS"
+    coolant_unlock
+  else
+    # Lock acquisition timed out (~1s). Emit unsynchronized so signal
+    # isn't lost — the Go aggregator skips spliced lines on JSON parse
+    # error, so worst case is a single dropped event, not corruption.
+    printf '%s' "$line" >> "$COOLANT_EVENTS"
+    # Out-of-band degradation marker — one byte well under PIPE_BUF,
+    # `>>` atomic at this size, no JSON / no torn-line risk inside the
+    # path that already lost serialization. Aggregator reads via
+    # `wc -l` to surface DegradedWritesTotal.
+    printf '\n' >> "$COOLANT_DEGRADED_COUNT"
+    coolant_log "coolant_event: lock failed, wrote unsynchronized"
+  fi
 }
 
 # Escape a string for safe embedding in JSON values.
@@ -66,26 +89,29 @@ _read_counter() {
 # Reconcile counter file against JSONL event log ground truth.
 # If JSONL exists and derived count differs, fix the counter.
 # Returns the reconciled count on stdout.
+#
+# Single awk pass: state-machine reset on counter.reset, then accumulate
+# starts/stops. Patterns are anchored on the event-field value-closer
+# (`,` or `}`), so substring leaks in other fields don't false-match.
+# Constant memory regardless of file size; one I/O instead of the prior
+# grep -n + tail + grep -c × 2.
 _reconcile_counter() {
   if [ ! -f "$COOLANT_EVENTS" ]; then
     _read_counter
     return
   fi
-  local starts stops jsonl_count file_count events
-  # Scope to events after last counter.reset (if any)
-  local reset_line
-  reset_line=$(grep -n '"event":"counter.reset"' "$COOLANT_EVENTS" 2>/dev/null | tail -1 | cut -d: -f1) || true
-  if [ -n "$reset_line" ]; then
-    events=$(tail -n +"$((reset_line + 1))" "$COOLANT_EVENTS")
-  else
-    events=$(cat "$COOLANT_EVENTS")
-  fi
-  starts=$(printf '%s\n' "$events" | grep -c '"event":"agent.start"' 2>/dev/null) || starts=0
-  stops=$(printf '%s\n' "$events" | grep -c '"event":"agent.stop"' 2>/dev/null) || stops=0
-  jsonl_count=$((starts - stops))
-  if [ "$jsonl_count" -lt 0 ]; then
-    jsonl_count=0
-  fi
+  local jsonl_count file_count
+  jsonl_count=$(awk '
+    /"event":"counter\.reset"[,}]/ { starts=0; stops=0; next }
+    /"event":"agent\.start"[,}]/   { starts++; next }
+    /"event":"agent\.stop"[,}]/    { stops++; next }
+    END {
+      d = starts - stops
+      if (d < 0) d = 0
+      print d
+    }
+  ' "$COOLANT_EVENTS")
+
   file_count=$(_read_counter)
   if [ "$jsonl_count" -ne "$file_count" ]; then
     echo "$jsonl_count" > "$COOLANT_COUNTER"

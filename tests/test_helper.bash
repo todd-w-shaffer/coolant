@@ -12,6 +12,7 @@ setup() {
   export COOLANT_LOG="${TEST_TMPDIR}/coolant.log"
   export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
   export COOLANT_AGENT_STARTS="${TEST_TMPDIR}/coolant.agent-starts"
+  export COOLANT_DEGRADED_COUNT="${TEST_TMPDIR}/coolant.degraded.count"
   export COOLANT_THRESHOLD=3
   export _COOLANT_NCPU=10
 }
@@ -81,6 +82,18 @@ make_bare_remote() {
 # $1=local_ref, $2=local_sha, $3=remote_ref, $4=remote_sha
 make_push_stdin() {
   printf '%s %s %s %s\n' "$1" "$2" "$3" "$4"
+}
+
+# Emit one schema:1 event via coolant_event. Sources common.sh on first
+# call so callers (including bats subshells) don't have to remember.
+# Body should be a JSON fragment with NO leading or trailing brace, e.g.:
+#   emit_event '"event":"smoke","msg":"hello"'
+emit_event() {
+  if ! declare -F coolant_event > /dev/null; then
+    # shellcheck disable=SC1091
+    source "$PROJECT_ROOT/scripts/common.sh"
+  fi
+  coolant_event "$1"
 }
 
 teardown() {
