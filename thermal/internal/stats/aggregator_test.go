@@ -24,8 +24,12 @@ func newTestAggregator(t *testing.T) *Aggregator {
 	})
 }
 
-func mkEvent(schema int, event, agentID, sessionID string, ts time.Time) collector.GateEvent {
-	return collector.GateEvent{
+// mkEvent constructs a GateEvent fixture. The variadic opts let
+// future specs (agent-stop-telemetry) layer on extra fields like
+// cost / tokens / tool calls without churning existing call sites,
+// which pass no opts and continue to work unchanged.
+func mkEvent(schema int, event, agentID, sessionID string, ts time.Time, opts ...func(*collector.GateEvent)) collector.GateEvent {
+	ev := collector.GateEvent{
 		Schema:    schema,
 		Event:     event,
 		Timestamp: ts,
@@ -34,6 +38,10 @@ func mkEvent(schema int, event, agentID, sessionID string, ts time.Time) collect
 		AgentType: "Explore",
 		Project:   "coolant",
 	}
+	for _, opt := range opts {
+		opt(&ev)
+	}
+	return ev
 }
 
 // ── schema gate ────────────────────────────────────────────
@@ -255,7 +263,7 @@ func TestRecordPeakConcurrent(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(3*time.Second)), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStart, "a4", "s1", now.Add(4*time.Second)), 0)
 
-	rec := a.Snapshot().Records.PeakConcurrent
+	rec := a.Snapshot().Records.PeakConcurrent[0]
 	if rec.Value != 3 {
 		t.Errorf("PeakConcurrent.Value: want 3, got %d", rec.Value)
 	}
@@ -273,7 +281,7 @@ func TestRecordLongestAgent(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a2", "s1", now.Add(40*time.Second)), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(60*time.Second)), 0)
 
-	rec := a.Snapshot().Records.LongestAgentS
+	rec := a.Snapshot().Records.LongestAgentS[0]
 	if rec.Value != 60 {
 		t.Errorf("LongestAgentS.Value: want 60s, got %d", rec.Value)
 	}
@@ -292,7 +300,7 @@ func TestRecordLongestSession(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStart, "a2", "s2", now.Add(200*time.Second)), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a2", "s2", now.Add(230*time.Second)), 0)
 
-	rec := a.Snapshot().Records.LongestSessionS
+	rec := a.Snapshot().Records.LongestSessionS[0]
 	if rec.Value != 100 {
 		t.Errorf("LongestSessionS.Value: want 100s, got %d", rec.Value)
 	}
@@ -311,7 +319,7 @@ func TestRecordMostAgentsSession(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStart, "b1", "s2", now.Add(time.Hour)), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStart, "b2", "s2", now.Add(time.Hour+time.Second)), 0)
 
-	rec := a.Snapshot().Records.MostAgentsSession
+	rec := a.Snapshot().Records.MostAgentsSession[0]
 	if rec.Value != 5 {
 		t.Errorf("MostAgentsSession.Value: want 5, got %d", rec.Value)
 	}
@@ -330,7 +338,7 @@ func TestRecordBiggestBurst(t *testing.T) {
 	// 1 start much later — falls outside the 2s window, doesn't extend the burst.
 	a.Fold(mkEvent(1, collector.EventAgentStart, "z", "s1", now.Add(10*time.Second)), 0)
 
-	rec := a.Snapshot().Records.BiggestBurst
+	rec := a.Snapshot().Records.BiggestBurst[0]
 	if rec.Count != 4 {
 		t.Errorf("BiggestBurst.Count: want 4, got %d", rec.Count)
 	}
@@ -469,6 +477,138 @@ func equalStringSlice(a, b []string) bool {
 	return true
 }
 
+// ── per-day shape fields (cycle 2) ─────────────────────────
+
+func TestPeakConcurrentDayObservedOnStart(t *testing.T) {
+	a := newTestAggregator(t)
+	day := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 5; i++ {
+		a.Fold(mkEvent(1, collector.EventAgentStart, "a"+string(rune('0'+i)), "s1", day.Add(time.Duration(i)*time.Second)), 0)
+	}
+	if got := a.Snapshot().Daily["2026-04-25"].PeakConcurrentDay; got != 5 {
+		t.Errorf("PeakConcurrentDay after 5 starts: want 5, got %d", got)
+	}
+	// Two stops + one start: peak stays 5.
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a0", "s1", day.Add(10*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", day.Add(11*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a5", "s1", day.Add(12*time.Second)), 0)
+	if got := a.Snapshot().Daily["2026-04-25"].PeakConcurrentDay; got != 5 {
+		t.Errorf("PeakConcurrentDay should be max-only, got %d", got)
+	}
+}
+
+func TestDistinctProjectsDay(t *testing.T) {
+	a := newTestAggregator(t)
+	day := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	for i, project := range []string{"coolant", "thermal-enterprise", "coolant"} {
+		ev := mkEvent(1, collector.EventAgentStart, "a"+string(rune('0'+i)), "s"+string(rune('0'+i)), day.Add(time.Duration(i)*time.Second))
+		ev.Project = project
+		a.Fold(ev, 0)
+	}
+	if got := a.Snapshot().Daily["2026-04-25"].DistinctProjectsDay; got != 2 {
+		t.Errorf("DistinctProjectsDay (2 distinct in 3 starts): want 2, got %d", got)
+	}
+}
+
+func TestDistinctSessionsDay(t *testing.T) {
+	a := newTestAggregator(t)
+	day := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	for i, sid := range []string{"s1", "s1", "s2"} {
+		a.Fold(mkEvent(1, collector.EventAgentStart, "a"+string(rune('0'+i)), sid, day.Add(time.Duration(i)*time.Second)), 0)
+	}
+	if got := a.Snapshot().Daily["2026-04-25"].DistinctSessionsDay; got != 2 {
+		t.Errorf("DistinctSessionsDay (2 distinct in 3 starts): want 2, got %d", got)
+	}
+}
+
+func TestPastDayEventDoesNotCorruptCurrentDaySets(t *testing.T) {
+	a := newTestAggregator(t)
+	dayB := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	dayA := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+
+	// Establish today (dayB) with two distinct projects.
+	for i, project := range []string{"coolant", "thermal-enterprise"} {
+		ev := mkEvent(1, collector.EventAgentStart, "b"+string(rune('0'+i)), "sb"+string(rune('0'+i)), dayB.Add(time.Duration(i)*time.Second))
+		ev.Project = project
+		a.Fold(ev, 0)
+	}
+	if got := a.Snapshot().Daily["2026-04-26"].DistinctProjectsDay; got != 2 {
+		t.Fatalf("precondition: dayB DistinctProjectsDay=2, got %d", got)
+	}
+
+	// Out-of-order JSONL replay: a stale dayA event arrives. The
+	// rollover handler must not freeze-and-clear today's set when a
+	// past-day event lands; today's set is the freshest authoritative
+	// state, not yesterday's.
+	stale := mkEvent(1, collector.EventAgentStart, "a-stale", "s-stale", dayA)
+	stale.Project = "marketplace"
+	a.Fold(stale, 0)
+
+	// Add another start in dayB after the stale event — its distinct
+	// count must reflect the SAME 2 projects from before plus any
+	// it adds, not start from 1 because of an erroneous freeze.
+	ev := mkEvent(1, collector.EventAgentStart, "b3", "sb3", dayB.Add(10*time.Second))
+	ev.Project = "coolant" // same as one already counted
+	a.Fold(ev, 0)
+
+	if got := a.Snapshot().Daily["2026-04-26"].DistinctProjectsDay; got != 2 {
+		t.Errorf("dayB distinct count corrupted by past-day event: want 2, got %d", got)
+	}
+}
+
+func TestMkEventVariadicAppliesOpt(t *testing.T) {
+	// The variadic plumbing exists for telemetry's future
+	// WithCost/WithTokens/WithToolCalls opts. Pin it now so a
+	// regression that breaks the option-application loop fails
+	// before telemetry lands.
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	ev := mkEvent(1, collector.EventAgentStart, "a1", "s1", now, func(e *collector.GateEvent) {
+		e.AgentType = "Plan"
+		e.Project = "thermal-enterprise"
+	})
+	if ev.AgentType != "Plan" {
+		t.Errorf("variadic opt did not mutate AgentType: got %q", ev.AgentType)
+	}
+	if ev.Project != "thermal-enterprise" {
+		t.Errorf("variadic opt did not mutate Project: got %q", ev.Project)
+	}
+}
+
+func TestDayRolloverFreezesDistinctSets(t *testing.T) {
+	a := newTestAggregator(t)
+	dayA := time.Date(2026, 4, 25, 23, 0, 0, 0, time.UTC)
+	dayB := time.Date(2026, 4, 26, 1, 0, 0, 0, time.UTC)
+
+	for i, project := range []string{"coolant", "thermal-enterprise", "coolant"} {
+		ev := mkEvent(1, collector.EventAgentStart, "a"+string(rune('0'+i)), "s"+string(rune('0'+i)), dayA.Add(time.Duration(i)*time.Second))
+		ev.Project = project
+		a.Fold(ev, 0)
+	}
+	// Cross day boundary.
+	evB := mkEvent(1, collector.EventAgentStart, "b1", "sb", dayB)
+	evB.Project = "marketplace"
+	a.Fold(evB, 0)
+
+	snap := a.Snapshot()
+	// Day A frozen at 2 distinct projects.
+	if got := snap.Daily["2026-04-25"].DistinctProjectsDay; got != 2 {
+		t.Errorf("frozen day-A DistinctProjectsDay: want 2, got %d", got)
+	}
+	// Day B starts at 1.
+	if got := snap.Daily["2026-04-26"].DistinctProjectsDay; got != 1 {
+		t.Errorf("new day-B DistinctProjectsDay: want 1, got %d", got)
+	}
+	// In-memory map for day A cleared.
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if _, ok := a.dailyDistinctProjects["2026-04-25"]; ok {
+		t.Errorf("day-A distinct projects map should be cleared after rollover")
+	}
+	if _, ok := a.dailyDistinctSessions["2026-04-25"]; ok {
+		t.Errorf("day-A distinct sessions map should be cleared after rollover")
+	}
+}
+
 // ── lifecycle (session.start / session.end) ────────────────
 
 func TestSessionEndUsesLifecycleMath(t *testing.T) {
@@ -481,7 +621,7 @@ func TestSessionEndUsesLifecycleMath(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(50*time.Second)), 0)
 	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(120*time.Second)), 0)
 
-	rec := a.Snapshot().Records.LongestSessionS
+	rec := a.Snapshot().Records.LongestSessionS[0]
 	if rec.Value != 120 {
 		t.Errorf("LongestSessionS via lifecycle math: want 120, got %d", rec.Value)
 	}
@@ -499,7 +639,7 @@ func TestSessionEndFallbackToInferred(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(40*time.Second)), 0)
 	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(75*time.Second)), 0)
 
-	rec := a.Snapshot().Records.LongestSessionS
+	rec := a.Snapshot().Records.LongestSessionS[0]
 	if rec.Value != 75 {
 		t.Errorf("inferred-fallback LongestSessionS: want 75, got %d", rec.Value)
 	}
@@ -551,7 +691,7 @@ func TestSessionStartIdempotent(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now.Add(30*time.Second)), 0)
 	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(100*time.Second)), 0)
 
-	rec := a.Snapshot().Records.LongestSessionS
+	rec := a.Snapshot().Records.LongestSessionS[0]
 	if rec.Value != 100 {
 		t.Errorf("idempotent session.start: want 100s (from earliest), got %d", rec.Value)
 	}
@@ -566,7 +706,7 @@ func TestNegativeDurationClampsAgentStop(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(-30*time.Second)), 0)
 	// No record set; no panic. LongestAgentS stays at zero value.
-	if got := a.Snapshot().Records.LongestAgentS.Value; got != 0 {
+	if got := a.Snapshot().Records.LongestAgentS.Top().Value; got != 0 {
 		t.Errorf("negative agent duration leaked into record: got %d", got)
 	}
 }
@@ -577,7 +717,7 @@ func TestNegativeDurationClampsSessionEnd(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now), 0)
 	// session.end before session.start (NTP backstep).
 	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(-1*time.Hour)), 0)
-	if got := a.Snapshot().Records.LongestSessionS.Value; got != 0 {
+	if got := a.Snapshot().Records.LongestSessionS.Top().Value; got != 0 {
 		t.Errorf("negative session duration leaked: got %d", got)
 	}
 }
@@ -594,7 +734,7 @@ func TestStaleSessionAutoClosesAtCutoff(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventSessionStart, "", "stale", start), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "stale", activity), 0)
 
-	rec := a.Snapshot().Records.LongestSessionS
+	rec := a.Snapshot().Records.LongestSessionS[0]
 	want := int64(10 * 60)
 	if rec.Value != want {
 		t.Errorf("stale-session sweep: want %d, got %d", want, rec.Value)
@@ -611,7 +751,7 @@ func TestStaleSessionRespectsCutoffBoundary(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventSessionStart, "", "fresh", start), 0)
 	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "fresh", start.Add(time.Minute)), 0)
 
-	if got := a.Snapshot().Records.LongestSessionS.Value; got != 0 {
+	if got := a.Snapshot().Records.LongestSessionS.Top().Value; got != 0 {
 		t.Errorf("under-cutoff session was swept: got %d", got)
 	}
 }
@@ -624,7 +764,7 @@ func TestStaleSessionLateEndStillCloses(t *testing.T) {
 	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "late", activity), 0)
 
 	// Snapshot before session.end — sweep records 10min.
-	first := a.Snapshot().Records.LongestSessionS.Value
+	first := a.Snapshot().Records.LongestSessionS.Top().Value
 	if first != 600 {
 		t.Fatalf("staleness sweep precondition: want 600, got %d", first)
 	}
@@ -634,7 +774,7 @@ func TestStaleSessionLateEndStillCloses(t *testing.T) {
 	end := start.Add(10 * time.Hour)
 	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "late", end), 0)
 
-	rec := a.Snapshot().Records.LongestSessionS
+	rec := a.Snapshot().Records.LongestSessionS[0]
 	if rec.Value != int64(10*3600) {
 		t.Errorf("late session.end: want %d, got %d", 10*3600, rec.Value)
 	}
@@ -651,6 +791,97 @@ func TestCounterUnderflowIsFoldNoOp(t *testing.T) {
 	a.Fold(evt, 0)
 	if life := a.Snapshot().Lifetime(); life != (Counters{}) {
 		t.Errorf("counter.underflow mutated counters: %+v", life)
+	}
+}
+
+// ── Records.Top + BestDay helpers (cycle 3) ────────────────
+
+func TestRecordListTopOnEmpty(t *testing.T) {
+	var rl RecordList
+	if got := rl.Top(); got != (RecordEntry{}) {
+		t.Errorf("Top on empty list: want zero RecordEntry, got %+v", got)
+	}
+}
+
+func TestRecordListTopReturnsHighest(t *testing.T) {
+	var rl RecordList
+	at := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	rl = rl.Insert(RecordEntry{Value: 5, AgentID: "a1", At: at})
+	rl = rl.Insert(RecordEntry{Value: 9, AgentID: "a2", At: at})
+	rl = rl.Insert(RecordEntry{Value: 3, AgentID: "a3", At: at})
+	if got := rl.Top().Value; got != 9 {
+		t.Errorf("Top: want 9, got %d", got)
+	}
+}
+
+func TestBestDayMethodsReturnEmptyOnNoData(t *testing.T) {
+	a := newTestAggregator(t)
+	snap := a.Snapshot()
+	if d, v := snap.BestDayPeakConcurrent(); d != "" || v != 0 {
+		t.Errorf("empty BestDayPeakConcurrent: want (\"\",0), got (%q,%d)", d, v)
+	}
+	if d, v := snap.BestDayDistinctProjects(); d != "" || v != 0 {
+		t.Errorf("empty BestDayDistinctProjects: want (\"\",0), got (%q,%d)", d, v)
+	}
+	if d, v := snap.BestDayDistinctSessions(); d != "" || v != 0 {
+		t.Errorf("empty BestDayDistinctSessions: want (\"\",0), got (%q,%d)", d, v)
+	}
+}
+
+func TestBestDayPeakConcurrent(t *testing.T) {
+	s := Snapshot{
+		Daily: map[string]Counters{
+			"2026-04-23": {PeakConcurrentDay: 3},
+			"2026-04-24": {PeakConcurrentDay: 7}, // best
+			"2026-04-25": {PeakConcurrentDay: 5},
+		},
+	}
+	d, v := s.BestDayPeakConcurrent()
+	if d != "2026-04-24" || v != 7 {
+		t.Errorf("BestDayPeakConcurrent: want (\"2026-04-24\",7), got (%q,%d)", d, v)
+	}
+}
+
+func TestBestDayDistinctProjects(t *testing.T) {
+	s := Snapshot{
+		Daily: map[string]Counters{
+			"2026-04-25": {DistinctProjectsDay: 4}, // best
+			"2026-04-24": {DistinctProjectsDay: 2},
+		},
+	}
+	d, v := s.BestDayDistinctProjects()
+	if d != "2026-04-25" || v != 4 {
+		t.Errorf("BestDayDistinctProjects: want (\"2026-04-25\",4), got (%q,%d)", d, v)
+	}
+}
+
+// ── leaderboard merge across checkpoints ────────────────────
+
+func TestMaxMergeLeaderboard(t *testing.T) {
+	at := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	disk := Records{
+		PeakConcurrent: RecordList{
+			{Value: 10, AgentID: "a1", SessionID: "s1", At: at},
+			{Value: 8, AgentID: "a2", SessionID: "s2", At: at},
+			{Value: 6, AgentID: "a3", SessionID: "s3", At: at},
+		},
+	}
+	cand := Records{
+		PeakConcurrent: RecordList{
+			// Same composite key as disk's a2 but higher value — wins.
+			{Value: 12, AgentID: "a2", SessionID: "s2", At: at.Add(time.Hour)},
+			{Value: 7, AgentID: "a4", SessionID: "s4", At: at},
+		},
+	}
+	merged := maxMergeRecords(disk, cand).PeakConcurrent
+	want := []int64{12, 10, 7, 6}
+	if len(merged) != len(want) {
+		t.Fatalf("merged length: want %d, got %d (%+v)", len(want), len(merged), merged)
+	}
+	for i, v := range want {
+		if merged[i].Value != v {
+			t.Errorf("merged[%d].Value: want %d, got %d", i, v, merged[i].Value)
+		}
 	}
 }
 

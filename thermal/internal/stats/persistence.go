@@ -2,33 +2,48 @@ package stats
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 )
 
-// loadCache returns (Snapshot, true) on success, (zero, false) on any
-// failure. Schema-mismatch falls through to a permissive partial parse
-// that preserves primary fields (records, daily, first_seen, by_type,
-// by_project) so historical high-scores survive a future schema bump.
-func loadCache(path string) (Snapshot, bool) {
+// loadResult bundles the loaded snapshot with internal signals New()
+// needs but that don't belong on the public Snapshot type.
+type loadResult struct {
+	Snap               Snapshot
+	OnDiskSchema       int  // raw schema_version as written, before any rewrite
+	RecordsParseFailed bool // permissive path saw a records block but couldn't parse it
+}
+
+// loadCache returns (loadResult, true) on success, (zero, false) on
+// any failure. Schema-mismatch falls through to a permissive partial
+// parse that preserves primary fields (records, daily, first_seen,
+// by_type, by_project) so historical high-scores survive a future
+// schema bump.
+func loadCache(path string) (loadResult, bool) {
 	if path == "" {
-		return Snapshot{}, false
+		return loadResult{}, false
 	}
 	buf, err := os.ReadFile(path)
 	if err != nil {
-		return Snapshot{}, false
+		return loadResult{}, false
 	}
+
+	var probe struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	_ = json.Unmarshal(buf, &probe)
 
 	var snap Snapshot
 	if err := json.Unmarshal(buf, &snap); err == nil && snap.SchemaVersion == CurrentSchemaVersion {
-		return snap, true
+		return loadResult{Snap: snap, OnDiskSchema: probe.SchemaVersion}, true
 	}
 
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(buf, &raw); err != nil {
-		return Snapshot{}, false
+		return loadResult{}, false
 	}
 	out := Snapshot{SchemaVersion: CurrentSchemaVersion}
 	if v, ok := raw["first_seen"]; ok {
@@ -43,10 +58,19 @@ func loadCache(path string) (Snapshot, bool) {
 	if v, ok := raw["daily"]; ok {
 		_ = json.Unmarshal(v, &out.Daily)
 	}
+	res := loadResult{Snap: out, OnDiskSchema: probe.SchemaVersion}
 	if v, ok := raw["records"]; ok {
-		_ = json.Unmarshal(v, &out.Records)
+		// Records are a primary field; an unmarshal error would silently
+		// zero a user's leaderboards. Surface the failure via the
+		// degraded counter so it's observable instead of silent.
+		if err := json.Unmarshal(v, &res.Snap.Records); err != nil {
+			res.RecordsParseFailed = true
+		}
 	}
-	return out, true
+	if v, ok := raw["today_distinct"]; ok {
+		_ = json.Unmarshal(v, &res.Snap.TodayDistinct)
+	}
+	return res, true
 }
 
 // processLock serializes Checkpoint within a process. Cross-process
@@ -69,11 +93,30 @@ func (a *Aggregator) Checkpoint() error {
 	delta := computeDelta(a.byType, a.byProject, a.daily, a.baseline)
 	candidateRecords := a.records
 	firstSeen := a.firstSeen
+	candidateDaily := copyDaily(a.daily)
+	candidateToday := TodayDistinctSets{}
+	if a.currentDayKey != "" {
+		candidateToday.Date = a.currentDayKey
+		candidateToday.Projects = setKeys(a.dailyDistinctProjects[a.currentDayKey])
+		candidateToday.Sessions = setKeys(a.dailyDistinctSessions[a.currentDayKey])
+	}
 	a.mu.RUnlock()
 
 	// Re-read disk under processLock so a concurrent writer's contribution
 	// gets folded into our merge instead of being clobbered.
-	fresh, _ := loadCache(a.cfg.CachePath)
+	loaded, _ := loadCache(a.cfg.CachePath)
+	// Schema-downgrade refusal: in a rolling deploy, an old binary
+	// might race against a new binary's checkpoint. Aborting the
+	// write keeps the newer schema's records intact on disk; the
+	// older process degrades quietly via the degraded counter and
+	// a stderr log line, instead of clobbering.
+	if loaded.OnDiskSchema > CurrentSchemaVersion {
+		bumpDegraded(a.cfg.DegradedPath)
+		log.Printf("stats: refusing checkpoint — on-disk schema v%d newer than this build's v%d (rolling deploy?)",
+			loaded.OnDiskSchema, CurrentSchemaVersion)
+		return nil
+	}
+	fresh := loaded.Snap
 	if fresh.ByType == nil {
 		fresh.ByType = map[string]int64{}
 	}
@@ -93,7 +136,39 @@ func (a *Aggregator) Checkpoint() error {
 	for k, v := range delta.Daily {
 		fresh.Daily[k] = fresh.Daily[k].Add(v)
 	}
+	// Per-day shape fields (PeakConcurrentDay, DistinctProjectsDay,
+	// DistinctSessionsDay) are NOT additive — Counters.Add sums them
+	// for uniformity, but the semantically-correct merge is max-per-bucket
+	// against the candidate's in-memory value. Apply that override now.
+	for day, cand := range candidateDaily {
+		merged := fresh.Daily[day]
+		if cand.PeakConcurrentDay > merged.PeakConcurrentDay {
+			merged.PeakConcurrentDay = cand.PeakConcurrentDay
+		}
+		if cand.DistinctProjectsDay > merged.DistinctProjectsDay {
+			merged.DistinctProjectsDay = cand.DistinctProjectsDay
+		}
+		if cand.DistinctSessionsDay > merged.DistinctSessionsDay {
+			merged.DistinctSessionsDay = cand.DistinctSessionsDay
+		}
+		fresh.Daily[day] = merged
+	}
 	fresh.Records = maxMergeRecords(fresh.Records, candidateRecords)
+	// Today distinct sets: union memory + disk so a concurrent
+	// checkpointer's contributions aren't lost. Recompute the bucket
+	// count from len(union) so the fields stay consistent with the
+	// persisted set.
+	fresh.TodayDistinct = mergeTodayDistinct(fresh.TodayDistinct, candidateToday)
+	if fresh.TodayDistinct.Date != "" {
+		bucket := fresh.Daily[fresh.TodayDistinct.Date]
+		if n := int64(len(fresh.TodayDistinct.Projects)); n > bucket.DistinctProjectsDay {
+			bucket.DistinctProjectsDay = n
+		}
+		if n := int64(len(fresh.TodayDistinct.Sessions)); n > bucket.DistinctSessionsDay {
+			bucket.DistinctSessionsDay = n
+		}
+		fresh.Daily[fresh.TodayDistinct.Date] = bucket
+	}
 	fresh.SchemaVersion = CurrentSchemaVersion
 	fresh.LastUpdated = time.Now().UTC()
 	fresh.FirstSeen = earliestNonZero(fresh.FirstSeen, firstSeen)
@@ -142,36 +217,71 @@ func computeDelta(byType, byProject map[string]int64, daily map[string]Counters,
 	return d
 }
 
-// maxMergeRecords keeps the higher of two record entries per slot.
-// Equal-value tie: candidate (newer At) wins per spec §0.
+// maxMergeRecords leaderboard-merges every Records field. Each slot
+// is a RecordList (or BurstRecordList) — Merge unions, dedupes by
+// composite key keeping higher value, sorts desc, and truncates to
+// recordListCap (preserving boundary ties).
 func maxMergeRecords(disk, cand Records) Records {
-	out := disk
-	out.PeakConcurrent = pickRecord(disk.PeakConcurrent, cand.PeakConcurrent)
-	out.LongestAgentS = pickRecord(disk.LongestAgentS, cand.LongestAgentS)
-	out.LongestSessionS = pickRecord(disk.LongestSessionS, cand.LongestSessionS)
-	out.MostAgentsSession = pickRecord(disk.MostAgentsSession, cand.MostAgentsSession)
-	out.BiggestBurst = pickBurst(disk.BiggestBurst, cand.BiggestBurst)
-	return out
+	return Records{
+		PeakConcurrent:    disk.PeakConcurrent.Merge(cand.PeakConcurrent),
+		LongestAgentS:     disk.LongestAgentS.Merge(cand.LongestAgentS),
+		LongestSessionS:   disk.LongestSessionS.Merge(cand.LongestSessionS),
+		MostAgentsSession: disk.MostAgentsSession.Merge(cand.MostAgentsSession),
+		BiggestBurst:      disk.BiggestBurst.Merge(cand.BiggestBurst),
+	}
 }
 
-func pickRecord(a, b RecordEntry) RecordEntry {
-	if b.Value > a.Value {
-		return b
+// mergeTodayDistinct unions two TodayDistinctSets. Different dates:
+// newer wins (older sets are stale). dayKey() format "2006-01-02" is
+// fixed-width zero-padded, so lexicographic > equals chronological.
+// Same dates: deduped string-set union of Projects and Sessions.
+func mergeTodayDistinct(disk, cand TodayDistinctSets) TodayDistinctSets {
+	if disk.Date == "" {
+		return cand
 	}
-	if b.Value == a.Value && b.At.After(a.At) {
-		return b
+	if cand.Date == "" {
+		return disk
 	}
-	return a
+	if disk.Date != cand.Date {
+		if cand.Date > disk.Date {
+			return cand
+		}
+		return disk
+	}
+	return TodayDistinctSets{
+		Date:     disk.Date,
+		Projects: unionStrings(disk.Projects, cand.Projects),
+		Sessions: unionStrings(disk.Sessions, cand.Sessions),
+	}
 }
 
-func pickBurst(a, b BurstRecord) BurstRecord {
-	if b.Count > a.Count {
-		return b
+// unionStrings returns a deduped union of two string slices. Result
+// order is map-iteration order (unstable); callers don't depend on it.
+func unionStrings(a, b []string) []string {
+	merged := make(map[string]struct{}, len(a)+len(b))
+	for _, x := range a {
+		merged[x] = struct{}{}
 	}
-	if b.Count == a.Count && b.At.After(a.At) {
-		return b
+	for _, x := range b {
+		merged[x] = struct{}{}
 	}
-	return a
+	return setKeys(merged)
+}
+
+// bumpDegraded appends one byte to the degraded counter file. Mirrors
+// the bash side's degraded-write signal so a refused checkpoint is
+// observable via the same `wc -l` consumer that surfaces other
+// degraded-path bumps.
+func bumpDegraded(path string) {
+	if path == "" {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return
+	}
+	_, _ = f.Write([]byte{'\n'})
+	_ = f.Close()
 }
 
 func earliestNonZero(a, b time.Time) time.Time {

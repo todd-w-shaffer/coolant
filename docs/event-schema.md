@@ -38,6 +38,13 @@ the Go aggregator's schema gate (`internal/stats`) filters them at
 parse time so versioned and unversioned events coexist without
 truncation.
 
+The JSONL **envelope schema** (this doc, currently `1`) is independent
+of the **on-disk cache schema** in `~/.coolant/stats.json`
+(`stats.CurrentSchemaVersion`, currently `2`). The cache schema bumps
+when the aggregator's persisted shape changes (e.g. top-1 records →
+top-5 leaderboards); the envelope schema stays at `1` as long as
+hook-emitted events keep the same shape.
+
 ### Write serialization
 
 Bash hooks emit through `coolant_event()` in `scripts/common.sh`,

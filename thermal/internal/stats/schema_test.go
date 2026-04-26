@@ -10,17 +10,17 @@ import (
 func TestSnapshotRoundtrip(t *testing.T) {
 	at := time.Date(2026, 4, 25, 10, 15, 43, 0, time.UTC)
 	want := Snapshot{
-		SchemaVersion: 1,
+		SchemaVersion: CurrentSchemaVersion,
 		FirstSeen:     at,
 		LastUpdated:   at,
 		ByType:        map[string]int64{"general-purpose": 198, "Explore": 31},
 		ByProject:     map[string]int64{"coolant": 187, "thermal-enterprise": 43},
 		Records: Records{
-			PeakConcurrent:    RecordEntry{Value: 7, SessionID: "s1", At: at},
-			LongestAgentS:     RecordEntry{Value: 312, AgentID: "a1", AgentType: "Explore", Project: "coolant", At: at},
-			LongestSessionS:   RecordEntry{Value: 8943, SessionID: "s2", At: at},
-			MostAgentsSession: RecordEntry{Value: 32, SessionID: "s3", At: at},
-			BiggestBurst:      BurstRecord{Count: 6, WindowS: 2, SessionID: "s4", At: at},
+			PeakConcurrent:    RecordList{{Value: 7, SessionID: "s1", At: at}},
+			LongestAgentS:     RecordList{{Value: 312, AgentID: "a1", AgentType: "Explore", Project: "coolant", At: at}},
+			LongestSessionS:   RecordList{{Value: 8943, SessionID: "s2", At: at}},
+			MostAgentsSession: RecordList{{Value: 32, SessionID: "s3", At: at}},
+			BiggestBurst:      BurstRecordList{{Count: 6, WindowS: 2, SessionID: "s4", At: at}},
 		},
 		Daily: map[string]Counters{
 			"2026-04-25": {AgentsStarted: 12, AgentsCompleted: 12, Sessions: 2, TranscriptBytesTotal: 12345, GateCapEvents: 3},

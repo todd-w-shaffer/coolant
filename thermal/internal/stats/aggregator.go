@@ -57,6 +57,15 @@ type Aggregator struct {
 	sessionEnded           map[string]bool
 	lastActivityForSession map[string]time.Time
 
+	// Per-day distinct sets. Outer key is dayKey(ts); inner is the
+	// value set (project name or session_id). Counts are derived via
+	// `len(set)` and stamped onto the day's Counters bucket on every
+	// fold. Day rollover freezes the previous day's count and clears
+	// the previous day's inner map.
+	dailyDistinctProjects map[string]map[string]struct{}
+	dailyDistinctSessions map[string]map[string]struct{}
+	currentDayKey         string
+
 	// baseline = on-disk state at last load/checkpoint; delta = (current -
 	// baseline) merged into fresh disk read at Checkpoint time so two
 	// thermos can't clobber each other's increments.
@@ -101,19 +110,47 @@ func New(cfg Config) *Aggregator {
 		sessionStart:           map[string]time.Time{},
 		sessionEnded:           map[string]bool{},
 		lastActivityForSession: map[string]time.Time{},
-		records:                Records{BiggestBurst: BurstRecord{WindowS: burstWindowS}},
+		dailyDistinctProjects:  map[string]map[string]struct{}{},
+		dailyDistinctSessions:  map[string]map[string]struct{}{},
 	}
 	if loaded, ok := loadCache(cfg.CachePath); ok {
-		a.byType = copyInt64Map(loaded.ByType)
-		a.byProject = copyInt64Map(loaded.ByProject)
-		a.daily = copyDaily(loaded.Daily)
-		a.records = loaded.Records
-		a.firstSeen = loaded.FirstSeen
-		// Default BiggestBurst.WindowS if cache predates the field.
-		if a.records.BiggestBurst.WindowS == 0 {
-			a.records.BiggestBurst.WindowS = burstWindowS
+		if loaded.RecordsParseFailed {
+			// Cache-level corruption: the records field was present but
+			// unparseable. Bump the degraded counter so the failure
+			// surfaces alongside the bash-side ones in `wc -l` /
+			// DegradedWritesTotal — opposite of the original silent
+			// `_ = json.Unmarshal(...)` path.
+			bumpDegraded(cfg.DegradedPath)
 		}
-		a.baseline = loaded
+		snap := loaded.Snap
+		a.byType = copyInt64Map(snap.ByType)
+		a.byProject = copyInt64Map(snap.ByProject)
+		a.daily = copyDaily(snap.Daily)
+		a.records = snap.Records
+		a.firstSeen = snap.FirstSeen
+		// Restore today's distinct sets only when the persisted date
+		// matches today's UTC day. Stale today blocks (cache from
+		// yesterday loaded today) are discarded — yesterday's count
+		// already lives in its bucket.
+		todayKey := dayKey(time.Now())
+		if snap.TodayDistinct.Date == todayKey {
+			a.currentDayKey = todayKey
+			if len(snap.TodayDistinct.Projects) > 0 {
+				set := make(map[string]struct{}, len(snap.TodayDistinct.Projects))
+				for _, p := range snap.TodayDistinct.Projects {
+					set[p] = struct{}{}
+				}
+				a.dailyDistinctProjects[todayKey] = set
+			}
+			if len(snap.TodayDistinct.Sessions) > 0 {
+				set := make(map[string]struct{}, len(snap.TodayDistinct.Sessions))
+				for _, s := range snap.TodayDistinct.Sessions {
+					set[s] = struct{}{}
+				}
+				a.dailyDistinctSessions[todayKey] = set
+			}
+		}
+		a.baseline = snap
 	}
 	return a
 }
@@ -136,6 +173,41 @@ const staleAgentCutoff = 24 * time.Hour
 // Computed at Snapshot read time, not at Fold, so a late session.end
 // for the same sid still closes cleanly.
 const sessionStartCutoff = 8 * time.Hour
+
+// handleDayRollover freezes the previous day's distinct-set sizes
+// into its bucket counters and clears the previous day's in-memory
+// sets so they don't accumulate. Caller must hold a.mu.Lock().
+// First-fold (no previous currentDayKey) just adopts the new day.
+// Same-day folds are a no-op.
+//
+// Out-of-order JSONL replay: a stale event from a PAST day must NOT
+// roll currentDayKey backwards or freeze today's freshest sets.
+// Treat the past-day event as bucket-only — its count contribution
+// already lands via the EventAgentStart bucket update, but the
+// distinct-set semantics belong to currentDayKey alone. dayKey
+// format is fixed-width zero-padded so lex compare equals
+// chronological.
+func (a *Aggregator) handleDayRollover(day string) {
+	if a.currentDayKey == day {
+		return
+	}
+	if a.currentDayKey != "" && day < a.currentDayKey {
+		return
+	}
+	if a.currentDayKey != "" {
+		prev := a.daily[a.currentDayKey]
+		if set, ok := a.dailyDistinctProjects[a.currentDayKey]; ok {
+			prev.DistinctProjectsDay = int64(len(set))
+		}
+		if set, ok := a.dailyDistinctSessions[a.currentDayKey]; ok {
+			prev.DistinctSessionsDay = int64(len(set))
+		}
+		a.daily[a.currentDayKey] = prev
+		delete(a.dailyDistinctProjects, a.currentDayKey)
+		delete(a.dailyDistinctSessions, a.currentDayKey)
+	}
+	a.currentDayKey = day
+}
 
 // clampDuration computes (end - start) in seconds, clamping a negative
 // result to zero. NTP backstep across JSONL serialization can push a
@@ -221,12 +293,25 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 
 	switch evt.Event {
 	case collector.EventAgentStart:
+		// Day-rollover: when this start lands on a new day, freeze the
+		// previous day's distinct counts (final size already on the
+		// bucket; this is belt-and-suspenders) and clear the previous
+		// day's in-memory sets so they don't grow unbounded.
+		a.handleDayRollover(day)
+
 		bucket.AgentsStarted++
 		if evt.AgentType != "" {
 			a.byType[evt.AgentType]++
 		}
 		if evt.Project != "" {
 			a.byProject[evt.Project]++
+			projects := a.dailyDistinctProjects[day]
+			if projects == nil {
+				projects = map[string]struct{}{}
+				a.dailyDistinctProjects[day] = projects
+			}
+			projects[evt.Project] = struct{}{}
+			bucket.DistinctProjectsDay = int64(len(projects))
 		}
 		if evt.AgentID != "" {
 			a.agentStarts[evt.AgentID] = evt.Timestamp
@@ -243,21 +328,28 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 				a.sessionFirstStart[evt.SessionID] = evt.Timestamp
 			}
 			a.sessionAgentCount[evt.SessionID]++
-			if c := a.sessionAgentCount[evt.SessionID]; c > a.records.MostAgentsSession.Value {
-				a.records.MostAgentsSession = RecordEntry{
-					Value:     c,
-					SessionID: evt.SessionID,
-					At:        evt.Timestamp,
-				}
-			}
-		}
-		if int64(len(a.agentStarts)) > a.records.PeakConcurrent.Value {
-			a.records.PeakConcurrent = RecordEntry{
-				Value:     int64(len(a.agentStarts)),
+			c := a.sessionAgentCount[evt.SessionID]
+			a.records.MostAgentsSession = a.records.MostAgentsSession.Insert(RecordEntry{
+				Value:     c,
 				SessionID: evt.SessionID,
 				At:        evt.Timestamp,
+			})
+			sessions := a.dailyDistinctSessions[day]
+			if sessions == nil {
+				sessions = map[string]struct{}{}
+				a.dailyDistinctSessions[day] = sessions
 			}
+			sessions[evt.SessionID] = struct{}{}
+			bucket.DistinctSessionsDay = int64(len(sessions))
 		}
+		if n := int64(len(a.agentStarts)); n > bucket.PeakConcurrentDay {
+			bucket.PeakConcurrentDay = n
+		}
+		a.records.PeakConcurrent = a.records.PeakConcurrent.Insert(RecordEntry{
+			Value:     int64(len(a.agentStarts)),
+			SessionID: evt.SessionID,
+			At:        evt.Timestamp,
+		})
 		a.observeBurst(evt.Timestamp, evt.SessionID)
 
 	case collector.EventAgentStop:
@@ -287,16 +379,14 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 			if ok {
 				duration := clampDuration(evt.Timestamp, start)
 				meta := a.agentMeta[evt.AgentID]
-				if duration > a.records.LongestAgentS.Value {
-					a.records.LongestAgentS = RecordEntry{
-						Value:     duration,
-						AgentID:   evt.AgentID,
-						AgentType: meta.AgentType,
-						Project:   meta.Project,
-						SessionID: meta.SessionID,
-						At:        evt.Timestamp,
-					}
-				}
+				a.records.LongestAgentS = a.records.LongestAgentS.Insert(RecordEntry{
+					Value:     duration,
+					AgentID:   evt.AgentID,
+					AgentType: meta.AgentType,
+					Project:   meta.Project,
+					SessionID: meta.SessionID,
+					At:        evt.Timestamp,
+				})
 				delete(a.agentStarts, evt.AgentID)
 				delete(a.agentMeta, evt.AgentID)
 			}
@@ -307,13 +397,11 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 		if evt.SessionID != "" && !a.sessionEnded[evt.SessionID] {
 			if first, ok := a.sessionFirstStart[evt.SessionID]; ok {
 				duration := clampDuration(evt.Timestamp, first)
-				if duration > a.records.LongestSessionS.Value {
-					a.records.LongestSessionS = RecordEntry{
-						Value:     duration,
-						SessionID: evt.SessionID,
-						At:        evt.Timestamp,
-					}
-				}
+				a.records.LongestSessionS = a.records.LongestSessionS.Insert(RecordEntry{
+					Value:     duration,
+					SessionID: evt.SessionID,
+					At:        evt.Timestamp,
+				})
 			}
 		}
 
@@ -349,13 +437,11 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 		} else if first, ok := a.sessionFirstStart[evt.SessionID]; ok {
 			duration = clampDuration(evt.Timestamp, first)
 		}
-		if duration > a.records.LongestSessionS.Value {
-			a.records.LongestSessionS = RecordEntry{
-				Value:     duration,
-				SessionID: evt.SessionID,
-				At:        evt.Timestamp,
-			}
-		}
+		a.records.LongestSessionS = a.records.LongestSessionS.Insert(RecordEntry{
+			Value:     duration,
+			SessionID: evt.SessionID,
+			At:        evt.Timestamp,
+		})
 		// Synthesize orphan accounting for any agents still active in
 		// this session — the JSONL bus stays single-writer; we don't
 		// fabricate agent.stop lines, we just count them as orphaned
@@ -414,13 +500,11 @@ func (a *Aggregator) Snapshot() Snapshot {
 			end = start
 		}
 		duration := clampDuration(end, start)
-		if duration > records.LongestSessionS.Value {
-			records.LongestSessionS = RecordEntry{
-				Value:     duration,
-				SessionID: sid,
-				At:        end,
-			}
-		}
+		records.LongestSessionS = records.LongestSessionS.Insert(RecordEntry{
+			Value:     duration,
+			SessionID: sid,
+			At:        end,
+		})
 	}
 
 	s := Snapshot{
@@ -431,6 +515,17 @@ func (a *Aggregator) Snapshot() Snapshot {
 		ByType:        copyInt64Map(a.byType),
 		ByProject:     copyInt64Map(a.byProject),
 		Daily:         copyDaily(a.daily),
+	}
+	// Persist today's distinct sets so a thermo restart mid-day
+	// doesn't send DistinctProjectsDay backwards. Older days are not
+	// persisted — their integer count was frozen into the bucket at
+	// the rollover moment.
+	if a.currentDayKey != "" {
+		s.TodayDistinct = TodayDistinctSets{
+			Date:     a.currentDayKey,
+			Projects: setKeys(a.dailyDistinctProjects[a.currentDayKey]),
+			Sessions: setKeys(a.dailyDistinctSessions[a.currentDayKey]),
+		}
 	}
 
 	// Surface the bash degraded-write counter as a lifetime-only field.
@@ -460,21 +555,23 @@ func (a *Aggregator) observeBurst(ts time.Time, sessionID string) {
 	a.burstWindow = keep
 
 	count := int64(len(a.burstWindow))
-	if count > a.records.BiggestBurst.Count {
-		a.records.BiggestBurst = BurstRecord{
-			Count:     count,
-			WindowS:   burstWindowS,
-			SessionID: sessionID,
-			// At anchors on the FIRST start so a burst spanning midnight
-			// gets day-attributed to its start day.
-			At: a.burstWindow[0],
-		}
-	}
+	a.records.BiggestBurst = a.records.BiggestBurst.Insert(BurstRecord{
+		Count:     count,
+		WindowS:   burstWindowS,
+		SessionID: sessionID,
+		// At anchors on the FIRST start so a burst spanning midnight
+		// gets day-attributed to its start day.
+		At: a.burstWindow[0],
+	})
 }
 
 // Window returns counters summed across the last N days, anchored on
 // today's UTC date. Missing days count as zero. N=7/30/60/90 are the
 // canonical scoreboard windows; "alltime" callers use Snapshot.Lifetime.
+//
+// Note: PeakConcurrentDay, DistinctProjectsDay, and DistinctSessionsDay
+// are NOT semantically additive — they sum here for uniformity but
+// the result is meaningless. Use BestDay* helpers for max-across-days.
 func (a *Aggregator) Window(days int) Counters {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -530,6 +627,17 @@ func readDegraded(path string) int64 {
 		return 0
 	}
 	return int64(bytes.Count(data, []byte{'\n'}))
+}
+
+func setKeys(set map[string]struct{}) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out
 }
 
 func copyInt64Map(m map[string]int64) map[string]int64 {

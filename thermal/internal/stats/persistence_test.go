@@ -49,8 +49,8 @@ func TestCheckpointRoundtrip(t *testing.T) {
 	if !reflect.DeepEqual(got.Daily, want.Daily) {
 		t.Errorf("Daily mismatch:\nwant: %v\ngot:  %v", want.Daily, got.Daily)
 	}
-	if got.Records.PeakConcurrent.Value != want.Records.PeakConcurrent.Value {
-		t.Errorf("PeakConcurrent: want %d, got %d", want.Records.PeakConcurrent.Value, got.Records.PeakConcurrent.Value)
+	if got.Records.PeakConcurrent.Top().Value != want.Records.PeakConcurrent.Top().Value {
+		t.Errorf("PeakConcurrent: want %d, got %d", want.Records.PeakConcurrent.Top().Value, got.Records.PeakConcurrent.Top().Value)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestSchemaMismatchPermissivePartialParse(t *testing.T) {
 			"2026-04-25": {AgentsStarted: 5, AgentsCompleted: 5},
 		},
 		"records": Records{
-			PeakConcurrent: RecordEntry{Value: 9, SessionID: "s1", At: at},
+			PeakConcurrent: RecordList{{Value: 9, SessionID: "s1", At: at}},
 		},
 		// And some bogus future fields that should be discarded.
 		"future_field":     "zorp",
@@ -133,8 +133,8 @@ func TestSchemaMismatchPermissivePartialParse(t *testing.T) {
 	if snap.Daily["2026-04-25"].AgentsStarted != 5 {
 		t.Errorf("Daily preserved: want 5 starts, got %d", snap.Daily["2026-04-25"].AgentsStarted)
 	}
-	if snap.Records.PeakConcurrent.Value != 9 {
-		t.Errorf("Records preserved: want 9, got %d", snap.Records.PeakConcurrent.Value)
+	if got := snap.Records.PeakConcurrent.Top().Value; got != 9 {
+		t.Errorf("Records preserved: want 9, got %d", got)
 	}
 }
 
@@ -252,6 +252,205 @@ func TestCheckpointPrunesStaleAgents(t *testing.T) {
 	}
 }
 
+// ── today distinct sets persistence ───────────────────────
+
+func TestTodayDistinctSetsRoundtripCache(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	a := New(cfg)
+	now := time.Now().UTC()
+	for _, project := range []string{"coolant", "thermal-enterprise", "marketplace"} {
+		ev := mkEvent(1, collector.EventAgentStart, "a-"+project, "s-"+project, now)
+		ev.Project = project
+		a.Fold(ev, 0)
+	}
+	if err := a.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	b := New(cfg)
+	todayKey := dayKey(time.Now())
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	projects := b.dailyDistinctProjects[todayKey]
+	if len(projects) != 3 {
+		t.Errorf("after restore: want 3 distinct projects, got %d", len(projects))
+	}
+	for _, p := range []string{"coolant", "thermal-enterprise", "marketplace"} {
+		if _, ok := projects[p]; !ok {
+			t.Errorf("after restore: project %q missing from set", p)
+		}
+	}
+}
+
+func TestTodayDistinctSetsDiscardedOnDateChange(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	// Hand-craft a cache with a today_distinct block dated yesterday.
+	yesterday := dayKey(time.Now().Add(-24 * time.Hour))
+	persisted := Snapshot{
+		SchemaVersion: CurrentSchemaVersion,
+		Daily: map[string]Counters{
+			yesterday: {AgentsStarted: 7, DistinctProjectsDay: 2},
+		},
+		TodayDistinct: TodayDistinctSets{
+			Date:     yesterday,
+			Projects: []string{"coolant", "thermal-enterprise"},
+		},
+	}
+	buf, _ := json.Marshal(persisted)
+	if err := os.WriteFile(cfg.CachePath, buf, 0o644); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	a := New(cfg)
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.currentDayKey != "" {
+		t.Errorf("stale today block should not set currentDayKey, got %q", a.currentDayKey)
+	}
+	if got := len(a.dailyDistinctProjects); got != 0 {
+		t.Errorf("stale today projects should be discarded, got %d entries", got)
+	}
+	// Yesterday's bucket count survives.
+	if got := a.daily[yesterday].DistinctProjectsDay; got != 2 {
+		t.Errorf("frozen yesterday bucket count should survive: want 2, got %d", got)
+	}
+}
+
+// ── v1 → v2 cache migration (cycle 3) ─────────────────────
+
+func TestV1CacheLoadsAsSingleElementSlices(t *testing.T) {
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "stats.json")
+	at := time.Date(2026, 4, 1, 10, 0, 0, 0, time.UTC)
+	// Hand-craft a v1 cache: each record is a single-object shape, not
+	// an array. Custom UnmarshalJSON on RecordList/BurstRecordList
+	// should accept this and wrap as a 1-elem slice so historical
+	// records survive the migration.
+	v1 := map[string]any{
+		"schema_version": 1,
+		"first_seen":     at.Format(time.RFC3339),
+		"daily": map[string]Counters{
+			"2026-04-01": {AgentsStarted: 5, AgentsCompleted: 5},
+		},
+		"records": map[string]any{
+			"peak_concurrent":     map[string]any{"value": 9, "session_id": "s1", "at": at.Format(time.RFC3339)},
+			"longest_agent_s":     map[string]any{"value": 312, "agent_id": "a1", "at": at.Format(time.RFC3339)},
+			"longest_session_s":   map[string]any{"value": 8943, "session_id": "s2", "at": at.Format(time.RFC3339)},
+			"most_agents_session": map[string]any{"value": 32, "session_id": "s3", "at": at.Format(time.RFC3339)},
+			"biggest_burst":       map[string]any{"count": 6, "window_s": 2, "session_id": "s4", "at": at.Format(time.RFC3339)},
+		},
+	}
+	buf, _ := json.Marshal(v1)
+	if err := os.WriteFile(cachePath, buf, 0o644); err != nil {
+		t.Fatalf("seed v1 cache: %v", err)
+	}
+	a := New(Config{
+		CachePath:    cachePath,
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	})
+	snap := a.Snapshot()
+	checks := []struct {
+		name string
+		got  []RecordEntry
+		want int64
+	}{
+		{"PeakConcurrent", snap.Records.PeakConcurrent, 9},
+		{"LongestAgentS", snap.Records.LongestAgentS, 312},
+		{"LongestSessionS", snap.Records.LongestSessionS, 8943},
+		{"MostAgentsSession", snap.Records.MostAgentsSession, 32},
+	}
+	for _, c := range checks {
+		if len(c.got) != 1 {
+			t.Errorf("%s: want 1-elem slice from v1 cache, got %d", c.name, len(c.got))
+			continue
+		}
+		if c.got[0].Value != c.want {
+			t.Errorf("%s: want value %d, got %d", c.name, c.want, c.got[0].Value)
+		}
+	}
+	if len(snap.Records.BiggestBurst) != 1 || snap.Records.BiggestBurst[0].Count != 6 {
+		t.Errorf("BiggestBurst v1 migration: %+v", snap.Records.BiggestBurst)
+	}
+}
+
+func TestCheckpointRefusesSchemaDowngrade(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	// Write a v3 cache to disk by hand (simulating a future binary's
+	// output). The current build is v2 — checkpoint must abort the
+	// write rather than clobber the future data.
+	at := time.Now().UTC()
+	future := Snapshot{
+		SchemaVersion: CurrentSchemaVersion + 1,
+		FirstSeen:     at,
+		LastUpdated:   at,
+		Daily: map[string]Counters{
+			"2026-04-25": {AgentsStarted: 99},
+		},
+	}
+	buf, _ := json.Marshal(future)
+	if err := os.WriteFile(cfg.CachePath, buf, 0o644); err != nil {
+		t.Fatalf("seed future cache: %v", err)
+	}
+	originalBytes, _ := os.ReadFile(cfg.CachePath)
+
+	a := New(cfg)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", at), 0)
+	if err := a.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint should not error on schema downgrade refusal: %v", err)
+	}
+	// Disk file must be unchanged.
+	gotBytes, _ := os.ReadFile(cfg.CachePath)
+	if string(gotBytes) != string(originalBytes) {
+		t.Errorf("schema downgrade refusal failed — disk file was overwritten")
+	}
+	// Degraded counter must have bumped.
+	deg, _ := os.ReadFile(cfg.DegradedPath)
+	if len(deg) == 0 {
+		t.Errorf("schema downgrade refusal should bump degraded counter; file empty")
+	}
+}
+
+func TestLoadCacheLogsRecordsParseError(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	// Cache with a corrupt records block — schema_version mismatched
+	// to force the permissive path AND the records value is structurally
+	// invalid so the per-field unmarshal errors out. Without the
+	// error-visibility hook, this used to silently zero records;
+	// the new code must surface it via the degraded counter.
+	cache := map[string]any{
+		"schema_version": 999,
+		"records":        "not an object",
+	}
+	buf, _ := json.Marshal(cache)
+	if err := os.WriteFile(cfg.CachePath, buf, 0o644); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+	_ = New(cfg)
+	deg, _ := os.ReadFile(cfg.DegradedPath)
+	if len(deg) == 0 {
+		t.Errorf("records parse error should bump degraded counter; file empty")
+	}
+}
+
 // ── max-merge records ─────────────────────────────────────
 
 func TestRecordsMaxMergedAcrossCheckpoints(t *testing.T) {
@@ -283,7 +482,7 @@ func TestRecordsMaxMergedAcrossCheckpoints(t *testing.T) {
 	}
 
 	c := New(cfg)
-	if got := c.Snapshot().Records.PeakConcurrent.Value; got != 5 {
+	if got := c.Snapshot().Records.PeakConcurrent.Top().Value; got != 5 {
 		t.Errorf("PeakConcurrent after max-merge: want 5, got %d", got)
 	}
 }
