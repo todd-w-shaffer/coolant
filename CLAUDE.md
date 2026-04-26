@@ -6,6 +6,14 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 **NEVER delete files or directories without explicit permission.** No exceptions. No "cleanup." No "safe to delete." ASK FIRST. Always. Even if the file looks stale, orphaned, or unnecessary. Even if you created it. Even if it's untracked. The user runs with permissive settings — that trust must not be abused for destructive operations.
 
+## Subtree CLAUDE.md (lazy-loaded)
+
+Subtree CLAUDE.md files load only when files inside them are accessed. Read these proactively when answering questions in their domain:
+
+- **`thermal/CLAUDE.md`** — Go thermal dashboard: deps, internal package groups, full Go API gotchas (bubbletea/lipgloss/theme/anim/widgets/stats/bubblezone), terminal-rendering gotchas, preview tools.
+- **`scripts/CLAUDE.md`** — Bash conventions, common.sh helpers, lock semantics, state files, gate system + terminology mapping.
+- **`dev/otel/CLAUDE.md`** — Local Prometheus+Grafana dogfood stack and verified CC metric names.
+
 ## Cross-repo spec access
 
 TUI specs live in the private companion repo at
@@ -51,6 +59,15 @@ the enterprise sweep.
 4. **Implement** — coolant CWD, read spec via `docs/.tui-specs/`.
 5. **Archive** — thermal-enterprise CWD, `git mv` shipped spec to
    `backlog/tui/archive/`.
+
+## Surfaces
+
+Coolant has two distinct surfaces with non-overlapping scopes:
+
+- **`thermal/` (thermo)** — the **system-wide** knowledge surface. Every machine-level signal (battery, GPU, swap, network, overall thermal, agent activity) lives here. Bottom tmux strip; one instance per machine.
+- **`claude-statusline/`** — the **per-session** surface. Token usage, model name, update glyph. Rendered in every session chrome.
+
+System-wide signals belong only in thermo — do not propose adding them to statusline even when a cell would technically fit. Statusline crowding duplicates information thermo already shows and makes the per-session surface noisy.
 
 ## Quick reference
 
@@ -100,88 +117,43 @@ Strict red-green-refactor for **any** code that can break — bash, Go, or other
 2. **Green** — implement the minimum code to pass, nothing more
 3. **Refactor** — improve quality while keeping tests green, do not skip
 
-Bug fixes follow the same cycle: write a test that reproduces the bug (red), fix it (green), clean up (refactor). See **Testing** below for per-language conventions and commands.
+Bug fixes follow the same cycle: write a test that reproduces the bug (red), fix it (green), clean up (refactor).
 
 ## Project structure
 
-Two layers: **bash** for hooks, plumbing, and data collection; **Go** for
-visualization. The bash↔Go seam is a JSONL event log (see the "JSONL
-event bus" convention below).
+Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization. The bash↔Go seam is a JSONL event log (see "JSONL event bus" below).
 
 **Repo-level layout:**
-- `VERSION` — root-level semver stamp, updated by auto-release workflow
-- `hooks/`, `scripts/` — bash plumbing (SessionStart / PreToolUse /
-  Subagent hooks, reconciled counters, JSONL event emission, `upgrade.sh`)
-- `thermal/` — Go thermal dashboard (packages below)
-- `.claude-plugin/`, `install.sh`, `claude-statusline/` — plugin
-  manifest, installer, and the braille statusline
-- `docs/` — design docs, theming plans, backlog specs
-- `dev/otel/` — local Prometheus+Grafana dogfood stack (see below)
-- `tests/` — bats tests for the bash layer
-- `skills/coolant/SKILL.md` — the `/coolant` skill entry
-- `assets/` — VHS tapes + demo GIFs
-- `.githooks/` — pre-push commit-classification hook + blocklist/allowlist
-  data files (activated by `scripts/install-hooks.sh`)
-- `.claude/hooks/classify-staged.sh` — companion Claude PreToolUse hook
 
-**Thermal dashboard (`thermal/internal/`) — conceptual groups:**
-- **Sampling** — `collector/` gathers system metrics (CPU/MEM/procs/GPU/battery/network,
-  cgo mach ticks, JSONL event tailer); `model/` holds AppState, threat level
-  formula, ring buffers, idle personality
-- **Rendering** — `theme/` (color palettes, HCL blend LUTs), `anim/` (motion
-  profiles, orthogonal to theme), `widgets/` (sparklines, headline, LCD, gauges,
-  agent dots, heat bloom/rails, alerts, battery), `layout/` (bottom-strip compositor
-  with `overlayContent` for `h` help and `i` intel overlays, category filter dim
-  feedback via bubblezone click regions), `ui/` (semantic colors, glyphs, helpers,
-  `CatZoneID`), `keys/` (shared keybinding registry)
-- **Plumbing** — `config/` (timing, thresholds, EMA, animation defaults),
-  `demo/` (scripted 6-phase narrative for `--demo`), `version/` (ldflags-injected
-  build version), `updater/` (daily-TTL staleness check against `VERSION` on main),
-  `stats/` (cross-session JSONL aggregator — Aggregator/Snapshot/Records persisted
-  to `~/.coolant/stats.json`)
-- **Entry points** — `cmd/thermal/` (bubbletea app + first-arg subcommand
-  dispatch for hidden dev tools like `thermo statsdump`), `cmd/swatch/` and
-  `cmd/brailletext/` (preview tools)
+- `VERSION` — root-level semver stamp, updated by auto-release workflow.
+- `hooks/`, `scripts/` — bash plumbing (see `scripts/CLAUDE.md`).
+- `thermal/` — Go thermal dashboard (see `thermal/CLAUDE.md`).
+- `.claude-plugin/`, `install.sh`, `claude-statusline/` — plugin manifest, installer, and the braille statusline.
+- `docs/` — design docs, theming plans, backlog specs.
+- `dev/otel/` — local Prometheus+Grafana dogfood stack (see `dev/otel/CLAUDE.md`).
+- `tests/` — bats tests for the bash layer.
+- `skills/coolant/SKILL.md` — the `/coolant` skill entry.
+- `assets/` — VHS tapes + demo GIFs.
+- `.githooks/` — pre-push commit-classification hook + blocklist/allowlist data files (activated by `scripts/install-hooks.sh`).
+- `.claude/hooks/classify-staged.sh` — companion Claude PreToolUse hook.
 
-For the full package inventory, call graph, and community structure,
-read `graphify-out/GRAPH_REPORT.md` — regenerated by a post-commit
-hook, always current.
+For the full package inventory, call graph, and community structure, read `graphify-out/GRAPH_REPORT.md` — regenerated by a post-commit hook, always current.
 
 ### Archive folders (gitignored — do not read, reference, or treat as current)
 
 Historical artifacts kept for nostalgia. May be stale or broken.
 
-- `docs/archive/` — superseded specs and explorations
-- `scripts/archive/` — old bash TUI (monitor.sh, sparkline.sh, agents.sh), replaced by Go thermal
-- `tests/archive/` — tests for archived scripts
-- `thermal/cmd/archive/` — one-off Go experiments (breathe, comets, sparkdebug)
-- `bin/archive/` — compiled binaries from archived experiments
+- `docs/archive/` — superseded specs and explorations.
+- `scripts/archive/` — old bash TUI (monitor.sh, sparkline.sh, agents.sh), replaced by Go thermal.
+- `tests/archive/` — tests for archived scripts.
+- `thermal/cmd/archive/` — one-off Go experiments (breathe, comets, sparkdebug).
+- `bin/archive/` — compiled binaries from archived experiments.
 
-### dev/otel/ (Local OTEL dogfood stack)
+## JSONL event bus (the bash↔Go seam)
 
-Local Prometheus + Grafana prototype for validating the Thermal Cloud
-data model and dashboard queries before touching hosted infra. Claude
-Code pushes OTLP metrics directly to Prometheus (no collector needed —
-Prometheus 3.x native OTLP receiver). Grafana auto-provisions the
-datasource and five dashboards via file-based config.
+Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. This is the *only* runtime data path between the two layers — there are zero direct calls. The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
 
-- `start.sh` — launches both processes with prefixed logs, Ctrl-C kills both
-- `env.sh` — source before launching Claude Code; `cclaude` alias in ~/.zshrc does this automatically
-- `dashboards/` — claude-spend, claude-insights, claude-models, claude-cfo, claude-vpeng
-- `data/` — gitignored Prometheus TSDB and Grafana state
-
-Verified Claude Code metric names (live-checked, not guessed):
-`claude_code_cost_usage_USD_total`, `claude_code_token_usage_tokens_total`,
-`claude_code_lines_of_code_count_total`, `claude_code_active_time_seconds_total`,
-`claude_code_session_count_total`, `claude_code_code_edit_tool_decision_total`.
-
-### thermal/ (Go thermal dashboard)
-
-Thermal dashboard rendered via bubbletea; runs as a bottom tmux strip or standalone. Build/run commands in **Quick reference** at the top of this file.
-
-**Dependencies:** Go 1.25+, cgo (for mach CPU ticks), `charm.land/bubbletea/v2`, `charm.land/lipgloss/v2`, `github.com/charmbracelet/harmonica`, `github.com/lucasb-eyer/go-colorful`.
-
-**Naming note:** source directory is `thermal/`, binary is `thermo` (avoids colliding with macOS `/usr/bin/thermal`).
+Every line carries `"schema":1` (envelope shape contract — bumps on rename or removal, additive optional fields stay at 1). Writes are serialized via the non-reentrant `coolant_lock` mkdir-mutex so parallel hooks emitting >PIPE_BUF payloads can't splice. Lock-acquisition timeout falls through to an unsynchronized write and bumps `$COOLANT_DEGRADED_COUNT` (out-of-band counter, truncated each SessionStart). The Go schema gate at `internal/stats` filters pre-versioning events at parse time — old and new envelopes coexist in the same JSONL ("virtual chop").
 
 ## Distribution
 
@@ -192,66 +164,13 @@ Plugin and dashboard ship separately. The plugin installs via Claude Code's mark
 - **Install script:** `install.sh` downloads the binary for the user's arch, asks where to put it, and optionally installs the braille statusline to `~/.claude/` with settings.json patching. `install.sh --upgrade` delegates to `scripts/upgrade.sh` for silent re-fetch of both artifacts.
 - **Staleness detection:** Daily TTL check against `VERSION` on main, cached at `$TMPDIR/coolant-$USER.latest-version` (shared between Go updater and bash statusline). Thermo shows "update available" in the notification banner; statusline appends a dim yellow ⬆ glyph. `[updates]` TOML section controls TTL and opt-out.
 
-## Conventions
-
-### JSONL event bus (the bash↔Go seam)
-
-Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. This is the *only* runtime data path between the two layers — there are zero direct calls. The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
-
-Every line carries `"schema":1` (envelope shape contract — bumps on rename or removal, additive optional fields stay at 1). Writes are serialized via the non-reentrant `coolant_lock` mkdir-mutex so parallel hooks emitting >PIPE_BUF payloads can't splice. Lock-acquisition timeout falls through to an unsynchronized write and bumps `$COOLANT_DEGRADED_COUNT` (out-of-band counter, truncated each SessionStart). The Go schema gate at `internal/stats` filters pre-versioning events at parse time — old and new envelopes coexist in the same JSONL ("virtual chop").
-
-### Bash (hooks, plumbing)
-
-- All scripts must be bash 3.2 compatible (macOS system bash). No `mapfile`, no associative arrays, no `|&`.
-- All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_EVENTS`, `COOLANT_AGENT_STARTS`, `COOLANT_DEGRADED_COUNT`, `COOLANT_THRESHOLD`).
-- Hook scripts log human-readable events via `coolant_log "message"` and structured JSONL via `coolant_event '"key":"value"'`. `coolant_event` injects `"schema":1` into every envelope and serializes `>>` appends behind `coolant_lock` (mkdir-mutex). The lock is **NOT reentrant** — callers already holding `coolant_lock` MUST release it before invoking `coolant_event`, or they deadlock for ~1s and fall through to an unsynchronized write that bumps `$COOLANT_DEGRADED_COUNT`.
-- JSON field extraction from hook stdin uses `_json_field` (top-level), `_nested_command` (tool_input.command), and `_extract_escaped` (extract + escape for re-emission into JSONL) — no jq dependency.
-- Values interpolated into JSONL must pass through `_json_escape` to handle backslashes and quotes. Agent metadata extraction uses `_extract_agent_fields`, which calls `_extract_escaped` for each field.
-- State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log, agent-starts tsv (agent_id<TAB>epoch_s for duration_s computation on stop; 24h entries self-prune), version cache, and `coolant-$USER.session` (the session-id sidecar written by `preflight.sh` on `SessionStart` and read by `_reconcile_counter` + Go's `TailEvents` to scope per-session counters). No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks.
-- **Gate system**: `gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always throttled with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are blocked when user opts in via `/coolant`. Alert labels use "throttled" (test runners, automatic) and "blocked" (build tools, opt-in) — JSONL event names remain `gate.cap`/`gate.suppress` internally. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
-- macOS system APIs: `sysctl`, `vm_stat`, `ps -Ao`, `ioreg` for sensors. No third-party tools.
-
-### Go (API gotchas)
-
-- **bubbletea v2** Elm architecture: `Init` → `Update(msg)` → `View() tea.View`. View returns a struct with `Content`, `AltScreen`, `MouseMode` fields. Uses `tea.KeyPressMsg` (not v1's `tea.KeyMsg`). Mode 2026 synchronized output is automatic.
-- **lipgloss v2** (`charm.land/lipgloss/v2`): `lipgloss.Color()` returns `color.Color` (stdlib), not a type. Map types use `color.Color` with `image/color` import.
-- Each widget is its own struct in `internal/widgets/` with `SetSize()`, `Update()`, and `View() string` methods (only top-level model returns `tea.View`).
-- **Collector** runs three loops: fast (150ms) for CPU/procs via cgo, slow (1s) for network + swap/vm_stat/GPU/battery concurrently via subprocesses, event tailer (500ms) for JSONL. GPU utilization via `ioreg -r -d 1 -c AGXAccelerator` piped through grep; battery via `pmset -g batt`. Shared online state protected by mutex.
-- **Theme system** (`internal/theme/`): All colors flow through a `*theme.Theme` struct passed to every widget constructor. `Theme.Init()` pre-computes HCL blend LUTs (101 entries each for severity gradients). `Theme.SeverityColor()` replaces the old package-level `severityColor()`. Built-in themes registered in `theme.Registry`; resolved via `--theme` flag > `COOLANT_THEME` env > `"classic"` default. To add a theme: copy `classic.go`, change colors, register in `registry.go`.
-- **Animation system** (`internal/anim/`): All motion parameters flow through an `*anim.Profile` struct passed alongside `*theme.Theme` to widget constructors. Theme controls color, profile controls motion — orthogonal axes. `Default()` reads from `config/tuning.go` (single source of truth). Built-in profiles: `default`, `calm` (slower/softer), `intense` (faster/sharper). Resolved via `--animation` flag > `COOLANT_ANIMATION` env > `"default"`. To add a profile: copy `default.go`, change values, register in `registry.go`.
-- **Agent animations**: Active agents use a tidal wave (slow sine swell, `⬡→⏣→⬢` three-state glyph sweep). Stale/ghost agents use a KITT scanner (gaussian brightness peak bouncing left-to-right). `--kitt-highscore` flag (default on) makes the KITT scanner display completed agent count — stale dots dim-breathe, completed dots earn the KITT scan. Disable with `--kitt-highscore=false` or `COOLANT_KITT_HIGHSCORE=0` to revert to ghost mode. Animation patterns are universal across themes and profiles; theme controls accent color, profile controls speed/brightness/spring physics.
-- `GaugeDotColor.ANSIOverride` lets Classic use 16-color ANSI escapes while other themes use truecolor. If set, `Init()` uses the override; otherwise derives truecolor from `Color`.
-- Process type and category colors live in `internal/ui/colors.go` as semantic defaults. Agent glyphs (`⬡⏣⬢`) and `DimText`/`ColorText` helpers also in `ui/colors.go`. Timing, thresholds, and EMA alphas live in `internal/config/tuning.go`; animation defaults also live there but are consumed via `anim.Default()` rather than directly.
-- Braille rendering done natively in Go (no awk, no subshells).
-- **Per-agent telemetry on `agent.stop`.** `scripts/agent-stop.sh` parses the subagent's transcript at `_agent_transcript_path` via `_parse_agent_telemetry` (awk; jq-free; macOS BSD-awk compatible) and emits three optional fields on the JSONL line — `tokens_in`, `tokens_out`, `tool_call_count` — when the parse succeeds. Empty/unreadable transcripts degrade silently (no telemetry tail emitted). The Go aggregator rolls these into `Counters.{TokensInTotal, TokensOutTotal, ToolCallsTotal}` and the `Records.{MostTokensAgent, MostToolCallsAgent}` leaderboards (zero values are intentionally excluded from the leaderboard so an idle stop doesn't poison rankings).
-- **Stats engine durability split.** `internal/stats` separates streaming source (`$TMPDIR/coolant-$USER.events.jsonl`, ephemeral, OS may purge on reboot) from durable history (`~/.coolant/stats.json`, survives macOS purge). Lifetime totals are *always* `sum(daily)` — never stored separately, eliminating cache-vs-live drift. Schema gate at parse time (`1 <= Schema <= MaxKnownSchema`) silently filters pre-versioning events; the JSONL is never rewritten ("virtual chop"). Cache is loaded permissively on schema mismatch — primary fields (records, daily, first_seen, by_type, by_project) survive future schema bumps. Cache schema is currently **v2**: each `Records.*` field is a `RecordList` / `BurstRecordList` leaderboard (top-5, deduped by composite key) instead of v1's single `RecordEntry`. Custom `UnmarshalJSON` on the list types accepts both shapes so v1 caches load transparently. Per-day Counters carry `PeakConcurrentDay` / `DistinctProjectsDay` / `DistinctSessionsDay` shape fields; today's distinct sets are persisted as a `today_distinct` block keyed by UTC date so a thermo restart mid-day doesn't reset counts. Checkpoint refuses to write if the on-disk schema is newer than `CurrentSchemaVersion` — bumps the degraded counter and aborts to avoid clobbering a future binary's writes during a rolling deploy.
-- **Single-binary subcommand dispatch.** New CLI verbs land as `os.Args[1]`-matched cases at the top of `cmd/thermal/main.go`, BEFORE `flag.Parse()` (otherwise flag.Parse errors on bare-word verbs). Hidden dev tools like `thermo statsdump` follow this pattern; future user-facing `thermo stats` will too. No new `cmd/<verb>/` directories — release-matrix and install-script complexity scales with binary count, not subcommand count.
-- For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
-- **bubblezone v2 is incompatible with `lipgloss.Canvas` / the v2 compositor.** We register clickable zones via `github.com/lrstanley/bubblezone/v2`. The maintainer warns that bubblezone may not work when using the lipgloss v2 canvas/compositor — the marker-scan model assumes a flat string. Coolant composes layouts via string concatenation in `layout/horizontal.go`; do not introduce `lipgloss.Canvas` without re-evaluating the zone story.
-- **Zone ID naming convention:** `<widget>:<entity-id>` — e.g. `cat:build`, `agent:abc123`, `stat:cpu`. Avoids cross-widget collisions without `zone.NewPrefix()` overhead.
-- **Width math near marks:** bubblezone markers are zero-width to `lipgloss.Width` but inflate `len()`. Wrap only the final styled output in `zone.Mark`; never compute width on a Mark-wrapped string. Prefer `lipgloss.Width` over `len` anywhere a string may be marked.
-
 ## Testing
 
 Tests are a dev dependency — they don't ship with coolant. New scripts must have tests before merge; new behavior on existing scripts must have a failing test first (red-green-refactor).
 
-**Bash (bats-core):** `.bats` files in `tests/`, one per script. One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`). Install via `brew install bats-core`.
-
-```bash
-bats tests/                        # full suite
-bats tests/toggle.bats             # single file
-bats tests/ -f "reconcile"         # name pattern
-```
-
-`tests/test_helper.bash` provides `setup`/`teardown` that isolates all state to a temp directory — tests never touch real `/tmp/coolant-*` files. Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir; scripts respect these via the defaults in `common.sh`.
-
-**Go:** table-driven tests in `*_test.go` next to the code they test. Use `t.Helper()` on test helpers; direct assertions via `t.Errorf`/`t.Fatalf` — no test framework.
-
-```bash
-cd thermal && go test ./...        # full suite
-```
+- Bash (bats-core): see `scripts/CLAUDE.md`.
+- Go: see `thermal/CLAUDE.md`.
 
 ## graphify
 
-Knowledge graph at `graphify-out/`. Post-commit hook keeps it current automatically.
-Read `graphify-out/GRAPH_REPORT.md` for god nodes and community structure before deep codebase questions.
+Knowledge graph at `graphify-out/`. Post-commit hook keeps it current automatically. Read `graphify-out/GRAPH_REPORT.md` for god nodes and community structure before deep codebase questions.
