@@ -155,6 +155,11 @@ func New(cfg Config) *Aggregator {
 	return a
 }
 
+// DayKey is the exported alias for dayKey — consumers outside the
+// package (CLI rendering, OTEL exporter) need the same UTC bucket
+// convention without duplicating the format string.
+func DayKey(t time.Time) string { return dayKey(t) }
+
 // dayKey is the canonical UTC day-bucket key for the daily map.
 // Centralized here so a future timezone-policy change touches one site.
 func dayKey(t time.Time) string {

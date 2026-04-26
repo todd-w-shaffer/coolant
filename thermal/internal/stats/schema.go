@@ -102,7 +102,7 @@ func (c Counters) Add(o Counters) Counters {
 }
 
 // Records are the eternal high-score leaderboards. Each field carries
-// up to recordListCap entries, sorted desc by Value (or Count for
+// up to RecordListCap entries, sorted desc by Value (or Count for
 // BurstRecord), deduped by composite key. Preserved across cache
 // discards via the custom UnmarshalJSON on each list type.
 type Records struct {

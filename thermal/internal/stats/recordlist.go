@@ -5,21 +5,22 @@ import (
 	"sort"
 )
 
-// recordListCap is the leaderboard depth — top-N stored per category.
+// RecordListCap is the leaderboard depth — top-N stored per category.
 // Locked at 5 to fit a scoreboard column without scroll while keeping
 // the per-Snapshot deep-copy hot path negligible (≈ 5 × 7 categories
-// = 35 entries).
-const recordListCap = 5
+// = 35 entries). Exported so CLI consumers (`thermo stats --top`)
+// share the same upper bound rather than hardcoding it.
+const RecordListCap = 5
 
 // RecordList is the leaderboard slice that replaces the top-1
 // `RecordEntry` field on `Records`. Entries are kept sorted desc by
 // Value, deduped by composite key (AgentID|SessionID), and truncated
-// to recordListCap. Equal-value ties at the boundary are kept (the
+// to RecordListCap. Equal-value ties at the boundary are kept (the
 // slice may exceed cap when every slot is at the same Value).
 type RecordList []RecordEntry
 
 // Insert adds an entry, dedupes by composite key with higher-Value
-// winning, sorts desc by Value, and truncates to recordListCap unless
+// winning, sorts desc by Value, and truncates to RecordListCap unless
 // the boundary lands inside a tie.
 func (rl RecordList) Insert(e RecordEntry) RecordList {
 	key := recordKey(e)
@@ -88,18 +89,18 @@ func (rl RecordList) sortAndTrim() RecordList {
 		// freshest entry at the boundary.
 		return rl[i].At.After(rl[j].At)
 	})
-	if len(rl) <= recordListCap {
+	if len(rl) <= RecordListCap {
 		return rl
 	}
 	// Boundary tie-keep applies only when the boundary value is
 	// non-zero — otherwise a stream of zero-duration entries with
 	// distinct composite keys (e.g. NTP-clamped agent stops) would
 	// grow the list without bound. Zero is never a real high score.
-	boundaryValue := rl[recordListCap-1].Value
+	boundaryValue := rl[RecordListCap-1].Value
 	if boundaryValue == 0 {
-		return rl[:recordListCap]
+		return rl[:RecordListCap]
 	}
-	end := recordListCap
+	end := RecordListCap
 	for end < len(rl) && rl[end].Value == boundaryValue {
 		end++
 	}
@@ -168,14 +169,14 @@ func (bl BurstRecordList) sortAndTrim() BurstRecordList {
 		}
 		return bl[i].At.After(bl[j].At)
 	})
-	if len(bl) <= recordListCap {
+	if len(bl) <= RecordListCap {
 		return bl
 	}
-	boundaryCount := bl[recordListCap-1].Count
+	boundaryCount := bl[RecordListCap-1].Count
 	if boundaryCount == 0 {
-		return bl[:recordListCap]
+		return bl[:RecordListCap]
 	}
-	end := recordListCap
+	end := RecordListCap
 	for end < len(bl) && bl[end].Count == boundaryCount {
 		end++
 	}

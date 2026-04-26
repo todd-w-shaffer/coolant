@@ -51,8 +51,8 @@ func TestMostTokensAgentLeaderboardCappedAtFive(t *testing.T) {
 			WithTokens(int64(100*(i+1)), 0)), 0)
 	}
 	rec := a.Snapshot().Records.MostTokensAgent
-	if len(rec) != recordListCap {
-		t.Errorf("MostTokensAgent should cap at %d, got %d", recordListCap, len(rec))
+	if len(rec) != RecordListCap {
+		t.Errorf("MostTokensAgent should cap at %d, got %d", RecordListCap, len(rec))
 	}
 	want := []int64{700, 600, 500, 400, 300}
 	for i, v := range want {

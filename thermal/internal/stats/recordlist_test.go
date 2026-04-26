@@ -31,8 +31,8 @@ func TestRecordListInsertSorted(t *testing.T) {
 	for i, v := range []int64{3, 7, 1, 9, 5, 8, 2} {
 		rl = rl.Insert(mkRec(v, "a"+string(rune('0'+i)), "s1", i))
 	}
-	if len(rl) != recordListCap {
-		t.Fatalf("cap: want %d, got %d", recordListCap, len(rl))
+	if len(rl) != RecordListCap {
+		t.Fatalf("cap: want %d, got %d", RecordListCap, len(rl))
 	}
 	want := []int64{9, 8, 7, 5, 3}
 	for i, v := range want {
@@ -72,7 +72,7 @@ func TestRecordListTieKeepsAll(t *testing.T) {
 		rl = rl.Insert(mkRec(10, "a"+string(rune('0'+i)), "s"+string(rune('0'+i)), i))
 	}
 	if len(rl) != 6 {
-		t.Fatalf("tie-keeps-all: want 6 entries beyond cap=%d, got %d", recordListCap, len(rl))
+		t.Fatalf("tie-keeps-all: want 6 entries beyond cap=%d, got %d", RecordListCap, len(rl))
 	}
 }
 
@@ -81,14 +81,14 @@ func TestRecordListZeroValueBoundaryTruncatesToCap(t *testing.T) {
 	// every agent.stop NTP-clamped to a zero duration). Without the
 	// `boundaryValue == 0` short-circuit in sortAndTrim, the
 	// tie-keep rule would let the list grow without bound. Pin
-	// truncation to recordListCap so a regression here can't slip
+	// truncation to RecordListCap so a regression here can't slip
 	// past CI.
 	var rl RecordList
 	for i := 0; i < 6; i++ {
 		rl = rl.Insert(mkRec(0, "a"+string(rune('0'+i)), "s"+string(rune('0'+i)), i))
 	}
-	if len(rl) != recordListCap {
-		t.Errorf("zero-value boundary should truncate to cap=%d, got %d (boundary tie-keep regression?)", recordListCap, len(rl))
+	if len(rl) != RecordListCap {
+		t.Errorf("zero-value boundary should truncate to cap=%d, got %d (boundary tie-keep regression?)", RecordListCap, len(rl))
 	}
 }
 
@@ -97,8 +97,8 @@ func TestBurstRecordListZeroCountBoundaryTruncatesToCap(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		bl = bl.Insert(mkBurst(0, "s"+string(rune('0'+i)), i))
 	}
-	if len(bl) != recordListCap {
-		t.Errorf("zero-count boundary should truncate to cap=%d, got %d", recordListCap, len(bl))
+	if len(bl) != RecordListCap {
+		t.Errorf("zero-count boundary should truncate to cap=%d, got %d", RecordListCap, len(bl))
 	}
 }
 
@@ -148,8 +148,8 @@ func TestBurstRecordListInsertSorted(t *testing.T) {
 	for i, c := range []int64{3, 7, 1, 9, 5, 8, 2} {
 		bl = bl.Insert(mkBurst(c, "s"+string(rune('0'+i)), i))
 	}
-	if len(bl) != recordListCap {
-		t.Fatalf("burst cap: want %d, got %d", recordListCap, len(bl))
+	if len(bl) != RecordListCap {
+		t.Fatalf("burst cap: want %d, got %d", RecordListCap, len(bl))
 	}
 	want := []int64{9, 8, 7, 5, 3}
 	for i, c := range want {
@@ -216,7 +216,7 @@ func TestRecordListMergeUnionsDedupsTruncates(t *testing.T) {
 	cand = cand.Insert(mkRec(7, "a4", "s4", 500))
 
 	merged := disk.Merge(cand)
-	if len(merged) > recordListCap {
+	if len(merged) > RecordListCap {
 		t.Fatalf("merge exceeded cap: %d", len(merged))
 	}
 	// Order: 12, 10, 8 should NOT appear (a2 deduped to 12), 7, 6.

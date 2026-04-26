@@ -350,6 +350,8 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "statsdump: folded %d schema:1 events\n", folded)
 			os.Exit(0)
+		case "stats":
+			os.Exit(runStats(os.Stdout, os.Stderr, os.Args[2:], productionStatsConfig()))
 		}
 	}
 

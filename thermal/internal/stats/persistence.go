@@ -223,7 +223,7 @@ func computeDelta(byType, byProject map[string]int64, daily map[string]Counters,
 // maxMergeRecords leaderboard-merges every Records field. Each slot
 // is a RecordList (or BurstRecordList) — Merge unions, dedupes by
 // composite key keeping higher value, sorts desc, and truncates to
-// recordListCap (preserving boundary ties).
+// RecordListCap (preserving boundary ties).
 func maxMergeRecords(disk, cand Records) Records {
 	return Records{
 		PeakConcurrent:     disk.PeakConcurrent.Merge(cand.PeakConcurrent),
