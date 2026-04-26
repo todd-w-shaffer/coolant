@@ -8,7 +8,7 @@ A resource management layer for Claude Code — prevents machines from melting w
 
 ## Subtree CLAUDE.md (lazy-loaded)
 
-Subtree CLAUDE.md files load only when files inside them are accessed. Read these proactively when answering questions in their domain:
+Subtree CLAUDE.md files load only when files inside them are accessed. **Before answering any domain-scoped question — even a chat-only one with no file edits — Read the relevant subtree CLAUDE.md first.** Don't answer from memory or the root CLAUDE.md alone; the gotchas, conventions, and API surface for each domain live in its subtree file. The breadcrumbs below are the routing table — match the question's domain to the file, then Read it.
 
 - **`thermal/CLAUDE.md`** — Go thermal dashboard: deps, internal package groups, full Go API gotchas (bubbletea/lipgloss/theme/anim/widgets/stats/bubblezone), terminal-rendering gotchas, preview tools.
 - **`scripts/CLAUDE.md`** — Bash conventions, common.sh helpers, lock semantics, state files, gate system + terminology mapping.
