@@ -47,6 +47,14 @@ type GateEvent struct {
 	Threshold      int    `json:"threshold,omitempty"`
 	Original       string `json:"original,omitempty"`
 	Rewritten      string `json:"rewritten,omitempty"`
+	// Per-agent telemetry parsed from the subagent transcript on
+	// agent.stop. omitempty because pre-deploy events never carry
+	// these fields; the bash emission discipline guarantees that
+	// any post-deploy event with a parseable transcript emits all
+	// three together (literal 0 for genuinely-zero values).
+	TokensIn      int64 `json:"tokens_in,omitempty"`
+	TokensOut     int64 `json:"tokens_out,omitempty"`
+	ToolCallCount int64 `json:"tool_call_count,omitempty"`
 }
 
 // isSessionScoped reports whether an event type is bound to a specific

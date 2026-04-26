@@ -209,6 +209,9 @@ func computeDelta(byType, byProject map[string]int64, daily map[string]Counters,
 			Sessions:             v.Sessions - base.Sessions,
 			TranscriptBytesTotal: v.TranscriptBytesTotal - base.TranscriptBytesTotal,
 			GateCapEvents:        v.GateCapEvents - base.GateCapEvents,
+			TokensInTotal:        v.TokensInTotal - base.TokensInTotal,
+			TokensOutTotal:       v.TokensOutTotal - base.TokensOutTotal,
+			ToolCallsTotal:       v.ToolCallsTotal - base.ToolCallsTotal,
 		}
 		if diff != (Counters{}) {
 			d.Daily[k] = diff
@@ -223,11 +226,13 @@ func computeDelta(byType, byProject map[string]int64, daily map[string]Counters,
 // recordListCap (preserving boundary ties).
 func maxMergeRecords(disk, cand Records) Records {
 	return Records{
-		PeakConcurrent:    disk.PeakConcurrent.Merge(cand.PeakConcurrent),
-		LongestAgentS:     disk.LongestAgentS.Merge(cand.LongestAgentS),
-		LongestSessionS:   disk.LongestSessionS.Merge(cand.LongestSessionS),
-		MostAgentsSession: disk.MostAgentsSession.Merge(cand.MostAgentsSession),
-		BiggestBurst:      disk.BiggestBurst.Merge(cand.BiggestBurst),
+		PeakConcurrent:     disk.PeakConcurrent.Merge(cand.PeakConcurrent),
+		LongestAgentS:      disk.LongestAgentS.Merge(cand.LongestAgentS),
+		LongestSessionS:    disk.LongestSessionS.Merge(cand.LongestSessionS),
+		MostAgentsSession:  disk.MostAgentsSession.Merge(cand.MostAgentsSession),
+		BiggestBurst:       disk.BiggestBurst.Merge(cand.BiggestBurst),
+		MostTokensAgent:    disk.MostTokensAgent.Merge(cand.MostTokensAgent),
+		MostToolCallsAgent: disk.MostToolCallsAgent.Merge(cand.MostToolCallsAgent),
 	}
 }
 

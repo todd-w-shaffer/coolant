@@ -20,6 +20,12 @@ COOLANT_REVIEW_AUDIT="${COOLANT_REVIEW_AUDIT:-${_COOLANT_DIR}coolant-${USER}.rev
 # per-session counters and event consumption.
 COOLANT_SESSION_FILE="${COOLANT_SESSION_FILE:-${_COOLANT_DIR}coolant-${USER}.session}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
+# Maximum bytes of a per-agent transcript that `_parse_agent_telemetry`
+# will read. 5 MiB sits well above any realistic agent run (tens of
+# thousands of messages); the cap exists to keep the SubagentStop 5s
+# hook budget bounded against pathological transcripts. Override for
+# very-high-message-count workloads.
+COOLANT_TRANSCRIPT_CAP_BYTES="${COOLANT_TRANSCRIPT_CAP_BYTES:-5242880}"
 _COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 coolant_log() {
@@ -211,6 +217,62 @@ _compute_agent_duration() {
   if [ -n "$start_ts" ]; then
     _agent_duration_s=$((now - start_ts))
   fi
+}
+
+# Parse per-agent telemetry from a Claude Code subagent transcript.
+# Sets _agent_tokens_in, _agent_tokens_out, _agent_tool_call_count.
+#
+# Sums per-message usage.input_tokens / usage.output_tokens (taking
+# the FIRST match per line so iterations[] copies don't double-count)
+# and counts "type":"tool_use" content items via gsub.
+#
+# Failure modes (sets all three out-vars empty):
+#   - empty path
+#   - file unreadable
+# A readable file with no assistant messages succeeds with all
+# three at "0" — distinguishes "parsed, value zero" from "parse
+# failed", which the emission discipline in agent-stop.sh relies on.
+#
+# No jq dependency (per CLAUDE.md). awk is bash 3.2 / macOS BSD-awk
+# compatible; the 2-arg match() + substr() pattern avoids gawk's
+# 3-arg capture-group form which BSD awk doesn't support.
+_parse_agent_telemetry() {
+  local _pat_path="$1"
+  _agent_tokens_in=""
+  _agent_tokens_out=""
+  _agent_tool_call_count=""
+
+  [ -n "$_pat_path" ] || return 0
+  [ -r "$_pat_path" ] || return 0
+
+  # Cap input bytes — see COOLANT_TRANSCRIPT_CAP_BYTES at the top of
+  # this file. Capped parses undercount gracefully on huge transcripts;
+  # the hook never blocks past its 5s budget.
+  local _pat_out
+  _pat_out=$(head -c "$COOLANT_TRANSCRIPT_CAP_BYTES" "$_pat_path" 2>/dev/null | awk '
+    function extract_int(line, key,    rx, span, digits) {
+      rx = "\"" key "\"[[:space:]]*:[[:space:]]*[0-9]+"
+      if (match(line, rx)) {
+        span = substr(line, RSTART, RLENGTH)
+        if (match(span, /[0-9]+/)) {
+          digits = substr(span, RSTART, RLENGTH)
+          return digits + 0
+        }
+      }
+      return -1
+    }
+    {
+      v = extract_int($0, "input_tokens")
+      if (v >= 0) tin += v
+      v = extract_int($0, "output_tokens")
+      if (v >= 0) tout += v
+      tool += gsub(/"type"[[:space:]]*:[[:space:]]*"tool_use"/, "&")
+    }
+    END { printf "%d %d %d\n", tin, tout, tool }
+  ' 2>/dev/null) || return 0
+  [ -n "$_pat_out" ] || return 0
+
+  read -r _agent_tokens_in _agent_tokens_out _agent_tool_call_count <<< "$_pat_out"
 }
 
 # Atomic counter operations using mkdir as a POSIX mutex.

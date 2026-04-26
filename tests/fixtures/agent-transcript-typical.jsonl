@@ -1,0 +1,6 @@
+{"type":"user","message":{"role":"user","content":"go find the bug"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Searching..."},{"type":"tool_use","name":"Grep","input":{}}],"usage":{"input_tokens":1500,"output_tokens":80,"iterations":[{"input_tokens":1500,"output_tokens":80}]}}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"Read","input":{}},{"type":"tool_use","name":"Read","input":{}}],"usage":{"input_tokens":2200,"output_tokens":120,"iterations":[{"input_tokens":2200,"output_tokens":120}]}}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result"},{"type":"tool_result"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Found it. The bug is in foo()."}],"usage":{"input_tokens":3300,"output_tokens":200,"iterations":[{"input_tokens":3300,"output_tokens":200}]}}}

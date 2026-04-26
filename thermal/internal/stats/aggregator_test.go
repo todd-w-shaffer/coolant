@@ -24,10 +24,9 @@ func newTestAggregator(t *testing.T) *Aggregator {
 	})
 }
 
-// mkEvent constructs a GateEvent fixture. The variadic opts let
-// future specs (agent-stop-telemetry) layer on extra fields like
-// cost / tokens / tool calls without churning existing call sites,
-// which pass no opts and continue to work unchanged.
+// mkEvent constructs a GateEvent fixture. The variadic opts layer on
+// extra fields like tokens / tool calls without churning existing call
+// sites, which pass no opts and continue to work unchanged.
 func mkEvent(schema int, event, agentID, sessionID string, ts time.Time, opts ...func(*collector.GateEvent)) collector.GateEvent {
 	ev := collector.GateEvent{
 		Schema:    schema,
@@ -42,6 +41,22 @@ func mkEvent(schema int, event, agentID, sessionID string, ts time.Time, opts ..
 		opt(&ev)
 	}
 	return ev
+}
+
+// WithTokens sets per-agent token telemetry on a fixture event.
+// Used by agent-stop telemetry tests.
+func WithTokens(in, out int64) func(*collector.GateEvent) {
+	return func(e *collector.GateEvent) {
+		e.TokensIn = in
+		e.TokensOut = out
+	}
+}
+
+// WithToolCalls sets per-agent tool-call count on a fixture event.
+func WithToolCalls(n int64) func(*collector.GateEvent) {
+	return func(e *collector.GateEvent) {
+		e.ToolCallCount = n
+	}
 }
 
 // ── schema gate ────────────────────────────────────────────
@@ -791,6 +806,101 @@ func TestCounterUnderflowIsFoldNoOp(t *testing.T) {
 	a.Fold(evt, 0)
 	if life := a.Snapshot().Lifetime(); life != (Counters{}) {
 		t.Errorf("counter.underflow mutated counters: %+v", life)
+	}
+}
+
+// ── per-agent telemetry counters ────────────────────────────
+
+func TestFoldUpdatesTelemetryCounters(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(time.Minute),
+		WithTokens(1500, 200), WithToolCalls(7)), 0)
+
+	bucket := a.Snapshot().Daily["2026-04-26"]
+	if bucket.TokensInTotal != 1500 {
+		t.Errorf("TokensInTotal: want 1500, got %d", bucket.TokensInTotal)
+	}
+	if bucket.TokensOutTotal != 200 {
+		t.Errorf("TokensOutTotal: want 200, got %d", bucket.TokensOutTotal)
+	}
+	if bucket.ToolCallsTotal != 7 {
+		t.Errorf("ToolCallsTotal: want 7, got %d", bucket.ToolCallsTotal)
+	}
+}
+
+func TestFoldClampsNegativeTelemetry(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+	// Synthesize negative values — defensive clamp at fold time.
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(time.Minute),
+		WithTokens(-100, -50), WithToolCalls(-3)), 0)
+
+	snap := a.Snapshot()
+	bucket := snap.Daily["2026-04-26"]
+	if bucket.TokensInTotal != 0 {
+		t.Errorf("negative TokensIn leaked: got %d", bucket.TokensInTotal)
+	}
+	if bucket.TokensOutTotal != 0 {
+		t.Errorf("negative TokensOut leaked: got %d", bucket.TokensOutTotal)
+	}
+	if bucket.ToolCallsTotal != 0 {
+		t.Errorf("negative ToolCallCount leaked: got %d", bucket.ToolCallsTotal)
+	}
+	// Leaderboards must also stay empty — the clamp must apply BEFORE
+	// the leaderboard insert, not just before the counter add.
+	if got := len(snap.Records.MostTokensAgent); got != 0 {
+		t.Errorf("negative tokens entered MostTokensAgent: %d entries", got)
+	}
+	if got := len(snap.Records.MostToolCallsAgent); got != 0 {
+		t.Errorf("negative tool calls entered MostToolCallsAgent: %d entries", got)
+	}
+}
+
+func TestFoldTelemetryAccumulatesAcrossAgents(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a2", "s1", now.Add(time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(time.Minute),
+		WithTokens(1000, 100), WithToolCalls(5)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a2", "s1", now.Add(2*time.Minute),
+		WithTokens(2500, 300), WithToolCalls(12)), 0)
+
+	bucket := a.Snapshot().Daily["2026-04-26"]
+	if bucket.TokensInTotal != 3500 {
+		t.Errorf("two-agent TokensInTotal: want 3500, got %d", bucket.TokensInTotal)
+	}
+	if bucket.ToolCallsTotal != 17 {
+		t.Errorf("two-agent ToolCallsTotal: want 17, got %d", bucket.ToolCallsTotal)
+	}
+}
+
+func TestLongestAgentRecordPicksUpEventFieldsWhenMetaSparse(t *testing.T) {
+	// Prior bug: LongestAgentS read meta directly from a.agentMeta
+	// without the event-field fallback that the new telemetry
+	// records use. If agent.start landed with empty agent_type/project
+	// (e.g. a degraded source) and agent.stop carried them, the record
+	// dropped them silently. resolveAgentMeta unifies the path.
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC)
+	start := mkEvent(1, collector.EventAgentStart, "a1", "s1", now)
+	start.AgentType = ""
+	start.Project = ""
+	a.Fold(start, 0)
+	stop := mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(60*time.Second))
+	stop.AgentType = "Plan"
+	stop.Project = "thermal-enterprise"
+	a.Fold(stop, 0)
+
+	rec := a.Snapshot().Records.LongestAgentS[0]
+	if rec.AgentType != "Plan" {
+		t.Errorf("LongestAgentS.AgentType: want Plan from event fallback, got %q", rec.AgentType)
+	}
+	if rec.Project != "thermal-enterprise" {
+		t.Errorf("LongestAgentS.Project: want thermal-enterprise from event fallback, got %q", rec.Project)
 	}
 }
 

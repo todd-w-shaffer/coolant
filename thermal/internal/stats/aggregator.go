@@ -209,6 +209,38 @@ func (a *Aggregator) handleDayRollover(day string) {
 	a.currentDayKey = day
 }
 
+// resolveAgentMeta returns the stored agentMeta for evt.AgentID,
+// filling in any empty fields from evt itself. The stored meta is
+// the authoritative source (populated at agent.start with full
+// project/type/sid context); the event-side fallback covers stops
+// that arrive without a matching start record (e.g., crashed agent
+// state pruned, then a late stop replays).
+func (a *Aggregator) resolveAgentMeta(evt collector.GateEvent) agentMeta {
+	meta := a.agentMeta[evt.AgentID]
+	if meta.AgentType == "" {
+		meta.AgentType = evt.AgentType
+	}
+	if meta.Project == "" {
+		meta.Project = evt.Project
+	}
+	if meta.SessionID == "" {
+		meta.SessionID = evt.SessionID
+	}
+	return meta
+}
+
+// clampNonNeg returns v unchanged when non-negative; zero otherwise.
+// Defensive against corrupt transcript parses that could surface
+// negative tokens / tool-call counts (the bash awk parse extracts
+// digits-only, so this should never fire — but cheap belt-and-
+// suspenders against future emitter regressions).
+func clampNonNeg(v int64) int64 {
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
 // clampDuration computes (end - start) in seconds, clamping a negative
 // result to zero. NTP backstep across JSONL serialization can push a
 // stop timestamp before its start in wall-clock terms; clamping keeps
@@ -374,11 +406,43 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 		if evt.TranscriptPath != "" {
 			bucket.TranscriptBytesTotal += a.cfg.TranscriptStat(evt.TranscriptPath)
 		}
+		// Resolved once — used for LongestAgentS + the two telemetry
+		// leaderboards. Stored meta wins; event fields fill in for
+		// stops without a matching start record.
+		meta := a.resolveAgentMeta(evt)
+		// Per-agent telemetry roll-up. Negative values are defensive
+		// against transcript-parse corruption.
+		tokensIn := clampNonNeg(evt.TokensIn)
+		tokensOut := clampNonNeg(evt.TokensOut)
+		toolCalls := clampNonNeg(evt.ToolCallCount)
+		bucket.TokensInTotal += tokensIn
+		bucket.TokensOutTotal += tokensOut
+		bucket.ToolCallsTotal += toolCalls
+		// Zero values are excluded from the leaderboard so an idle
+		// agent.stop doesn't poison rankings (locked decision §0).
+		if total := tokensIn + tokensOut; total > 0 {
+			a.records.MostTokensAgent = a.records.MostTokensAgent.Insert(RecordEntry{
+				Value:     total,
+				AgentID:   evt.AgentID,
+				AgentType: meta.AgentType,
+				Project:   meta.Project,
+				SessionID: meta.SessionID,
+				At:        evt.Timestamp,
+			})
+		}
+		if toolCalls > 0 {
+			a.records.MostToolCallsAgent = a.records.MostToolCallsAgent.Insert(RecordEntry{
+				Value:     toolCalls,
+				AgentID:   evt.AgentID,
+				AgentType: meta.AgentType,
+				Project:   meta.Project,
+				SessionID: meta.SessionID,
+				At:        evt.Timestamp,
+			})
+		}
 		if matched {
-			start, ok := a.agentStarts[evt.AgentID]
-			if ok {
+			if start, ok := a.agentStarts[evt.AgentID]; ok {
 				duration := clampDuration(evt.Timestamp, start)
-				meta := a.agentMeta[evt.AgentID]
 				a.records.LongestAgentS = a.records.LongestAgentS.Insert(RecordEntry{
 					Value:     duration,
 					AgentID:   evt.AgentID,

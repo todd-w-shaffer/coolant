@@ -72,6 +72,9 @@ type Counters struct {
 	PeakConcurrentDay    int64 `json:"peak_concurrent_day,omitempty"`
 	DistinctProjectsDay  int64 `json:"distinct_projects_day,omitempty"`
 	DistinctSessionsDay  int64 `json:"distinct_sessions_day,omitempty"`
+	TokensInTotal        int64 `json:"tokens_in_total,omitempty"`
+	TokensOutTotal       int64 `json:"tokens_out_total,omitempty"`
+	ToolCallsTotal       int64 `json:"tool_calls_total,omitempty"`
 }
 
 // Add returns the per-key sum of two Counters. Used by Window/Lifetime
@@ -92,6 +95,9 @@ func (c Counters) Add(o Counters) Counters {
 		PeakConcurrentDay:    c.PeakConcurrentDay + o.PeakConcurrentDay,
 		DistinctProjectsDay:  c.DistinctProjectsDay + o.DistinctProjectsDay,
 		DistinctSessionsDay:  c.DistinctSessionsDay + o.DistinctSessionsDay,
+		TokensInTotal:        c.TokensInTotal + o.TokensInTotal,
+		TokensOutTotal:       c.TokensOutTotal + o.TokensOutTotal,
+		ToolCallsTotal:       c.ToolCallsTotal + o.ToolCallsTotal,
 	}
 }
 
@@ -100,11 +106,13 @@ func (c Counters) Add(o Counters) Counters {
 // BurstRecord), deduped by composite key. Preserved across cache
 // discards via the custom UnmarshalJSON on each list type.
 type Records struct {
-	PeakConcurrent    RecordList      `json:"peak_concurrent"`
-	LongestAgentS     RecordList      `json:"longest_agent_s"`
-	LongestSessionS   RecordList      `json:"longest_session_s"`
-	MostAgentsSession RecordList      `json:"most_agents_session"`
-	BiggestBurst      BurstRecordList `json:"biggest_burst"`
+	PeakConcurrent     RecordList      `json:"peak_concurrent"`
+	LongestAgentS      RecordList      `json:"longest_agent_s"`
+	LongestSessionS    RecordList      `json:"longest_session_s"`
+	MostAgentsSession  RecordList      `json:"most_agents_session"`
+	BiggestBurst       BurstRecordList `json:"biggest_burst"`
+	MostTokensAgent    RecordList      `json:"most_tokens_agent"`
+	MostToolCallsAgent RecordList      `json:"most_tool_calls_agent"`
 }
 
 // RecordEntry covers all non-burst records. Optional fields stay zero

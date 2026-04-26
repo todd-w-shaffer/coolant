@@ -89,6 +89,12 @@ Emitted by `SubagentStop` hook when a subagent terminates.
 | `permission_mode` | string | Permission mode (same enum as start) |
 | `transcript_path` | string | Absolute path to the subagent's conversation log (`.jsonl` in `~/.claude/projects/`) |
 | `agent_count` | int | Total active agents after this stop |
+| `duration_s` | int | Wall-clock seconds between matching `agent.start` and this `agent.stop`. Omitted when no start was recorded for `agent_id` (orphan stop). |
+| `tokens_in` | int | Sum of `usage.input_tokens` across the subagent's transcript. Optional — present only when the transcript was readable and parsed cleanly. Literal `0` is a valid parsed value (idle agent), distinct from absent. |
+| `tokens_out` | int | Sum of `usage.output_tokens` across the subagent's transcript. Same emission discipline as `tokens_in`. |
+| `tool_call_count` | int | Count of `"type":"tool_use"` content items across the subagent's transcript. Same emission discipline. |
+
+The three telemetry fields (`tokens_in` / `tokens_out` / `tool_call_count`) are emitted as a unit — either all three appear (parse succeeded) or none do (parse failed: missing transcript, unreadable, or awk error). Cap on transcript bytes parsed is `5 MiB` to keep the SubagentStop 5s hook budget bounded.
 
 ### `gate.suppress`
 
