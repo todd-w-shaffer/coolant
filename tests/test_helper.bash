@@ -13,6 +13,13 @@ setup() {
   export COOLANT_EVENTS="${TEST_TMPDIR}/coolant.events.jsonl"
   export COOLANT_AGENT_STARTS="${TEST_TMPDIR}/coolant.agent-starts"
   export COOLANT_DEGRADED_COUNT="${TEST_TMPDIR}/coolant.degraded.count"
+  export COOLANT_SESSION_FILE="${TEST_TMPDIR}/coolant.session"
+  # All bats tests run with COOLANT_SESSION_ID=s1 — the session-id
+  # filter in _reconcile_counter and the Go tailer scopes counts to
+  # this id. Tests writing JSONL fixtures with a different session_id
+  # will see those events DROPPED by the awk filter; either use s1 or
+  # explicitly `unset COOLANT_SESSION_ID` to disable filtering.
+  export COOLANT_SESSION_ID="s1"
   export COOLANT_THRESHOLD=3
   export _COOLANT_NCPU=10
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,9 @@ const (
 	EventParallelDisengaged = "parallel.disengaged"
 	EventCounterReset       = "counter.reset"
 	EventPreflightWarn      = "preflight.warn"
+	EventSessionStart       = "session.start"
+	EventSessionEnd         = "session.end"
+	EventCounterUnderflow   = "counter.underflow"
 )
 
 // GateEvent represents a parsed JSONL event from the coolant event log.
@@ -45,13 +49,63 @@ type GateEvent struct {
 	Rewritten      string `json:"rewritten,omitempty"`
 }
 
+// isSessionScoped reports whether an event type is bound to a specific
+// session and should therefore be filtered against the configured
+// current-session id. Events without session affinity (gate.*,
+// parallel.*, counter.reset, preflight.warn) are global signals that
+// pass through regardless of the configured session.
+func isSessionScoped(event string) bool {
+	switch event {
+	case EventAgentStart, EventAgentStop,
+		EventSessionStart, EventSessionEnd,
+		EventCounterUnderflow:
+		return true
+	}
+	return false
+}
+
 // TailEvents tails the JSONL event file, sending parsed events to ch.
 // It polls at the given interval, seeking past previously-read bytes.
-// Closes ch when done is closed.
-func TailEvents(ch chan<- GateEvent, path string, interval time.Duration, done <-chan struct{}) {
+// Closes ch when done is closed. sessionPath, when non-empty, points
+// at the sidecar holding the current session id; session-scoped
+// events whose session_id doesn't match are dropped before reaching
+// ch. An empty sessionPath disables filtering (degraded fallback —
+// matches pre-spec behavior).
+func TailEvents(ch chan<- GateEvent, path, sessionPath string, interval time.Duration, done <-chan struct{}) {
 	defer close(ch)
 
-	var offset int64
+	var (
+		offset  int64
+		sid     string
+		sidModT time.Time
+	)
+	loadSid := func() {
+		if sessionPath == "" {
+			return
+		}
+		info, err := os.Stat(sessionPath)
+		if err != nil {
+			return
+		}
+		if !sidModT.IsZero() && info.ModTime().Equal(sidModT) {
+			return
+		}
+		data, err := os.ReadFile(sessionPath)
+		if err != nil {
+			return
+		}
+		sid = strings.TrimRight(string(data), "\r\n")
+		sidModT = info.ModTime()
+	}
+	loadSid()
+
+	filter := func(evt GateEvent) bool {
+		if sid == "" || !isSessionScoped(evt.Event) {
+			return true
+		}
+		return evt.SessionID == sid
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -60,14 +114,16 @@ func TailEvents(ch chan<- GateEvent, path string, interval time.Duration, done <
 		case <-done:
 			return
 		case <-ticker.C:
-			offset = readNewLines(ch, path, offset, done)
+			loadSid()
+			offset = readNewLines(ch, path, offset, done, filter)
 		}
 	}
 }
 
 // readNewLines reads any new lines appended since offset, parses them,
-// and sends events to ch. Returns the updated offset.
-func readNewLines(ch chan<- GateEvent, path string, offset int64, done <-chan struct{}) int64 {
+// and sends events to ch when keep returns true. Returns the updated
+// offset.
+func readNewLines(ch chan<- GateEvent, path string, offset int64, done <-chan struct{}, keep func(GateEvent) bool) int64 {
 	f, err := os.Open(path)
 	if err != nil {
 		return offset // file doesn't exist yet
@@ -96,6 +152,9 @@ func readNewLines(ch chan<- GateEvent, path string, offset int64, done <-chan st
 		var ev GateEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
 			continue // skip malformed lines
+		}
+		if keep != nil && !keep(ev) {
+			continue
 		}
 		select {
 		case ch <- ev:

@@ -93,7 +93,11 @@ func (m model) Init() tea.Cmd {
 	if evPath == "" {
 		evPath = coolantTmpPath("events.jsonl")
 	}
-	go collector.TailEvents(m.eventChan, evPath, config.EventInterval, m.done)
+	sessionPath := os.Getenv("COOLANT_SESSION_FILE")
+	if sessionPath == "" {
+		sessionPath = coolantTmpPath("session")
+	}
+	go collector.TailEvents(m.eventChan, evPath, sessionPath, config.EventInterval, m.done)
 
 	if m.aggregator != nil {
 		go func() {

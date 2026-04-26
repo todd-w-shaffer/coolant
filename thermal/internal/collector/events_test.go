@@ -23,7 +23,7 @@ func TestTailEventsReadsNewLines(t *testing.T) {
 	ch := make(chan GateEvent, 16)
 	done := make(chan struct{})
 
-	go TailEvents(ch, path, 50*time.Millisecond, done)
+	go TailEvents(ch, path, "", 50*time.Millisecond, done)
 
 	// Collect events with timeout
 	var events []GateEvent
@@ -59,7 +59,7 @@ func TestTailEventsHandlesMissingFile(t *testing.T) {
 	ch := make(chan GateEvent, 16)
 	done := make(chan struct{})
 
-	go TailEvents(ch, path, 50*time.Millisecond, done)
+	go TailEvents(ch, path, "", 50*time.Millisecond, done)
 
 	// Wait a bit — should not crash
 	time.Sleep(200 * time.Millisecond)
@@ -94,7 +94,7 @@ func TestTailEventsSkipsMalformedLines(t *testing.T) {
 	ch := make(chan GateEvent, 16)
 	done := make(chan struct{})
 
-	go TailEvents(ch, path, 50*time.Millisecond, done)
+	go TailEvents(ch, path, "", 50*time.Millisecond, done)
 
 	timeout := time.After(2 * time.Second)
 	select {
@@ -135,7 +135,7 @@ func TestTailEventsParsesEnrichedFields(t *testing.T) {
 	ch := make(chan GateEvent, 16)
 	done := make(chan struct{})
 
-	go TailEvents(ch, path, 50*time.Millisecond, done)
+	go TailEvents(ch, path, "", 50*time.Millisecond, done)
 
 	var events []GateEvent
 	timeout := time.After(2 * time.Second)
@@ -183,6 +183,146 @@ func TestTailEventsParsesEnrichedFields(t *testing.T) {
 	}
 }
 
+func TestTailerFiltersBySession(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	sessionPath := filepath.Join(dir, "coolant.session")
+
+	if err := os.WriteFile(sessionPath, []byte("s1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mixed-session agent events; only s1 should reach the channel.
+	f.WriteString(`{"ts":"2026-04-25T10:00:00Z","schema":1,"event":"agent.start","session_id":"s1","agent_id":"a1"}` + "\n")
+	f.WriteString(`{"ts":"2026-04-25T10:00:01Z","schema":1,"event":"agent.start","session_id":"s2","agent_id":"a2"}` + "\n")
+	// Empty session_id agent event must be dropped when sid is configured.
+	f.WriteString(`{"ts":"2026-04-25T10:00:02Z","schema":1,"event":"agent.stop","agent_id":"orphan"}` + "\n")
+	// Global event types pass through regardless of session_id presence.
+	f.WriteString(`{"ts":"2026-04-25T10:00:03Z","schema":1,"event":"gate.cap","command":"vitest"}` + "\n")
+	f.WriteString(`{"ts":"2026-04-25T10:00:04Z","schema":1,"event":"agent.stop","session_id":"s1","agent_id":"a1"}` + "\n")
+	f.Close()
+
+	ch := make(chan GateEvent, 16)
+	done := make(chan struct{})
+	go TailEvents(ch, path, sessionPath, 50*time.Millisecond, done)
+
+	got := map[string]int{}
+	timeout := time.After(2 * time.Second)
+	for total := 0; total < 3; {
+		select {
+		case ev := <-ch:
+			got[ev.Event+"/"+ev.SessionID]++
+			total++
+		case <-timeout:
+			t.Fatalf("timed out; got %v", got)
+		}
+	}
+	close(done)
+
+	if got["agent.start/s1"] != 1 {
+		t.Errorf("want 1 agent.start/s1, got %d", got["agent.start/s1"])
+	}
+	if got["agent.start/s2"] != 0 {
+		t.Errorf("want 0 agent.start/s2, got %d", got["agent.start/s2"])
+	}
+	if got["agent.stop/s1"] != 1 {
+		t.Errorf("want 1 agent.stop/s1, got %d", got["agent.stop/s1"])
+	}
+	if got["agent.stop/"] != 0 {
+		t.Errorf("want empty-sid agent.stop dropped, got %d", got["agent.stop/"])
+	}
+	if got["gate.cap/"] != 1 {
+		t.Errorf("want 1 global gate.cap, got %d", got["gate.cap/"])
+	}
+}
+
+func TestTailerNoFilterWhenSidecarMissing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	sessionPath := filepath.Join(dir, "missing.session")
+
+	f, _ := os.Create(path)
+	f.WriteString(`{"ts":"2026-04-25T10:00:00Z","schema":1,"event":"agent.start","session_id":"s1"}` + "\n")
+	f.WriteString(`{"ts":"2026-04-25T10:00:01Z","schema":1,"event":"agent.start","session_id":"s2"}` + "\n")
+	f.Close()
+
+	ch := make(chan GateEvent, 16)
+	done := make(chan struct{})
+	go TailEvents(ch, path, sessionPath, 50*time.Millisecond, done)
+
+	count := 0
+	timeout := time.After(2 * time.Second)
+	for count < 2 {
+		select {
+		case <-ch:
+			count++
+		case <-timeout:
+			t.Fatalf("missing sidecar should disable filter; got %d/2 events", count)
+		}
+	}
+	close(done)
+}
+
+func TestTailerRereadsSidecarOnMtimeChange(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	sessionPath := filepath.Join(dir, "coolant.session")
+
+	if err := os.WriteFile(sessionPath, []byte("s1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ch := make(chan GateEvent, 16)
+	done := make(chan struct{})
+	go TailEvents(ch, path, sessionPath, 50*time.Millisecond, done)
+
+	f, _ := os.Create(path)
+	f.WriteString(`{"ts":"2026-04-25T10:00:00Z","schema":1,"event":"agent.start","session_id":"s1"}` + "\n")
+	f.Close()
+
+	timeout := time.After(2 * time.Second)
+	select {
+	case ev := <-ch:
+		if ev.SessionID != "s1" {
+			t.Fatalf("first event sid: got %q want s1", ev.SessionID)
+		}
+	case <-timeout:
+		t.Fatal("first event timeout")
+	}
+
+	// Switch the sidecar to s2; later s1 events should now be dropped.
+	// Use truncate+write+chtimes so the mtime advances even on
+	// fast filesystems where same-second writes appear unchanged.
+	if err := os.WriteFile(sessionPath, []byte("s2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Second)
+	if err := os.Chtimes(sessionPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+
+	// Append two events: one s1 (now should be dropped) and one s2 (should arrive).
+	f, _ = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString(`{"ts":"2026-04-25T10:00:01Z","schema":1,"event":"agent.start","session_id":"s1"}` + "\n")
+	f.WriteString(`{"ts":"2026-04-25T10:00:02Z","schema":1,"event":"agent.start","session_id":"s2"}` + "\n")
+	f.Close()
+
+	timeout = time.After(2 * time.Second)
+	select {
+	case ev := <-ch:
+		if ev.SessionID != "s2" {
+			t.Fatalf("after sidecar swap, expected s2, got %q", ev.SessionID)
+		}
+	case <-timeout:
+		t.Fatal("timeout waiting for s2 event")
+	}
+	close(done)
+}
+
 func TestTailEventsHandlesTruncation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
@@ -195,7 +335,7 @@ func TestTailEventsHandlesTruncation(t *testing.T) {
 	ch := make(chan GateEvent, 16)
 	done := make(chan struct{})
 
-	go TailEvents(ch, path, 50*time.Millisecond, done)
+	go TailEvents(ch, path, "", 50*time.Millisecond, done)
 
 	// Wait for first event
 	timeout := time.After(2 * time.Second)

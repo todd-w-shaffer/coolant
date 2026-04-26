@@ -9,21 +9,42 @@ source "${SCRIPT_DIR}/common.sh"
 input=$(cat)
 _extract_agent_fields "$input"
 
+# Defense against CC SubagentStop bug (#44971/#49671): some shutdown
+# paths fire SubagentStop with an empty agent_type even when no real
+# subagent ran. Treating those as agent stops corrupts the counter
+# and the orphan column. Drop them before any state mutation —
+# nothing logged into JSONL, no counter change, no parallel-disengage
+# check. Keeps a coolant_log line for diagnostic visibility.
+if [ -z "$_agent_type" ]; then
+  coolant_log "agent-stop: dropped empty agent_type (CC bug defense)"
+  exit 0
+fi
+
 # Atomic decrement via mkdir mutex (see common.sh)
 if ! coolant_lock; then
   coolant_log "agent-stop: lock failed, proceeding unprotected"
 fi
 current=$(_read_counter)
 next=$((current - 1))
+underflow_raw=""
 
-# Floor at zero
+# Floor at zero. A trigger here means we under-counted upstream;
+# the counter.underflow event below carries the pre-floor value for
+# diagnostic visibility. Emission happens AFTER coolant_unlock since
+# coolant_event takes its own (non-reentrant) lock.
 if [ "$next" -lt 0 ]; then
+  underflow_raw="$next"
   next=0
 fi
 
 echo "$next" > "$COOLANT_COUNTER"
 _compute_agent_duration "$_agent_id" "$(date +%s)"
 coolant_unlock
+
+if [ -n "$underflow_raw" ]; then
+  coolant_log "WARN: counter underflow (raw=$underflow_raw)"
+  coolant_event '"event":"counter.underflow","session_id":"'"$_agent_session_id"'","raw":'"$underflow_raw"
+fi
 
 coolant_log "agent stopped ($next remaining)"
 _stop_tail=""

@@ -224,6 +224,27 @@ func TestDegradedWritesTotalAbsentIsZero(t *testing.T) {
 
 // ── records ────────────────────────────────────────────────
 
+func TestFoldDropsEmptyAgentType(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// CC orphan-stop bug pattern: empty agent_type with populated agent_id.
+	// Pre-spec behavior would have inflated AgentsOrphaned. Defensive
+	// skip means counters stay at zero — the bash hook is the primary
+	// drop site, but this guard catches in-flight degraded-write
+	// fallbacks and historical JSONL replays.
+	stop := mkEvent(1, collector.EventAgentStop, "ghost", "s1", now)
+	stop.AgentType = ""
+	a.Fold(stop, 0)
+
+	life := a.Snapshot().Lifetime()
+	if got := life.AgentsCompleted; got != 0 {
+		t.Errorf("empty agent_type stop should not complete; got %d", got)
+	}
+	if got := life.AgentsOrphaned; got != 0 {
+		t.Errorf("empty agent_type stop should not orphan; got %d", got)
+	}
+}
+
 func TestRecordPeakConcurrent(t *testing.T) {
 	a := newTestAggregator(t)
 	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
@@ -446,6 +467,221 @@ func equalStringSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// ── lifecycle (session.start / session.end) ────────────────
+
+func TestSessionEndUsesLifecycleMath(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// Lifecycle: session.start, agent runs, session.end. Duration
+	// reads from explicit start/end, not from first agent.start.
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now.Add(30*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(50*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(120*time.Second)), 0)
+
+	rec := a.Snapshot().Records.LongestSessionS
+	if rec.Value != 120 {
+		t.Errorf("LongestSessionS via lifecycle math: want 120, got %d", rec.Value)
+	}
+	if rec.SessionID != "s1" {
+		t.Errorf("LongestSessionS.SessionID: want s1, got %q", rec.SessionID)
+	}
+}
+
+func TestSessionEndFallbackToInferred(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// No session.start (pre-rollout JSONL); session.end falls back to
+	// (end - first agent.start) duration.
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(40*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(75*time.Second)), 0)
+
+	rec := a.Snapshot().Records.LongestSessionS
+	if rec.Value != 75 {
+		t.Errorf("inferred-fallback LongestSessionS: want 75, got %d", rec.Value)
+	}
+}
+
+func TestSessionEndSynthesizesOrphans(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// Three active agents in s1; session.end fires before any stop.
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now.Add(time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a2", "s1", now.Add(2*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a3", "s1", now.Add(3*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(60*time.Second)), 0)
+
+	life := a.Snapshot().Lifetime()
+	if life.AgentsOrphaned != 3 {
+		t.Errorf("AgentsOrphaned after session.end: want 3, got %d", life.AgentsOrphaned)
+	}
+	// Verify the active set was cleared.
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if got := len(a.agentStarts); got != 0 {
+		t.Errorf("agentStarts: want 0 after orphan synthesis, got %d", got)
+	}
+}
+
+func TestSessionEndIdempotentForRepeatedEnds(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now.Add(time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(60*time.Second)), 0)
+	// Second session.end (e.g., from JSONL replay) — must not
+	// double-count orphans.
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(60*time.Second)), 0)
+	if got := a.Snapshot().Lifetime().AgentsOrphaned; got != 1 {
+		t.Errorf("repeat session.end double-counted orphans: got %d", got)
+	}
+}
+
+func TestSessionStartIdempotent(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// Two session.start events for the same sid (e.g., resume + clear
+	// both bypassing the matcher in some hypothetical config). The
+	// EARLIEST start wins so duration math doesn't shrink on replay.
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now.Add(30*time.Second)), 0)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(100*time.Second)), 0)
+
+	rec := a.Snapshot().Records.LongestSessionS
+	if rec.Value != 100 {
+		t.Errorf("idempotent session.start: want 100s (from earliest), got %d", rec.Value)
+	}
+}
+
+// ── negative-duration clamp ────────────────────────────────
+
+func TestNegativeDurationClampsAgentStop(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// agent.stop ts < agent.start ts (NTP backstep simulation).
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStop, "a1", "s1", now.Add(-30*time.Second)), 0)
+	// No record set; no panic. LongestAgentS stays at zero value.
+	if got := a.Snapshot().Records.LongestAgentS.Value; got != 0 {
+		t.Errorf("negative agent duration leaked into record: got %d", got)
+	}
+}
+
+func TestNegativeDurationClampsSessionEnd(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "s1", now), 0)
+	// session.end before session.start (NTP backstep).
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "s1", now.Add(-1*time.Hour)), 0)
+	if got := a.Snapshot().Records.LongestSessionS.Value; got != 0 {
+		t.Errorf("negative session duration leaked: got %d", got)
+	}
+}
+
+// ── staleness sweep ────────────────────────────────────────
+
+func TestStaleSessionAutoClosesAtCutoff(t *testing.T) {
+	a := newTestAggregator(t)
+	// Backdate session.start beyond the 8h cutoff; last activity at
+	// +10min. Snapshot's staleness sweep computes duration as
+	// (last_activity - start) = 10min.
+	start := time.Now().Add(-9 * time.Hour)
+	activity := start.Add(10 * time.Minute)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "stale", start), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "stale", activity), 0)
+
+	rec := a.Snapshot().Records.LongestSessionS
+	want := int64(10 * 60)
+	if rec.Value != want {
+		t.Errorf("stale-session sweep: want %d, got %d", want, rec.Value)
+	}
+	if rec.SessionID != "stale" {
+		t.Errorf("stale-session sid: want stale, got %q", rec.SessionID)
+	}
+}
+
+func TestStaleSessionRespectsCutoffBoundary(t *testing.T) {
+	a := newTestAggregator(t)
+	// Backdate to 7h ago — under 8h cutoff. Sweep must NOT fire.
+	start := time.Now().Add(-7 * time.Hour)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "fresh", start), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "fresh", start.Add(time.Minute)), 0)
+
+	if got := a.Snapshot().Records.LongestSessionS.Value; got != 0 {
+		t.Errorf("under-cutoff session was swept: got %d", got)
+	}
+}
+
+func TestStaleSessionLateEndStillCloses(t *testing.T) {
+	a := newTestAggregator(t)
+	start := time.Now().Add(-10 * time.Hour)
+	activity := start.Add(10 * time.Minute)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "late", start), 0)
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "late", activity), 0)
+
+	// Snapshot before session.end — sweep records 10min.
+	first := a.Snapshot().Records.LongestSessionS.Value
+	if first != 600 {
+		t.Fatalf("staleness sweep precondition: want 600, got %d", first)
+	}
+
+	// Late session.end arrives — lifecycle math gets 10h, replaces
+	// the swept value. No double-count, no regression.
+	end := start.Add(10 * time.Hour)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "late", end), 0)
+
+	rec := a.Snapshot().Records.LongestSessionS
+	if rec.Value != int64(10*3600) {
+		t.Errorf("late session.end: want %d, got %d", 10*3600, rec.Value)
+	}
+}
+
+// ── counter.underflow ──────────────────────────────────────
+
+func TestCounterUnderflowIsFoldNoOp(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	// counter.underflow is diagnostic-only at v1 — no aggregator
+	// mutation, no panic.
+	evt := mkEvent(1, collector.EventCounterUnderflow, "", "s1", now)
+	a.Fold(evt, 0)
+	if life := a.Snapshot().Lifetime(); life != (Counters{}) {
+		t.Errorf("counter.underflow mutated counters: %+v", life)
+	}
+}
+
+// ── pruneStale lifecycle map cleanup ──────────────────────
+
+func TestPruneStaleDropsLifecycleMaps(t *testing.T) {
+	a := newTestAggregator(t)
+	old := time.Now().Add(-25 * time.Hour) // beyond staleAgentCutoff (24h)
+	fresh := time.Now().Add(-1 * time.Hour)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "old", old), 0)
+	a.Fold(mkEvent(1, collector.EventSessionEnd, "", "old", old.Add(time.Minute)), 0)
+	a.Fold(mkEvent(1, collector.EventSessionStart, "", "fresh", fresh), 0)
+
+	a.mu.Lock()
+	a.pruneStale(time.Now())
+	a.mu.Unlock()
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if _, ok := a.sessionStart["old"]; ok {
+		t.Errorf("pruneStale left old sessionStart entry")
+	}
+	if _, ok := a.sessionEnded["old"]; ok {
+		t.Errorf("pruneStale left old sessionEnded entry")
+	}
+	if _, ok := a.lastActivityForSession["old"]; ok {
+		t.Errorf("pruneStale left old lastActivityForSession entry")
+	}
+	if _, ok := a.sessionStart["fresh"]; !ok {
+		t.Errorf("pruneStale dropped fresh session — only stale entries should go")
+	}
 }
 
 // ── concurrency ────────────────────────────────────────────

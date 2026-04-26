@@ -6,8 +6,28 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# Read hook stdin for cwd
+# Read hook stdin for cwd + session_id
 input=$(cat)
+
+# Capture session_id into the sidecar BEFORE any event emission. The
+# sidecar (read by _reconcile_counter and the Go tailer) is the
+# canonical source for "which session is this thermo / awk pass scoped
+# to" — without it written first, downstream readers race against the
+# very first emitted event.
+session_id=$(printf '%s' "$input" | _json_field session_id)
+if [ -n "$session_id" ]; then
+  printf '%s\n' "$session_id" > "$COOLANT_SESSION_FILE"
+  export COOLANT_SESSION_ID="$session_id"
+fi
+
+# Lifecycle anchor BEFORE counter epoch: aggregator's
+# session.start case folds the lifecycle map; consumers that fold
+# events in JSONL order see the lifecycle anchor before the counter
+# epoch resets. (Aggregator's counter.reset case is a no-op — the
+# two events are not redundant.)
+if [ -n "$session_id" ]; then
+  coolant_event '"event":"session.start","session_id":"'"$session_id"'"'
+fi
 
 # Reset agent counter epoch — new session starts fresh
 coolant_event '"event":"counter.reset"'

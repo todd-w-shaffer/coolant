@@ -14,6 +14,21 @@ Every event has:
 | `schema` | int | Envelope shape version. Currently `1`. Pure-additive field changes preserve the version; renames or removals bump it. |
 | `event` | string | Event type (see below) |
 
+### Session-scoped vs global events
+
+Events split into two contracts based on whether they belong to a
+specific Claude Code session:
+
+| Scope | Events | Filter behavior |
+|-------|--------|----------------|
+| Session-scoped | `agent.start`, `agent.stop`, `session.start`, `session.end`, `counter.underflow` | Filtered to the current session's `session_id` by both the bash awk reconciler and the Go tailer (`isSessionScoped` in `internal/collector/events.go`) |
+| Global | `gate.suppress`, `gate.cap`, `parallel.engaged`, `parallel.disengaged`, `counter.reset`, `preflight.warn` | Pass-through; consumed regardless of session |
+
+The current session id is written to `$TMPDIR/coolant-$USER.session`
+by `preflight.sh` on `SessionStart` and read by both filters. When
+the sidecar is missing (degraded fallback), session-scoped events
+pass through unfiltered — matches pre-spec behavior.
+
 ### Envelope versioning
 
 `schema:1` is a **shape contract**, not a deployment marker — any
@@ -88,11 +103,55 @@ Emitted when a test runner's concurrency is capped based on active agent count.
 | `command` | string | Original command |
 | `rewritten` | string | Command with concurrency flag injected (e.g. `-parallel 6`) |
 
+### `session.start`
+
+Emitted by the `SessionStart` (`startup` matcher only) hook at the
+top of `preflight.sh`, BEFORE `counter.reset`. Lifecycle anchor for
+explicit session-duration math (`longest_session_s`). Emitted only on
+genuine session creation — `resume` / `clear` / `compact` do not fire
+it. Idempotent at the aggregator: a duplicate `session.start` with
+the same `session_id` keeps the earliest start timestamp.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | string | Claude Code session UUID |
+
 ### `counter.reset`
 
-Emitted at session start (`SessionStart` hook) to establish a baseline for agent count reconciliation.
+Emitted at session start (`SessionStart` hook) to establish a baseline
+for agent count reconciliation. Pinned to fire AFTER `session.start`
+so consumers folding the JSONL see the lifecycle anchor first. The
+aggregator's `EventCounterReset` fold is a no-op (sessions are keyed
+on `session_id`, not on counter epochs).
 
 No additional fields.
+
+### `session.end`
+
+Emitted by the `SessionEnd` hook (matcher `.*`) via
+`scripts/session-end.sh`. Closes a session for `longest_session_s`
+math. Kill -9 / SIGKILL / OS reboot do NOT fire `SessionEnd`; the
+aggregator's 8h staleness sweep in `Snapshot` closes those sessions
+using last-observed activity as the implicit end timestamp.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | string | Claude Code session UUID |
+
+### `counter.underflow`
+
+Diagnostic event emitted by `agent-stop.sh` when the active-agent
+counter would go negative (i.e. more `agent.stop` events than
+`agent.start`). The counter is still floored at zero on disk; this
+event surfaces the under-count signal for diagnosis without masking
+it. Emitted AFTER the standard `agent.stop` line, after
+`coolant_unlock`. Not a user-visible alert in v1 — folded as a
+no-op by the aggregator and consumed only via JSONL inspection.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `session_id` | string | Claude Code session UUID |
+| `raw` | int | The pre-floor counter value (e.g. `-1`) |
 
 ### `parallel.disengaged`
 

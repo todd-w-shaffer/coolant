@@ -15,6 +15,10 @@ COOLANT_DEGRADED_COUNT="${COOLANT_DEGRADED_COUNT:-${_COOLANT_DIR}coolant-${USER}
 # Populated by .claude/hooks/audit-review-agents.sh, gated against by
 # .claude/hooks/enforce-spec-to-ship-reviews.sh. Truncated by preflight.
 COOLANT_REVIEW_AUDIT="${COOLANT_REVIEW_AUDIT:-${_COOLANT_DIR}coolant-${USER}.review-audit.jsonl}"
+# Sidecar holding the current session_id, written by preflight.sh on
+# session start. Read by _reconcile_counter and the Go tailer to scope
+# per-session counters and event consumption.
+COOLANT_SESSION_FILE="${COOLANT_SESSION_FILE:-${_COOLANT_DIR}coolant-${USER}.session}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
 _COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
@@ -104,11 +108,33 @@ _reconcile_counter() {
     _read_counter
     return
   fi
+  local sid="${COOLANT_SESSION_ID:-}"
+  if [ -z "$sid" ] && [ -f "$COOLANT_SESSION_FILE" ]; then
+    sid=$(cat "$COOLANT_SESSION_FILE" 2>/dev/null) || sid=""
+  fi
   local jsonl_count file_count
-  jsonl_count=$(awk '
+  # When sid is empty (degraded fallback), the per-line filter is a
+  # no-op and all agent.start/agent.stop lines count — same as before
+  # the session-id filter landed. When sid is set, only events whose
+  # line carries a matching session_id contribute; lines with empty
+  # or mismatched session_id are dropped per the per-session
+  # correctness contract.
+  jsonl_count=$(awk -v sid="$sid" '
+    {
+      # Extract session_id value from the line. The +14/-15 offsets
+      # strip the literal `"session_id":"` prefix (14 chars) and the
+      # trailing `"` from a match of length RLENGTH (so the value is
+      # RLENGTH - 15 chars). Renaming or padding the key requires
+      # updating both numbers.
+      if (match($0, /"session_id":"[^"]*"/)) {
+        line_sid = substr($0, RSTART+14, RLENGTH-15)
+      } else {
+        line_sid = ""
+      }
+    }
     /"event":"counter\.reset"[,}]/ { starts=0; stops=0; next }
-    /"event":"agent\.start"[,}]/   { starts++; next }
-    /"event":"agent\.stop"[,}]/    { stops++; next }
+    /"event":"agent\.start"[,}]/   { if (sid == "" || line_sid == sid) starts++; next }
+    /"event":"agent\.stop"[,}]/    { if (sid == "" || line_sid == sid) stops++; next }
     END {
       d = starts - stops
       if (d < 0) d = 0

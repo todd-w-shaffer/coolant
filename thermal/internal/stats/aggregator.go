@@ -50,6 +50,13 @@ type Aggregator struct {
 	sessionAgentCount map[string]int64
 	burstWindow       []time.Time
 
+	// Lifecycle map — explicit session.start / session.end pairs let
+	// LongestSessionS use real wall-clock duration instead of inferring
+	// from the first agent.start.
+	sessionStart           map[string]time.Time
+	sessionEnded           map[string]bool
+	lastActivityForSession map[string]time.Time
+
 	// baseline = on-disk state at last load/checkpoint; delta = (current -
 	// baseline) merged into fresh disk read at Checkpoint time so two
 	// thermos can't clobber each other's increments.
@@ -82,16 +89,19 @@ func New(cfg Config) *Aggregator {
 		cfg.TranscriptStat = statSize
 	}
 	a := &Aggregator{
-		cfg:               cfg,
-		byType:            map[string]int64{},
-		byProject:         map[string]int64{},
-		daily:             map[string]Counters{},
-		seenSessions:      map[string]struct{}{},
-		agentStarts:       map[string]time.Time{},
-		agentMeta:         map[string]agentMeta{},
-		sessionFirstStart: map[string]time.Time{},
-		sessionAgentCount: map[string]int64{},
-		records:           Records{BiggestBurst: BurstRecord{WindowS: burstWindowS}},
+		cfg:                    cfg,
+		byType:                 map[string]int64{},
+		byProject:              map[string]int64{},
+		daily:                  map[string]Counters{},
+		seenSessions:           map[string]struct{}{},
+		agentStarts:            map[string]time.Time{},
+		agentMeta:              map[string]agentMeta{},
+		sessionFirstStart:      map[string]time.Time{},
+		sessionAgentCount:      map[string]int64{},
+		sessionStart:           map[string]time.Time{},
+		sessionEnded:           map[string]bool{},
+		lastActivityForSession: map[string]time.Time{},
+		records:                Records{BiggestBurst: BurstRecord{WindowS: burstWindowS}},
 	}
 	if loaded, ok := loadCache(cfg.CachePath); ok {
 		a.byType = copyInt64Map(loaded.ByType)
@@ -119,15 +129,46 @@ func dayKey(t time.Time) string {
 // etc.). Mirrors the bash side's 24h cutoff in _compute_agent_duration.
 const staleAgentCutoff = 24 * time.Hour
 
-// pruneStale drops agentStarts/agentMeta entries older than the cutoff.
-// Caller must hold a.mu.Lock(). Cheap relative to Checkpoint's disk
-// dance; runs once per checkpoint cycle.
+// sessionStartCutoff auto-closes sessions that received session.start
+// but never matched a session.end (kill -9, OS reboot, hard crash).
+// 8h sits well above any plausible interactive session and well below
+// staleAgentCutoff, so it triggers before agent state is dropped.
+// Computed at Snapshot read time, not at Fold, so a late session.end
+// for the same sid still closes cleanly.
+const sessionStartCutoff = 8 * time.Hour
+
+// clampDuration computes (end - start) in seconds, clamping a negative
+// result to zero. NTP backstep across JSONL serialization can push a
+// stop timestamp before its start in wall-clock terms; clamping keeps
+// the record contract (non-negative, never panics) without dropping
+// the event entirely.
+func clampDuration(end, start time.Time) int64 {
+	d := int64(end.Sub(start).Seconds())
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// pruneStale drops agentStarts/agentMeta entries older than the cutoff,
+// and also bounds the lifecycle maps (sessionStart, sessionEnded,
+// lastActivityForSession) so a long-lived thermo process doesn't
+// accumulate unbounded per-session state across days/weeks. Caller
+// must hold a.mu.Lock(). Cheap relative to Checkpoint's disk dance;
+// runs once per checkpoint cycle.
 func (a *Aggregator) pruneStale(now time.Time) {
 	cutoff := now.Add(-staleAgentCutoff)
 	for id, started := range a.agentStarts {
 		if started.Before(cutoff) {
 			delete(a.agentStarts, id)
 			delete(a.agentMeta, id)
+		}
+	}
+	for sid, last := range a.lastActivityForSession {
+		if last.Before(cutoff) {
+			delete(a.lastActivityForSession, sid)
+			delete(a.sessionStart, sid)
+			delete(a.sessionEnded, sid)
 		}
 	}
 }
@@ -168,6 +209,12 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 		a.firstSeen = evt.Timestamp
 	}
 	a.lastUpdated = evt.Timestamp
+	if evt.SessionID != "" {
+		// Last-activity tracking feeds the staleness sweep in
+		// Snapshot — a session that started but never ended uses its
+		// last observed activity as the implicit close timestamp.
+		a.lastActivityForSession[evt.SessionID] = evt.Timestamp
+	}
 
 	day := dayKey(evt.Timestamp)
 	bucket := a.daily[day]
@@ -214,6 +261,14 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 		a.observeBurst(evt.Timestamp, evt.SessionID)
 
 	case collector.EventAgentStop:
+		// CC orphan-stop bug defense (#44971/#49671): empty agent_type
+		// is the upstream signature. Bash drops these at the hook
+		// before they enter the JSONL bus; this guard catches
+		// in-flight lines from degraded-write fallback or pre-fix
+		// historical events on replay.
+		if evt.AgentType == "" {
+			return
+		}
 		bucket.AgentsCompleted++
 		var matched bool
 		if evt.AgentID != "" {
@@ -230,7 +285,7 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 		if matched {
 			start, ok := a.agentStarts[evt.AgentID]
 			if ok {
-				duration := int64(evt.Timestamp.Sub(start).Seconds())
+				duration := clampDuration(evt.Timestamp, start)
 				meta := a.agentMeta[evt.AgentID]
 				if duration > a.records.LongestAgentS.Value {
 					a.records.LongestAgentS = RecordEntry{
@@ -246,9 +301,12 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 				delete(a.agentMeta, evt.AgentID)
 			}
 		}
-		if evt.SessionID != "" {
+		// Inferred-from-first-agent path: only when no explicit
+		// session.end has closed this sid yet. session.end takes
+		// precedence and sets the record from real lifecycle math.
+		if evt.SessionID != "" && !a.sessionEnded[evt.SessionID] {
 			if first, ok := a.sessionFirstStart[evt.SessionID]; ok {
-				duration := int64(evt.Timestamp.Sub(first).Seconds())
+				duration := clampDuration(evt.Timestamp, first)
 				if duration > a.records.LongestSessionS.Value {
 					a.records.LongestSessionS = RecordEntry{
 						Value:     duration,
@@ -265,6 +323,58 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 	case collector.EventCounterReset:
 		// No-op for stats — sessions are keyed on session_id, not on
 		// counter epochs (locked decision §0).
+
+	case collector.EventSessionStart:
+		// Idempotent: keep the earliest start timestamp per sid.
+		// session.end's lifecycle math reads from this map.
+		if evt.SessionID == "" {
+			return
+		}
+		if _, seen := a.sessionStart[evt.SessionID]; !seen {
+			a.sessionStart[evt.SessionID] = evt.Timestamp
+		}
+
+	case collector.EventSessionEnd:
+		if evt.SessionID == "" {
+			return
+		}
+		// Lifecycle math: prefer (session.end - session.start) when
+		// the matching session.start was seen; fall back to
+		// (session.end - first agent.start) for sessions that pre-date
+		// the lifecycle event rollout. Negative-duration clamp covers
+		// NTP backstep on either path.
+		var duration int64
+		if start, ok := a.sessionStart[evt.SessionID]; ok {
+			duration = clampDuration(evt.Timestamp, start)
+		} else if first, ok := a.sessionFirstStart[evt.SessionID]; ok {
+			duration = clampDuration(evt.Timestamp, first)
+		}
+		if duration > a.records.LongestSessionS.Value {
+			a.records.LongestSessionS = RecordEntry{
+				Value:     duration,
+				SessionID: evt.SessionID,
+				At:        evt.Timestamp,
+			}
+		}
+		// Synthesize orphan accounting for any agents still active in
+		// this session — the JSONL bus stays single-writer; we don't
+		// fabricate agent.stop lines, we just count them as orphaned
+		// at fold time.
+		for id, meta := range a.agentMeta {
+			if meta.SessionID != evt.SessionID {
+				continue
+			}
+			bucket.AgentsOrphaned++
+			delete(a.agentStarts, id)
+			delete(a.agentMeta, id)
+		}
+		a.sessionEnded[evt.SessionID] = true
+
+	case collector.EventCounterUnderflow:
+		// Diagnostic-only at v1: bash already logged + emitted; the
+		// aggregator records nothing user-visible. Fold returning
+		// without mutation is intentional — see locked decision §0.
+		return
 
 	default:
 		// Unknown event type: silent drop, no panic. New event types
@@ -284,11 +394,40 @@ func (a *Aggregator) Snapshot() Snapshot {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	records := a.records
+	// Staleness sweep: sessions with session.start but no session.end
+	// after sessionStartCutoff (8h) are auto-closed using their last
+	// observed activity as the implicit end. Computed on read so a
+	// late session.end for the same sid still wins via Fold's
+	// lifecycle math. Operates on a copy of records — a.records itself
+	// is not mutated under the read lock.
+	now := time.Now()
+	for sid, start := range a.sessionStart {
+		if a.sessionEnded[sid] {
+			continue
+		}
+		if now.Sub(start) < sessionStartCutoff {
+			continue
+		}
+		end, ok := a.lastActivityForSession[sid]
+		if !ok {
+			end = start
+		}
+		duration := clampDuration(end, start)
+		if duration > records.LongestSessionS.Value {
+			records.LongestSessionS = RecordEntry{
+				Value:     duration,
+				SessionID: sid,
+				At:        end,
+			}
+		}
+	}
+
 	s := Snapshot{
 		SchemaVersion: CurrentSchemaVersion,
 		FirstSeen:     a.firstSeen,
 		LastUpdated:   a.lastUpdated,
-		Records:       a.records,
+		Records:       records,
 		ByType:        copyInt64Map(a.byType),
 		ByProject:     copyInt64Map(a.byProject),
 		Daily:         copyDaily(a.daily),

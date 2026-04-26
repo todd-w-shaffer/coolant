@@ -109,6 +109,15 @@ EOF
   grep -q '"event":"preflight.warn"' "$COOLANT_EVENTS"
 }
 
+@test "preflight writes session_id sidecar before first event" {
+  mkdir -p "$TEST_TMPDIR/project"
+  printf '{"session_id":"abc-123","cwd":"%s","hook_event_name":"SessionStart","source":"startup"}' \
+    "$TEST_TMPDIR/project" \
+    | bash "$PROJECT_ROOT/scripts/preflight.sh" > /dev/null
+  [ -f "$COOLANT_SESSION_FILE" ]
+  [ "$(cat "$COOLANT_SESSION_FILE")" = "abc-123" ]
+}
+
 @test "preflight truncates COOLANT_DEGRADED_COUNT" {
   mkdir -p "$TEST_TMPDIR/project"
   # Pre-seed a stale counter from a prior session.

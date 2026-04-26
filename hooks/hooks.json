@@ -51,6 +51,19 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-end.sh",
+            "timeout": 5,
+            "statusMessage": "Coolant: session ending..."
+          }
+        ]
+      }
     ]
   }
 }

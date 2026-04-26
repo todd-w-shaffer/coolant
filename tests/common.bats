@@ -117,10 +117,10 @@ load test_helper
 @test "reconcile corrects counter when JSONL shows fewer agents" {
   echo "5" > "$COOLANT_COUNTER"
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:02Z","event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   printf '{"ts":"2025-01-01T00:00:03Z","event":"agent.stop","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:04Z","event":"agent.stop","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:04Z","event":"agent.stop","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   source "$PROJECT_ROOT/scripts/common.sh"
   _reconcile_counter > /dev/null
   [ "$(cat "$COOLANT_COUNTER")" = "1" ]
@@ -146,7 +146,7 @@ load test_helper
 @test "reconcile leaves counter alone when it matches JSONL" {
   echo "2" > "$COOLANT_COUNTER"
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   source "$PROJECT_ROOT/scripts/common.sh"
   local result
   result=$(_reconcile_counter)
@@ -168,9 +168,9 @@ load test_helper
 @test "reconcile counts only events after last counter.reset" {
   echo "5" > "$COOLANT_COUNTER"
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   printf '{"ts":"2025-01-01T00:00:02Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:03Z","event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   source "$PROJECT_ROOT/scripts/common.sh"
   _reconcile_counter > /dev/null
   [ "$(cat "$COOLANT_COUNTER")" = "1" ]
@@ -180,9 +180,9 @@ load test_helper
   echo "5" > "$COOLANT_COUNTER"
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   printf '{"ts":"2025-01-01T00:00:01Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:02Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   printf '{"ts":"2025-01-01T00:00:03Z","event":"counter.reset"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:04Z","event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:04Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   source "$PROJECT_ROOT/scripts/common.sh"
   _reconcile_counter > /dev/null
   [ "$(cat "$COOLANT_COUNTER")" = "1" ]
@@ -205,12 +205,57 @@ load test_helper
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.stop","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   # Post-deploy shape (schema:1) — same events should fold identically.
-  printf '{"ts":"2025-01-01T00:00:02Z","schema":1,"event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:03Z","schema":1,"event":"agent.start","session_id":"s3"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","schema":1,"event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","schema":1,"event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   source "$PROJECT_ROOT/scripts/common.sh"
   _reconcile_counter > /dev/null
   # 3 starts - 1 stop = 2 active across both eras.
   [ "$(cat "$COOLANT_COUNTER")" = "2" ]
+}
+
+@test "reconcile filters by session_id" {
+  echo "0" > "$COOLANT_COUNTER"
+  # 3 starts in s1, 2 starts in s2; with sid=s1, only s1 events count.
+  printf '{"ts":"2025-01-01T00:00:00Z","schema":1,"event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","schema":1,"event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:02Z","schema":1,"event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:03Z","schema":1,"event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:04Z","schema":1,"event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "3" ]
+}
+
+@test "reconcile drops empty session_id agent events when sid set" {
+  echo "0" > "$COOLANT_COUNTER"
+  # Pre-deploy lines without session_id should NOT count when sid is configured.
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
+}
+
+@test "reconcile counts all when sid unset (degraded fallback)" {
+  unset COOLANT_SESSION_ID
+  rm -f "$COOLANT_SESSION_FILE"
+  echo "0" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "2" ]
+}
+
+@test "reconcile reads sid from sidecar when env unset" {
+  unset COOLANT_SESSION_ID
+  echo "s1" > "$COOLANT_SESSION_FILE"
+  echo "0" > "$COOLANT_COUNTER"
+  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  source "$PROJECT_ROOT/scripts/common.sh"
+  _reconcile_counter > /dev/null
+  [ "$(cat "$COOLANT_COUNTER")" = "1" ]
 }
 
 @test "reconcile ignores event substrings inside other fields" {

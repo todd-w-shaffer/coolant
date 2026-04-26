@@ -427,7 +427,7 @@ run_gate() {
 @test "gate reconciles stale counter for cap calculation" {
   echo "0" > "$COOLANT_COUNTER"
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   touch "$COOLANT_LOCKFILE"
   local out
   out=$(run_gate Bash "vitest run")

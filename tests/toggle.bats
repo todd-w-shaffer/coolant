@@ -56,7 +56,7 @@ load test_helper
   touch "$COOLANT_LOCKFILE"
   echo "5" > "$COOLANT_COUNTER"
   printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s2"}\n' >> "$COOLANT_EVENTS"
+  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
   run bash "$PROJECT_ROOT/scripts/toggle.sh" status
   [[ "${output}" == *"2 agents tracked"* ]]
 }
