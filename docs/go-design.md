@@ -1,6 +1,6 @@
 # Go thermal dashboard — design reference
 
-Pull this in when working on widgets, rendering, or animation internals. The conventions that prevent compilation errors (bubbletea v2 API, lipgloss v2 types) live in CLAUDE.md — this doc covers *how the subsystems work*.
+Pull this in when working on widgets, rendering, or animation internals. The conventions that prevent compilation errors (bubbletea v2 API, lipgloss v2 types) live in `thermal/CLAUDE.md` — this doc covers *how the subsystems work*.
 
 ## Keyboard shortcuts
 
