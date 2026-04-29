@@ -57,7 +57,7 @@ func TestSnapshotLifetimeSumsDaily(t *testing.T) {
 		TranscriptBytesTotal: 100,
 		GateCapEvents:        2,
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Lifetime sum mismatch:\nwant: %+v\ngot:  %+v", want, got)
 	}
 }

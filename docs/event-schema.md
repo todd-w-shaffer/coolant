@@ -40,10 +40,11 @@ truncation.
 
 The JSONL **envelope schema** (this doc, currently `1`) is independent
 of the **on-disk cache schema** in `~/.coolant/stats.json`
-(`stats.CurrentSchemaVersion`, currently `2`). The cache schema bumps
+(`stats.CurrentSchemaVersion`, currently `3`). The cache schema bumps
 when the aggregator's persisted shape changes (e.g. top-1 records →
-top-5 leaderboards); the envelope schema stays at `1` as long as
-hook-emitted events keep the same shape.
+top-5 leaderboards, additive `ByTypeDay` / `ByProjectDay` per-day
+maps); the envelope schema stays at `1` as long as hook-emitted
+events keep the same shape.
 
 ### Write serialization
 

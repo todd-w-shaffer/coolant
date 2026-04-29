@@ -134,7 +134,15 @@ func (a *Aggregator) Checkpoint() error {
 		fresh.ByProject[k] += v
 	}
 	for k, v := range delta.Daily {
-		fresh.Daily[k] = fresh.Daily[k].Add(v)
+		merged := fresh.Daily[k].Add(v)
+		// Post-merge zero-prune: a key whose baseline count fully
+		// canceled against the delta's negative entry leaves a
+		// zero-count residue. Without pruning, the on-disk map
+		// accumulates orphan zero entries indefinitely as keys
+		// collapse to "__other" over time. See §3.4.
+		pruneZeroCounts(merged.ByTypeDay)
+		pruneZeroCounts(merged.ByProjectDay)
+		fresh.Daily[k] = merged
 	}
 	// Per-day shape fields (PeakConcurrentDay, DistinctProjectsDay,
 	// DistinctSessionsDay) are NOT additive — Counters.Add sums them
@@ -212,12 +220,55 @@ func computeDelta(byType, byProject map[string]int64, daily map[string]Counters,
 			TokensInTotal:        v.TokensInTotal - base.TokensInTotal,
 			TokensOutTotal:       v.TokensOutTotal - base.TokensOutTotal,
 			ToolCallsTotal:       v.ToolCallsTotal - base.ToolCallsTotal,
+			ByTypeDay:            mapDelta(base.ByTypeDay, v.ByTypeDay),
+			ByProjectDay:         mapDelta(base.ByProjectDay, v.ByProjectDay),
 		}
-		if diff != (Counters{}) {
+		if !diff.IsZero() {
 			d.Daily[k] = diff
 		}
 	}
 	return d
+}
+
+// pruneZeroCounts removes zero-valued entries from m in place. No-op
+// on nil. Called post-merge in Checkpoint so cap-collapse residue
+// (key existed in baseline, fell out of current → delta carries the
+// negative, merge zeros it) doesn't accumulate on disk.
+func pruneZeroCounts(m map[string]int64) {
+	for k, v := range m {
+		if v == 0 {
+			delete(m, k)
+		}
+	}
+}
+
+// mapDelta returns (current - baseline) per key. Keys present in
+// baseline but absent in current emit a negative entry — Checkpoint's
+// merge applies the subtraction and the post-merge zero-prune drops
+// keys that decremented to zero (so the on-disk map doesn't
+// accumulate orphan zero-count entries as keys collapse to "__other"
+// over time per cap semantics §0.4 / §3.4). Returns nil when both
+// inputs are empty (preserves omitempty).
+func mapDelta(baseline, current map[string]int64) map[string]int64 {
+	if len(baseline) == 0 && len(current) == 0 {
+		return nil
+	}
+	out := map[string]int64{}
+	for k, v := range current {
+		if diff := v - baseline[k]; diff != 0 {
+			out[k] = diff
+		}
+	}
+	for k, v := range baseline {
+		if _, present := current[k]; present {
+			continue
+		}
+		out[k] = -v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // maxMergeRecords leaderboard-merges every Records field. Each slot

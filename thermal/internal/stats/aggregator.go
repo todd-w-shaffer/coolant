@@ -2,6 +2,7 @@ package stats
 
 import (
 	"bytes"
+	"log"
 	"os"
 	"sync"
 	"time"
@@ -70,6 +71,16 @@ type Aggregator struct {
 	// baseline) merged into fresh disk read at Checkpoint time so two
 	// thermos can't clobber each other's increments.
 	baseline Snapshot
+
+	// driftOnce gates the by_type/by_project drift report at Snapshot
+	// time so a divergent install logs once per Aggregator instance —
+	// not once per Snapshot call (would be spam) and not once per
+	// process (would lose visibility across rolling deploys / fresh
+	// New(cfg) calls). Field on the struct, NOT a package var: a
+	// package var would make TestDriftGuardFiresOncePerInstance flaky
+	// across parallel `New(cfg)` test runs. Zero-value sync.Once is
+	// ready-to-use.
+	driftOnce sync.Once
 }
 
 // agentMeta is the minimum agent.start metadata needed to attribute
@@ -85,6 +96,41 @@ type agentMeta struct {
 // Hardcoded to 2 in v1 (locked decision §0); record schema preserves
 // it as a field so a future bump can be traced.
 const burstWindowS = 2
+
+// distinctCardinalityCap bounds the by_type / by_project map size.
+// Beyond this, additional distinct keys aggregate into "__other".
+// 50 is "high enough that no realistic install hits it; low enough
+// that a misbehaving event source can't OOM the aggregator."
+// Applied identically to lifetime maps (a.byType / a.byProject) and
+// per-day maps (Counters.ByTypeDay / ByProjectDay) so the drift
+// guard's totals-only check stays satisfiable — see §0.2 / §0.4.
+const distinctCardinalityCap = 50
+
+// otherCardinalityKey is the literal bucket name for keys that
+// arrived after the cap was hit. Sorts late under collectDist's
+// alphabetical tiebreak (the `_` prefix sorts after alphanumerics in
+// Go's byte-string compare) so renderer output places it at the
+// bottom of any count tier — no special-case branch needed.
+const otherCardinalityKey = "__other"
+
+// capKey applies the §0.4 first-50-distinct-seen-wins cap to one
+// (key, map) pair. If the map is at cap and the incoming key is new,
+// returns "__other"; otherwise returns key unchanged. Caller does
+// the actual increment on the returned key (so existing keys in a
+// capped map keep incrementing freely — only NEW arrivals route to
+// "__other"). Takes the map itself, not a parent struct or bucket
+// value, because Go's map header is a reference — the cap check
+// sees the same underlying state regardless of whether the map
+// was reached through a value-copy of its containing struct.
+func capKey(key string, m map[string]int64) string {
+	if _, exists := m[key]; exists {
+		return key
+	}
+	if len(m) >= distinctCardinalityCap {
+		return otherCardinalityKey
+	}
+	return key
+}
 
 // New constructs an Aggregator and loads the on-disk cache if present.
 // Missing, mangled, or schema-mismatched caches yield an empty
@@ -338,10 +384,21 @@ func (a *Aggregator) Fold(evt collector.GateEvent, byteOffset int64) {
 
 		bucket.AgentsStarted++
 		if evt.AgentType != "" {
-			a.byType[evt.AgentType]++
+			// Lifetime cap is checked before the daily map's; the
+			// drift guard is totals-only so a same-fold collapse on
+			// lifetime-but-not-daily is tolerated.
+			a.byType[capKey(evt.AgentType, a.byType)]++
+			if bucket.ByTypeDay == nil {
+				bucket.ByTypeDay = map[string]int64{}
+			}
+			bucket.ByTypeDay[capKey(evt.AgentType, bucket.ByTypeDay)]++
 		}
 		if evt.Project != "" {
-			a.byProject[evt.Project]++
+			a.byProject[capKey(evt.Project, a.byProject)]++
+			if bucket.ByProjectDay == nil {
+				bucket.ByProjectDay = map[string]int64{}
+			}
+			bucket.ByProjectDay[capKey(evt.Project, bucket.ByProjectDay)]++
 			projects := a.dailyDistinctProjects[day]
 			if projects == nil {
 				projects = map[string]struct{}{}
@@ -607,7 +664,58 @@ func (a *Aggregator) Snapshot() Snapshot {
 		s.Daily[today] = bucket
 	}
 
+	// Drift guard: read lock is released before bumpDegraded so file
+	// I/O doesn't block other readers or deadlock against Fold's
+	// write-lock acquisition. Re-acquired to pair the deferred
+	// RUnlock.
+	if tDrift, pDrift := summarizeDrift(s); tDrift != nil || pDrift != nil {
+		a.mu.RUnlock()
+		a.driftOnce.Do(func() {
+			bumpDegraded(a.cfg.DegradedPath)
+			if tDrift != nil {
+				log.Printf("stats: by_type drift detected (lifetime=%d, daily=%d)", tDrift.lifetime, tDrift.daily)
+			}
+			if pDrift != nil {
+				log.Printf("stats: by_project drift detected (lifetime=%d, daily=%d)", pDrift.lifetime, pDrift.daily)
+			}
+		})
+		a.mu.RLock()
+	}
+
 	return s
+}
+
+type drift struct{ lifetime, daily int64 }
+
+func byTypeDayPick(c Counters) map[string]int64    { return c.ByTypeDay }
+func byProjectDayPick(c Counters) map[string]int64 { return c.ByProjectDay }
+
+// summarizeDrift sums by_type and by_project totals — lifetime vs
+// summed-daily — in a single pass over s.Daily. Returns (nil, nil)
+// when both attributes are consistent.
+func summarizeDrift(s Snapshot) (byType, byProject *drift) {
+	var tLife, tDaily, pLife, pDaily int64
+	for _, v := range s.ByType {
+		tLife += v
+	}
+	for _, v := range s.ByProject {
+		pLife += v
+	}
+	for _, c := range s.Daily {
+		for _, v := range c.ByTypeDay {
+			tDaily += v
+		}
+		for _, v := range c.ByProjectDay {
+			pDaily += v
+		}
+	}
+	if tLife != tDaily {
+		byType = &drift{lifetime: tLife, daily: tDaily}
+	}
+	if pLife != pDaily {
+		byProject = &drift{lifetime: pLife, daily: pDaily}
+	}
+	return
 }
 
 // observeBurst trims age-based (not count-based — a 50-agent burst stays
@@ -651,6 +759,42 @@ func (a *Aggregator) Window(days int) Counters {
 		total = total.Add(a.daily[key])
 	}
 	return total
+}
+
+// WindowByType sums each day's ByTypeDay map across the trailing
+// `days` days, anchored on time.Now().UTC(). Missing days contribute
+// nothing. days <= 0 returns an empty map (matches Window's silent
+// clamp behavior — no error path). days > install age clamps cleanly.
+// The returned map is freshly allocated; callers may mutate it
+// without affecting aggregator state.
+func (a *Aggregator) WindowByType(days int) map[string]int64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return windowAttribute(a.daily, days, byTypeDayPick)
+}
+
+// WindowByProject is the by_project sibling of WindowByType.
+func (a *Aggregator) WindowByProject(days int) map[string]int64 {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return windowAttribute(a.daily, days, byProjectDayPick)
+}
+
+// windowAttribute MUST be called with a.mu held (RLock or Lock).
+// Reads pick(daily[key]) under the caller's lock, then copies each
+// k/v pair into a fresh out map — the live inner map is never
+// returned. Safe for callers to mutate the result without holding
+// the lock.
+func windowAttribute(daily map[string]Counters, days int, pick func(Counters) map[string]int64) map[string]int64 {
+	out := map[string]int64{}
+	now := time.Now().UTC()
+	for i := 0; i < days; i++ {
+		key := dayKey(now.Add(-time.Duration(i) * 24 * time.Hour))
+		for k, v := range pick(daily[key]) {
+			out[k] += v
+		}
+	}
+	return out
 }
 
 // VisibleWindows returns the labels appropriate for the current install
@@ -717,8 +861,31 @@ func copyInt64Map(m map[string]int64) map[string]int64 {
 	return out
 }
 
+// copyDaily deep-copies the daily map. Counters carries map-typed
+// ByTypeDay/ByProjectDay fields — a shallow value-copy would alias
+// each inner map to its source bucket, so a Snapshot consumer
+// mutating returned counts could corrupt aggregator state. Nil inner
+// maps stay nil in the output (preserves omitempty JSON behavior so
+// v2 caches and v3 caches with empty per-day maps round-trip
+// identically).
 func copyDaily(m map[string]Counters) map[string]Counters {
 	out := make(map[string]Counters, len(m))
+	for k, v := range m {
+		v.ByTypeDay = copyInt64MapPreserveNil(v.ByTypeDay)
+		v.ByProjectDay = copyInt64MapPreserveNil(v.ByProjectDay)
+		out[k] = v
+	}
+	return out
+}
+
+// copyInt64MapPreserveNil returns a fresh copy of m or nil if m is
+// nil. Distinct from copyInt64Map (which always returns non-nil) —
+// callers that JSON-omit empty maps need nil-preservation.
+func copyInt64MapPreserveNil(m map[string]int64) map[string]int64 {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]int64, len(m))
 	for k, v := range m {
 		out[k] = v
 	}

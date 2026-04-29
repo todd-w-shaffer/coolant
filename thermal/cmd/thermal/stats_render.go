@@ -11,8 +11,9 @@ import (
 )
 
 // renderStats writes the human-readable body to w. The aggregator is
-// passed alongside the snapshot because Window(N) and VisibleWindows()
-// aren't yet on Snapshot — both surfaces are needed in the same pass.
+// passed alongside the snapshot because Window(N), WindowByType /
+// WindowByProject, and VisibleWindows aren't on Snapshot — every
+// rendered surface needs the live aggregator handle in the same pass.
 func renderStats(w io.Writer, agg *stats.Aggregator, snap stats.Snapshot, f statsFlags, r format.Renderer) {
 	now := r.Clock()
 	renderHeader(w, snap, r, now)
@@ -21,7 +22,7 @@ func renderStats(w io.Writer, agg *stats.Aggregator, snap stats.Snapshot, f stat
 	fmt.Fprintln(w)
 	renderWindows(w, agg, snap, f, r, now)
 	fmt.Fprintln(w)
-	renderDistributions(w, snap, f, r)
+	renderDistributions(w, agg, snap, f, r)
 	if hasDiagnostics(snap) {
 		fmt.Fprintln(w)
 		renderDiagnostics(w, snap, r)
@@ -143,48 +144,62 @@ func renderWindows(w io.Writer, agg *stats.Aggregator, snap stats.Snapshot, f st
 }
 
 type distRow struct {
-	key   string
-	count int64
+	key      string
+	lifetime int64
+	last30d  int64
 }
 
-func collectDist(m map[string]int64) []distRow {
-	rows := make([]distRow, 0, len(m))
-	for k, v := range m {
-		rows = append(rows, distRow{key: k, count: v})
+// collectDist builds rows from the union keyset of the two maps,
+// sorted by lifetime desc with key asc on ties. The asc-on-ties
+// rule places "__other" at the bottom of any count tier without a
+// special-case branch.
+func collectDist(lifetime, last30d map[string]int64) []distRow {
+	rows := make([]distRow, 0, len(lifetime)+len(last30d))
+	seen := make(map[string]struct{}, len(lifetime)+len(last30d))
+	for k, v := range lifetime {
+		rows = append(rows, distRow{key: k, lifetime: v, last30d: last30d[k]})
+		seen[k] = struct{}{}
+	}
+	for k, v := range last30d {
+		if _, present := seen[k]; present {
+			continue
+		}
+		rows = append(rows, distRow{key: k, lifetime: 0, last30d: v})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].count != rows[j].count {
-			return rows[i].count > rows[j].count
+		if rows[i].lifetime != rows[j].lifetime {
+			return rows[i].lifetime > rows[j].lifetime
 		}
 		return rows[i].key < rows[j].key
 	})
 	return rows
 }
 
-// renderDistributions shows lifetime totals only. The aggregator
-// persists by_type / by_project as lifetime sums; a per-window
-// breakdown needs a new aggregator API and lands in a follow-up
-// (see agent-stop-cost-derivation.spec.md sibling).
-func renderDistributions(w io.Writer, snap stats.Snapshot, f statsFlags, r format.Renderer) {
-	fmt.Fprintln(w, r.Style(format.StyleSectionTitle, "distributions (lifetime)"))
+// renderDistributions pairs lifetime by_type / by_project with a
+// hardcoded 30-day window. The --window flag controls only the
+// "windows" section above.
+func renderDistributions(w io.Writer, agg *stats.Aggregator, snap stats.Snapshot, f statsFlags, r format.Renderer) {
+	fmt.Fprintln(w, r.Style(format.StyleSectionTitle, "distributions (lifetime · last 30 days)"))
 
 	for _, group := range []struct {
-		title  string
-		source map[string]int64
+		title    string
+		lifetime map[string]int64
+		last30d  map[string]int64
 	}{
-		{"by type", snap.ByType},
-		{"by project", snap.ByProject},
+		{"by type", snap.ByType, agg.WindowByType(30)},
+		{"by project", snap.ByProject, agg.WindowByProject(30)},
 	} {
 		fmt.Fprintf(w, "  %s\n", group.title)
-		rows := collectDist(group.source)
+		rows := collectDist(group.lifetime, group.last30d)
 		shown := f.top
 		if shown > len(rows) {
 			shown = len(rows)
 		}
 		for i := 0; i < shown; i++ {
+			label, counts := format.FormatDistributionRow(rows[i].key, rows[i].lifetime, rows[i].last30d)
 			fmt.Fprintf(w, "    %-20s %s\n",
-				r.Style(format.StyleRecordValue, rows[i].key),
-				r.Style(format.StyleRecordMeta, fmt.Sprintf("%d", rows[i].count)),
+				r.Style(format.StyleRecordValue, label),
+				r.Style(format.StyleRecordMeta, counts),
 			)
 		}
 		if extra := len(rows) - shown; extra > 0 {

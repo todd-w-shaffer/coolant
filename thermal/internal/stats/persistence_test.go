@@ -451,6 +451,218 @@ func TestLoadCacheLogsRecordsParseError(t *testing.T) {
 	}
 }
 
+// ── per-day map delta + cap-collapse semantics ────────────
+
+func TestComputeDeltaIncludesMaps(t *testing.T) {
+	day := "2026-04-25"
+	// Baseline: {"foo": 5} on day's ByTypeDay. Current: {"foo": 8,
+	// "bar": 1}. Delta must carry {"foo": 3, "bar": 1}.
+	baseline := Snapshot{Daily: map[string]Counters{day: {ByTypeDay: map[string]int64{"foo": 5}}}}
+	current := map[string]Counters{day: {ByTypeDay: map[string]int64{"foo": 8, "bar": 1}}}
+	delta := computeDelta(nil, nil, current, baseline)
+	got := delta.Daily[day].ByTypeDay
+	if got["foo"] != 3 {
+		t.Errorf("delta foo: want 3, got %d", got["foo"])
+	}
+	if got["bar"] != 1 {
+		t.Errorf("delta bar: want 1, got %d", got["bar"])
+	}
+
+	// Cap-collapse case: baseline carries "bar"; current dropped
+	// "bar" into "__other". Delta must carry the negative-key entry
+	// for "bar" so the merge can apply the subtraction; the post-merge
+	// zero-prune in Checkpoint will then drop the orphaned zero.
+	baseline2 := Snapshot{Daily: map[string]Counters{day: {ByTypeDay: map[string]int64{"foo": 5, "bar": 3}}}}
+	current2 := map[string]Counters{day: {ByTypeDay: map[string]int64{"foo": 5, "__other": 50}}}
+	delta2 := computeDelta(nil, nil, current2, baseline2)
+	got2 := delta2.Daily[day].ByTypeDay
+	if got2["bar"] != -3 {
+		t.Errorf("cap-collapse delta bar: want -3, got %d", got2["bar"])
+	}
+	if got2["__other"] != 50 {
+		t.Errorf("cap-collapse delta __other: want 50, got %d", got2["__other"])
+	}
+	if _, present := got2["foo"]; present {
+		t.Errorf("foo unchanged should NOT appear in delta, got %v", got2["foo"])
+	}
+}
+
+func TestCheckpointPrunesZeroCountMapKeys(t *testing.T) {
+	// After merge, any per-day map key that decremented to zero
+	// (because its count fell out of current relative to baseline)
+	// must be pruned from the on-disk map. Without pruning, the map
+	// accumulates orphan zero-count entries indefinitely as keys
+	// collapse to "__other" over time.
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+
+	// Seed disk with a "bar":3 entry on today's bucket.
+	today := dayKey(time.Now())
+	seeded := Snapshot{
+		SchemaVersion: CurrentSchemaVersion,
+		Daily: map[string]Counters{
+			today: {ByTypeDay: map[string]int64{"bar": 3, "foo": 2}},
+		},
+	}
+	buf, _ := json.Marshal(seeded)
+	if err := os.WriteFile(cfg.CachePath, buf, 0o644); err != nil {
+		t.Fatalf("seed cache: %v", err)
+	}
+
+	a := New(cfg)
+	// Inject a manual divergence — current has __other:50 but no
+	// "bar" — so delta carries bar:-3, __other:50.
+	a.mu.Lock()
+	bucket := a.daily[today]
+	if bucket.ByTypeDay == nil {
+		bucket.ByTypeDay = map[string]int64{}
+	}
+	bucket.ByTypeDay["foo"] = 2
+	bucket.ByTypeDay["__other"] = 50
+	delete(bucket.ByTypeDay, "bar")
+	a.daily[today] = bucket
+	a.mu.Unlock()
+
+	if err := a.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+	c := New(cfg)
+	got := c.Snapshot().Daily[today].ByTypeDay
+	if _, present := got["bar"]; present {
+		t.Errorf("zero-prune: bar should have been removed, got %v", got["bar"])
+	}
+	if got["__other"] != 50 {
+		t.Errorf("__other survived: want 50, got %d", got["__other"])
+	}
+	if got["foo"] != 2 {
+		t.Errorf("foo unchanged: want 2, got %d", got["foo"])
+	}
+}
+
+// ── v2 → v3 cache migration ───────────────────────────────
+
+func TestV2CacheLoadsWithEmptyPerDayMaps(t *testing.T) {
+	// Inline JSON literal (NOT a testdata fixture) per §4.2 — keeps
+	// the schema-drift signal in-test where future migrators see the
+	// exact bytes that represent the previous schema.
+	dir := t.TempDir()
+	cachePath := filepath.Join(dir, "stats.json")
+	v2Bytes := []byte(`{
+  "schema_version": 2,
+  "first_seen": "2026-04-01T10:00:00Z",
+  "last_updated": "2026-04-25T18:00:00Z",
+  "records": {
+    "peak_concurrent": [{"value": 9, "session_id": "s1", "at": "2026-04-25T10:00:00Z"}],
+    "longest_agent_s": [],
+    "longest_session_s": [],
+    "most_agents_session": [],
+    "biggest_burst": [],
+    "most_tokens_agent": [],
+    "most_tool_calls_agent": []
+  },
+  "by_type": {"Explore": 5},
+  "by_project": {"coolant": 5},
+  "daily": {
+    "2026-04-25": {"agents_started": 5, "agents_completed": 5}
+  }
+}`)
+	if err := os.WriteFile(cachePath, v2Bytes, 0o644); err != nil {
+		t.Fatalf("seed v2 cache: %v", err)
+	}
+
+	cfg := Config{
+		CachePath:    cachePath,
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	a := New(cfg)
+	snap := a.Snapshot()
+
+	// Primary fields preserved.
+	if snap.ByType["Explore"] != 5 {
+		t.Errorf("ByType[Explore]: want 5, got %d", snap.ByType["Explore"])
+	}
+	if got := snap.Daily["2026-04-25"].AgentsStarted; got != 5 {
+		t.Errorf("Daily[2026-04-25].AgentsStarted: want 5, got %d", got)
+	}
+
+	// Per-day maps default to nil per §3.1 nil-preservation.
+	for k, c := range snap.Daily {
+		if c.ByTypeDay != nil {
+			t.Errorf("v2 cache Daily[%s].ByTypeDay should be nil, got %v", k, c.ByTypeDay)
+		}
+		if c.ByProjectDay != nil {
+			t.Errorf("v2 cache Daily[%s].ByProjectDay should be nil, got %v", k, c.ByProjectDay)
+		}
+	}
+
+	// Next fold populates the new maps forward.
+	now := time.Now().UTC()
+	a.Fold(mkEvent(1, collector.EventAgentStart, "fresh", "s2", now), 0)
+	bucket := a.Snapshot().Daily[dayKey(now)]
+	if bucket.ByTypeDay["Explore"] != 1 {
+		t.Errorf("post-fold ByTypeDay[Explore]: want 1, got %d", bucket.ByTypeDay["Explore"])
+	}
+	if bucket.ByProjectDay["coolant"] != 1 {
+		t.Errorf("post-fold ByProjectDay[coolant]: want 1, got %d", bucket.ByProjectDay["coolant"])
+	}
+}
+
+func TestV3CacheRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		CachePath:    filepath.Join(dir, "stats.json"),
+		JSONLPath:    filepath.Join(dir, "events.jsonl"),
+		DegradedPath: filepath.Join(dir, "degraded.count"),
+	}
+	a := New(cfg)
+	now := time.Date(2026, 4, 25, 10, 0, 0, 0, time.UTC)
+	for i, kind := range []string{"Explore", "Plan", "Doc", "Explore"} {
+		ev := mkEvent(1, collector.EventAgentStart, "a"+string(rune('a'+i)), "s1", now.Add(time.Duration(i)*time.Second))
+		ev.AgentType = kind
+		a.Fold(ev, 0)
+	}
+	// Stop with telemetry so MostTokensAgent / MostToolCallsAgent
+	// records populate — used to assert primary-records survival.
+	stop := mkEvent(1, collector.EventAgentStop, "aa", "s1", now.Add(2*time.Minute), WithTokens(100, 50), WithToolCalls(7))
+	stop.AgentType = "Explore"
+	a.Fold(stop, 0)
+
+	if err := a.Checkpoint(); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	b := New(cfg)
+	snap := b.Snapshot()
+	if snap.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("round-trip SchemaVersion: want %d, got %d", CurrentSchemaVersion, snap.SchemaVersion)
+	}
+	bucket := snap.Daily["2026-04-25"]
+	if bucket.ByTypeDay["Explore"] != 2 {
+		t.Errorf("ByTypeDay[Explore] after round-trip: want 2, got %d", bucket.ByTypeDay["Explore"])
+	}
+	if bucket.ByTypeDay["Plan"] != 1 {
+		t.Errorf("ByTypeDay[Plan] after round-trip: want 1, got %d", bucket.ByTypeDay["Plan"])
+	}
+	if bucket.ByProjectDay["coolant"] != 4 {
+		t.Errorf("ByProjectDay[coolant] after round-trip: want 4, got %d", bucket.ByProjectDay["coolant"])
+	}
+	// Records survive the schema bump (primary fields).
+	if len(snap.Records.MostTokensAgent) == 0 || snap.Records.MostTokensAgent[0].Value != 150 {
+		t.Errorf("MostTokensAgent dropped on round-trip: %+v", snap.Records.MostTokensAgent)
+	}
+	if len(snap.Records.MostToolCallsAgent) == 0 || snap.Records.MostToolCallsAgent[0].Value != 7 {
+		t.Errorf("MostToolCallsAgent dropped on round-trip: %+v", snap.Records.MostToolCallsAgent)
+	}
+	if len(snap.Records.LongestAgentS) == 0 {
+		t.Errorf("LongestAgentS dropped on round-trip")
+	}
+}
+
 // ── max-merge records ─────────────────────────────────────
 
 func TestRecordsMaxMergedAcrossCheckpoints(t *testing.T) {

@@ -94,7 +94,7 @@ func TestUnknownEventTypeIgnored(t *testing.T) {
 	now := time.Now().UTC()
 	a.Fold(mkEvent(1, "future.thing", "a1", "s1", now), 0)
 	// No panic, no counter touched.
-	if got := a.Snapshot().Lifetime(); got != (Counters{}) {
+	if got := a.Snapshot().Lifetime(); !got.IsZero() {
 		t.Errorf("unknown event type changed counters: %+v", got)
 	}
 }
@@ -804,7 +804,7 @@ func TestCounterUnderflowIsFoldNoOp(t *testing.T) {
 	// mutation, no panic.
 	evt := mkEvent(1, collector.EventCounterUnderflow, "", "s1", now)
 	a.Fold(evt, 0)
-	if life := a.Snapshot().Lifetime(); life != (Counters{}) {
+	if life := a.Snapshot().Lifetime(); !life.IsZero() {
 		t.Errorf("counter.underflow mutated counters: %+v", life)
 	}
 }
@@ -1049,5 +1049,271 @@ func TestConcurrentFoldAndSnapshot(t *testing.T) {
 	// Sanity: aggregate counts match.
 	if got := a.Snapshot().Lifetime().AgentsStarted; got != 1000 {
 		t.Errorf("AgentsStarted after 1000 folds: want 1000, got %d", got)
+	}
+}
+
+// ── windowed by_type / by_project ──────────────────────────
+
+func TestWindowByTypeEmptyForFreshInstall(t *testing.T) {
+	a := newTestAggregator(t)
+	if got := a.WindowByType(7); len(got) != 0 {
+		t.Errorf("fresh install WindowByType(7): want empty, got %v", got)
+	}
+	if got := a.WindowByProject(30); len(got) != 0 {
+		t.Errorf("fresh install WindowByProject(30): want empty, got %v", got)
+	}
+	if got := a.WindowByType(0); len(got) != 0 {
+		t.Errorf("WindowByType(0): want empty, got %v", got)
+	}
+	if got := a.WindowByType(-3); len(got) != 0 {
+		t.Errorf("WindowByType(-3): want empty (silent clamp), got %v", got)
+	}
+}
+
+func TestWindowByTypeSumsAcrossDays(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	// day-3: two Explores, one Plan
+	day3 := now.Add(-3 * 24 * time.Hour).Add(time.Hour)
+	for i, kind := range []string{"Explore", "Explore", "Plan"} {
+		ev := mkEvent(1, collector.EventAgentStart, "d3-"+string(rune('a'+i)), "s-d3", day3)
+		ev.AgentType = kind
+		ev.Project = "coolant"
+		a.Fold(ev, 0)
+	}
+	// day-1: one Explore, one Doc
+	day1 := now.Add(-1 * 24 * time.Hour).Add(time.Hour)
+	for i, kind := range []string{"Explore", "Doc"} {
+		ev := mkEvent(1, collector.EventAgentStart, "d1-"+string(rune('a'+i)), "s-d1", day1)
+		ev.AgentType = kind
+		ev.Project = "thermal-enterprise"
+		a.Fold(ev, 0)
+	}
+	// day-31: stale Plan (outside 30d)
+	day31 := now.Add(-31 * 24 * time.Hour).Add(time.Hour)
+	stale := mkEvent(1, collector.EventAgentStart, "d31-a", "s-d31", day31)
+	stale.AgentType = "Plan"
+	a.Fold(stale, 0)
+
+	w7 := a.WindowByType(7)
+	if w7["Explore"] != 3 {
+		t.Errorf("WindowByType(7)[Explore]: want 3, got %d", w7["Explore"])
+	}
+	if w7["Plan"] != 1 {
+		t.Errorf("WindowByType(7)[Plan]: want 1 (day-3 only), got %d", w7["Plan"])
+	}
+	if w7["Doc"] != 1 {
+		t.Errorf("WindowByType(7)[Doc]: want 1, got %d", w7["Doc"])
+	}
+
+	w30 := a.WindowByType(30)
+	if w30["Plan"] != 1 {
+		t.Errorf("WindowByType(30) excludes day-31: want Plan=1, got %d", w30["Plan"])
+	}
+
+	wp := a.WindowByProject(7)
+	if wp["coolant"] != 3 {
+		t.Errorf("WindowByProject(7)[coolant]: want 3, got %d", wp["coolant"])
+	}
+	if wp["thermal-enterprise"] != 2 {
+		t.Errorf("WindowByProject(7)[thermal-enterprise]: want 2, got %d", wp["thermal-enterprise"])
+	}
+}
+
+func TestWindowByTypeDeepCopy(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Now().UTC()
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+
+	first := a.WindowByType(7)
+	first["Explore"] = 999
+	first["injected"] = 42
+
+	second := a.WindowByType(7)
+	if second["Explore"] != 1 {
+		t.Errorf("returned map aliased to internal state: want Explore=1, got %d", second["Explore"])
+	}
+	if _, ok := second["injected"]; ok {
+		t.Errorf("returned map aliased: 'injected' leaked into a second call")
+	}
+}
+
+func TestWindowByTypeCardinalityCap(t *testing.T) {
+	a := newTestAggregator(t)
+	now := time.Now().UTC()
+	// Fold 51 distinct agent_types in arrival order. The cap is
+	// "first-50-distinct-seen-wins" (§0.4): types 0..49 own their
+	// slots, type 50 routes to "__other".
+	for i := 0; i < 51; i++ {
+		ev := mkEvent(1, collector.EventAgentStart, "a"+string(rune('a'+i%26))+string(rune('a'+i/26)), "s1", now.Add(time.Duration(i)*time.Second))
+		ev.AgentType = "type-" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+		a.Fold(ev, 0)
+	}
+	snap := a.Snapshot()
+	// Lifetime ByType: 50 typed entries + "__other".
+	if len(snap.ByType) != 51 {
+		t.Errorf("lifetime ByType cap: want 51 entries (50 typed + __other), got %d", len(snap.ByType))
+	}
+	if snap.ByType["__other"] != 1 {
+		t.Errorf("lifetime ByType[__other]: want 1, got %d", snap.ByType["__other"])
+	}
+	// Daily bucket map: same shape on today's bucket.
+	today := dayKey(now)
+	bucket := snap.Daily[today]
+	if len(bucket.ByTypeDay) != 51 {
+		t.Errorf("daily ByTypeDay cap: want 51 entries, got %d", len(bucket.ByTypeDay))
+	}
+	if bucket.ByTypeDay["__other"] != 1 {
+		t.Errorf("daily ByTypeDay[__other]: want 1, got %d", bucket.ByTypeDay["__other"])
+	}
+}
+
+func TestWindowByTypeCapKeepsExistingKeysIncrementing(t *testing.T) {
+	// First-50-distinct-seen-wins: once at cap, EXISTING keys keep
+	// incrementing freely; only NEW keys route to __other. A
+	// high-cardinality early burst can permanently hide later
+	// high-frequency types — intentional per §0.4.
+	a := newTestAggregator(t)
+	now := time.Now().UTC()
+	// Fill the cap with 50 one-shot pioneers.
+	for i := 0; i < 50; i++ {
+		ev := mkEvent(1, collector.EventAgentStart, "p"+string(rune('a'+i%26))+string(rune('a'+i/26)), "s1", now.Add(time.Duration(i)*time.Second))
+		ev.AgentType = "pioneer-" + string(rune('a'+i%26)) + string(rune('a'+i/26))
+		a.Fold(ev, 0)
+	}
+	// Then 5 more fires of an existing pioneer — must hit its slot,
+	// NOT __other.
+	for i := 0; i < 5; i++ {
+		ev := mkEvent(1, collector.EventAgentStart, "rep"+string(rune('a'+i)), "s1", now.Add(time.Hour+time.Duration(i)*time.Second))
+		ev.AgentType = "pioneer-aa"
+		a.Fold(ev, 0)
+	}
+	// Then 1 newcomer — must route to __other.
+	newcomer := mkEvent(1, collector.EventAgentStart, "newcomer", "s1", now.Add(2*time.Hour))
+	newcomer.AgentType = "Plan"
+	a.Fold(newcomer, 0)
+
+	snap := a.Snapshot()
+	if got := snap.ByType["pioneer-aa"]; got != 6 {
+		t.Errorf("existing pioneer slot increments freely past cap: want 6, got %d", got)
+	}
+	if got := snap.ByType["__other"]; got != 1 {
+		t.Errorf("late newcomer routes to __other: want 1, got %d", got)
+	}
+	if _, present := snap.ByType["Plan"]; present {
+		t.Errorf("late 'Plan' should NOT have its own slot — first-50-distinct-seen-wins")
+	}
+}
+
+func TestLifetimeAndDailySumStayConsistent(t *testing.T) {
+	// Drift guard, totals-only: sum(daily.ByTypeDay) ==
+	// sum(snap.ByType) across a multi-day fold sequence (per §0.2).
+	// Per-key equality is NOT asserted — same-fold cap activations
+	// can transiently route the same key differently.
+	a := newTestAggregator(t)
+	now := time.Now().UTC()
+	for d := 0; d < 5; d++ {
+		base := now.Add(-time.Duration(d) * 24 * time.Hour)
+		for i := 0; i < 7; i++ {
+			ev := mkEvent(1, collector.EventAgentStart, "a"+string(rune('a'+d))+string(rune('a'+i)), "s"+string(rune('a'+d)), base.Add(time.Duration(i)*time.Minute))
+			ev.AgentType = []string{"Explore", "Plan", "Doc"}[i%3]
+			ev.Project = []string{"coolant", "thermal-enterprise"}[i%2]
+			a.Fold(ev, 0)
+		}
+	}
+	snap := a.Snapshot()
+	var lifetimeSum, dailySum int64
+	for _, v := range snap.ByType {
+		lifetimeSum += v
+	}
+	for _, c := range snap.Daily {
+		for _, v := range c.ByTypeDay {
+			dailySum += v
+		}
+	}
+	if lifetimeSum != dailySum {
+		t.Errorf("by_type drift: lifetime sum=%d, daily sum=%d (want equal)", lifetimeSum, dailySum)
+	}
+
+	var lifetimePSum, dailyPSum int64
+	for _, v := range snap.ByProject {
+		lifetimePSum += v
+	}
+	for _, c := range snap.Daily {
+		for _, v := range c.ByProjectDay {
+			dailyPSum += v
+		}
+	}
+	if lifetimePSum != dailyPSum {
+		t.Errorf("by_project drift: lifetime sum=%d, daily sum=%d", lifetimePSum, dailyPSum)
+	}
+}
+
+func TestDriftGuardFiresOncePerInstance(t *testing.T) {
+	// Forge divergence by mutating a.byType after Fold has populated
+	// both maps — Snapshot must detect the mismatch and bump degraded
+	// EXACTLY ONCE per Aggregator instance, not once per Snapshot
+	// call. A second Aggregator (fresh New) gets its own sync.Once
+	// and bumps independently.
+	a := newTestAggregator(t)
+	now := time.Now().UTC()
+	a.Fold(mkEvent(1, collector.EventAgentStart, "a1", "s1", now), 0)
+	// Inject extra lifetime count without a matching daily increment.
+	a.mu.Lock()
+	a.byType["Explore"] += 99
+	a.mu.Unlock()
+
+	_ = a.Snapshot()
+	_ = a.Snapshot()
+	_ = a.Snapshot()
+	deg, _ := os.ReadFile(a.cfg.DegradedPath)
+	if got := bytesNewlineCount(deg); got != 1 {
+		t.Errorf("once-per-instance: 3 Snapshot calls on same Aggregator with persistent drift, want 1 degraded bump, got %d", got)
+	}
+
+	// Second aggregator pointed at the same cache file — should not
+	// inherit the first's sync.Once.
+	b := New(Config{
+		CachePath:    a.cfg.CachePath,
+		JSONLPath:    a.cfg.JSONLPath,
+		DegradedPath: a.cfg.DegradedPath,
+	})
+	b.Fold(mkEvent(1, collector.EventAgentStart, "b1", "s1", now), 0)
+	b.mu.Lock()
+	b.byType["Explore"] += 99
+	b.mu.Unlock()
+	_ = b.Snapshot()
+	deg, _ = os.ReadFile(a.cfg.DegradedPath)
+	if got := bytesNewlineCount(deg); got != 2 {
+		t.Errorf("fresh aggregator gets its own once: want 2 total bumps, got %d", got)
+	}
+}
+
+func bytesNewlineCount(b []byte) int {
+	n := 0
+	for _, c := range b {
+		if c == '\n' {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCountersIsZero(t *testing.T) {
+	if !(Counters{}).IsZero() {
+		t.Errorf("zero-value Counters: IsZero must be true")
+	}
+	if (Counters{AgentsStarted: 1}).IsZero() {
+		t.Errorf("AgentsStarted=1: IsZero must be false")
+	}
+	if (Counters{ByTypeDay: map[string]int64{"k": 1}}).IsZero() {
+		t.Errorf("ByTypeDay non-empty: IsZero must be false")
+	}
+	if (Counters{ByProjectDay: map[string]int64{"k": 1}}).IsZero() {
+		t.Errorf("ByProjectDay non-empty: IsZero must be false")
+	}
+	// Empty (non-nil) maps still count as zero — they carry no data.
+	if !(Counters{ByTypeDay: map[string]int64{}}).IsZero() {
+		t.Errorf("empty ByTypeDay map: IsZero must be true")
 	}
 }

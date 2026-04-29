@@ -26,7 +26,19 @@ const MaxKnownSchema = 1
 // after a v2 write WIPES Records (the inverse silently zeros under v1's
 // permissive partial parse) — accept the one-shot loss; document in
 // release notes.
-const CurrentSchemaVersion = 2
+//
+// v3 adds Counters.ByTypeDay and ByProjectDay — per-day per-attribute
+// count maps backing Aggregator.WindowByType / WindowByProject. v2
+// caches load via the permissive partial-parse path with these
+// fields nil; the next fold populates forward (no retroactive
+// backfill from JSONL — historical days lose their breakdown,
+// accepted in §2 non-goals). NOTE: TodayDistinctSets is NOT extended
+// to carry by_type / by_project — those persist directly inside the
+// daily bucket like every other per-day field. TodayDistinct exists
+// for the unique-counts-cannot-go-backwards rollover-restore dance
+// (DistinctProjectsDay / DistinctSessionsDay), which doesn't apply
+// to additive count maps. See §0.5.
+const CurrentSchemaVersion = 3
 
 // Snapshot is a deep-copy view of the aggregator's state at a point
 // in time. Returned by Aggregator.Snapshot() under read lock.
@@ -61,20 +73,30 @@ type TodayDistinctSets struct {
 // `BestDay*` Snapshot helpers provide the correct access pattern.
 // DegradedWritesTotal is read from the bash $COOLANT_DEGRADED_COUNT
 // file at Snapshot time (not folded).
+//
+// ByTypeDay and ByProjectDay carry per-attribute counts for the day
+// so Aggregator.WindowByType / WindowByProject can sum across N days.
+// They are pure-additive across days; the lifetime by_type / by_project
+// maps stay primary fields on Snapshot (sum-from-daily would orphan
+// lifetime totals if a retention policy later ages out daily buckets).
+// Both maps are capped at distinctCardinalityCap distinct keys with
+// "__other" overflow — see capKey.
 type Counters struct {
-	AgentsStarted        int64 `json:"agents_started,omitempty"`
-	AgentsCompleted      int64 `json:"agents_completed,omitempty"`
-	AgentsOrphaned       int64 `json:"agents_orphaned,omitempty"`
-	Sessions             int64 `json:"sessions,omitempty"`
-	TranscriptBytesTotal int64 `json:"transcript_bytes,omitempty"`
-	GateCapEvents        int64 `json:"gate_cap_events,omitempty"`
-	DegradedWritesTotal  int64 `json:"degraded_writes,omitempty"`
-	PeakConcurrentDay    int64 `json:"peak_concurrent_day,omitempty"`
-	DistinctProjectsDay  int64 `json:"distinct_projects_day,omitempty"`
-	DistinctSessionsDay  int64 `json:"distinct_sessions_day,omitempty"`
-	TokensInTotal        int64 `json:"tokens_in_total,omitempty"`
-	TokensOutTotal       int64 `json:"tokens_out_total,omitempty"`
-	ToolCallsTotal       int64 `json:"tool_calls_total,omitempty"`
+	AgentsStarted        int64            `json:"agents_started,omitempty"`
+	AgentsCompleted      int64            `json:"agents_completed,omitempty"`
+	AgentsOrphaned       int64            `json:"agents_orphaned,omitempty"`
+	Sessions             int64            `json:"sessions,omitempty"`
+	TranscriptBytesTotal int64            `json:"transcript_bytes,omitempty"`
+	GateCapEvents        int64            `json:"gate_cap_events,omitempty"`
+	DegradedWritesTotal  int64            `json:"degraded_writes,omitempty"`
+	PeakConcurrentDay    int64            `json:"peak_concurrent_day,omitempty"`
+	DistinctProjectsDay  int64            `json:"distinct_projects_day,omitempty"`
+	DistinctSessionsDay  int64            `json:"distinct_sessions_day,omitempty"`
+	TokensInTotal        int64            `json:"tokens_in_total,omitempty"`
+	TokensOutTotal       int64            `json:"tokens_out_total,omitempty"`
+	ToolCallsTotal       int64            `json:"tool_calls_total,omitempty"`
+	ByTypeDay            map[string]int64 `json:"by_type_day,omitempty"`
+	ByProjectDay         map[string]int64 `json:"by_project_day,omitempty"`
 }
 
 // Add returns the per-key sum of two Counters. Used by Window/Lifetime
@@ -83,6 +105,14 @@ type Counters struct {
 // here so the field-coverage drift test passes, but these are not
 // semantically additive — Checkpoint applies max-merge for them per
 // bucket separately.
+//
+// Map fields (ByTypeDay, ByProjectDay) are key-summed into a freshly
+// allocated map. The fresh allocation is unconditional so the result
+// never aliases either input — without it, Lifetime() could return a
+// Counters whose ByTypeDay shares storage with one of the daily
+// buckets, and a downstream mutator would corrupt aggregator state.
+// Nil-preservation: nil + nil → nil (keeps omitempty JSON output
+// identical to v2 caches that never had the field).
 func (c Counters) Add(o Counters) Counters {
 	return Counters{
 		AgentsStarted:        c.AgentsStarted + o.AgentsStarted,
@@ -98,7 +128,49 @@ func (c Counters) Add(o Counters) Counters {
 		TokensInTotal:        c.TokensInTotal + o.TokensInTotal,
 		TokensOutTotal:       c.TokensOutTotal + o.TokensOutTotal,
 		ToolCallsTotal:       c.ToolCallsTotal + o.ToolCallsTotal,
+		ByTypeDay:            mergeInt64Map(c.ByTypeDay, o.ByTypeDay),
+		ByProjectDay:         mergeInt64Map(c.ByProjectDay, o.ByProjectDay),
 	}
+}
+
+// IsZero reports whether c carries no data on any field. Replaces the
+// `c == (Counters{})` comparison that no longer compiles once map
+// fields land. Empty (non-nil) maps count as zero — they carry no
+// information distinct from nil for delta / drift purposes.
+func (c Counters) IsZero() bool {
+	return c.AgentsStarted == 0 &&
+		c.AgentsCompleted == 0 &&
+		c.AgentsOrphaned == 0 &&
+		c.Sessions == 0 &&
+		c.TranscriptBytesTotal == 0 &&
+		c.GateCapEvents == 0 &&
+		c.DegradedWritesTotal == 0 &&
+		c.PeakConcurrentDay == 0 &&
+		c.DistinctProjectsDay == 0 &&
+		c.DistinctSessionsDay == 0 &&
+		c.TokensInTotal == 0 &&
+		c.TokensOutTotal == 0 &&
+		c.ToolCallsTotal == 0 &&
+		len(c.ByTypeDay) == 0 &&
+		len(c.ByProjectDay) == 0
+}
+
+// mergeInt64Map returns the key-summed union of a and b in a freshly
+// allocated map. nil + nil → nil; otherwise a non-nil map. Negative
+// values pass through (computeDelta emits them when a key falls out
+// of a baseline relative to current — see persistence.go).
+func mergeInt64Map(a, b map[string]int64) map[string]int64 {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := make(map[string]int64, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		out[k] += v
+	}
+	return out
 }
 
 // Records are the eternal high-score leaderboards. Each field carries

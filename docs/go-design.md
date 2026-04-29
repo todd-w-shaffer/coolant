@@ -38,7 +38,7 @@ Caches the mach host port (avoids port leak) and holds the last computed CPU% wh
 
 `internal/stats/` persists cross-session agent aggregates that the in-memory ring buffer can't answer ("how many agents this month?", "all-time peak concurrent?"). The on-disk shape is `~/.coolant/stats.json` — distinct from `$TMPDIR/coolant-$USER.events.jsonl` because macOS may purge `$TMPDIR` on reboot.
 
-**Durability split.** JSONL is the streaming source of truth; the cache is durable history. Several fields are *primary* — they cannot be reconstructed from a post-rotation JSONL and must survive every cache-discard / migration path: `records`, `daily` buckets, `first_seen`, `by_type`, `by_project`. Lifetime totals are *always* `sum(daily)` computed on demand — never stored separately, eliminating cache-vs-live drift.
+**Durability split.** JSONL is the streaming source of truth; the cache is durable history. Several fields are *primary* — they cannot be reconstructed from a post-rotation JSONL and must survive every cache-discard / migration path: `records`, `daily` buckets, `first_seen`, `by_type`, `by_project`. Lifetime `by_type` / `by_project` are stored alongside the per-day `ByTypeDay` / `ByProjectDay` maps so a future retention policy aging out daily buckets cannot orphan lifetime totals; a totals-only drift guard at Snapshot time bumps the degraded counter once per Aggregator instance if the two diverge.
 
 **Schema gate (virtual chop).** `Aggregator.Fold` drops events whose `Schema` falls outside `[1, MaxKnownSchema]`. Pre-versioning events (no schema field, parsed as 0) are silently skipped; future schema-N events on an old binary are also skipped. The JSONL is never rewritten — old and new envelopes coexist line-by-line.
 
