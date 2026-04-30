@@ -5,12 +5,12 @@ import (
 	"cmp"
 	"fmt"
 	"image/color"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
@@ -142,6 +142,19 @@ func (h *Horizontal) FocusAgent(id string) {
 // FocusedAgentID returns the currently focused agent ID, or "" if none.
 func (h *Horizontal) FocusedAgentID() string {
 	return h.focusedAgentID
+}
+
+// FocusedTranscriptPath returns the transcript path of the currently focused
+// agent, or "" if no agent is focused or the record has no path.
+func (h *Horizontal) FocusedTranscriptPath() string {
+	if h.focusedAgentID == "" {
+		return ""
+	}
+	rec := h.state.LookupAgent(h.focusedAgentID)
+	if rec == nil {
+		return ""
+	}
+	return rec.TranscriptPath
 }
 
 func (h *Horizontal) ToggleCollapse() {
@@ -423,30 +436,21 @@ func (h *Horizontal) focusedIntelView() []string {
 		row2 += dim("none")
 	}
 
-	// Row 3: transcript size + path
+	// Row 3: transcript size — "transcript" is a click target to open the file
 	var row3 string
-	if rec.TranscriptBytes > 0 {
+	if rec.TranscriptBytes > 0 && strings.HasPrefix(rec.TranscriptPath, "/") {
+		label := zone.Mark(ui.PathZoneID(rec.AgentID), ui.ColorText(h.theme.HelpColor, "transcript"))
+		row3 = " " + dim("size") + "      " + ct(formatBytesCompact(rec.TranscriptBytes)) + " " + label
+	} else if rec.TranscriptBytes > 0 {
 		row3 = " " + dim("size") + "      " + ct(formatBytesCompact(rec.TranscriptBytes)) + " " + dim("transcript")
 	} else {
 		row3 = " " + dim("size") + "      " + dim("no transcript")
 	}
 
-	// Row 4: transcript path — OSC 8 clickable link for absolute paths
-	var row4 string
-	if strings.HasPrefix(rec.TranscriptPath, "/") {
-		styled := ui.ColorText(h.theme.HelpColor, rec.TranscriptPath)
-		fileURI := (&url.URL{Scheme: "file", Path: rec.TranscriptPath}).String()
-		row4 = " " + dim("path") + "      " + ui.OSC8Link(fileURI, styled)
-	} else if rec.TranscriptPath != "" {
-		row4 = " " + dim("path") + "      " + dim(rec.TranscriptPath)
-	} else {
-		row4 = " " + dim("path") + "      " + dim("—")
-	}
+	// Row 4: hint
+	row4 := " " + dim("i session summary · any key to dismiss")
 
-	// Row 5: hint
-	row5 := " " + dim("i session summary · any key to dismiss")
-
-	return []string{row1, row2, row3, row4, row5}
+	return []string{row1, row2, row3, row4}
 }
 
 // formatUptime formats a duration as "Xh Ym" or "Xm Ys" for compact display.

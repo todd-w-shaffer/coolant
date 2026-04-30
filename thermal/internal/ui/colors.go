@@ -110,3 +110,9 @@ func CatZoneID(name string) string {
 func AgentZoneID(id string) string {
 	return "agent:" + id
 }
+
+// PathZoneID returns the bubblezone zone ID for a transcript path click target.
+// Used by focusedIntelView (mark) and main.go (click dispatch).
+func PathZoneID(agentID string) string {
+	return "path:" + agentID
+}

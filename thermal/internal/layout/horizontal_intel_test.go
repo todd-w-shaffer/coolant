@@ -390,74 +390,69 @@ func TestFocusedIntelViewRendersAgentRecord(t *testing.T) {
 	}
 }
 
-func TestFocusedIntelAbsolutePathEmitsOSC8(t *testing.T) {
+func TestFocusedIntelTranscriptLabelHasZoneMark(t *testing.T) {
 	h := newHorizontalForTest(t)
 	state := h.State()
 	t0 := time.Now().Add(time.Millisecond)
 	state.HandleEvent(collector.GateEvent{
-		Event: collector.EventAgentStart, AgentID: "link1", AgentType: "general-purpose",
+		Event: collector.EventAgentStart, AgentID: "zone1", AgentType: "general-purpose",
 		Timestamp: t0,
 	})
 	state.HandleEvent(collector.GateEvent{
-		Event: collector.EventAgentStop, AgentID: "link1", AgentType: "general-purpose",
+		Event: collector.EventAgentStop, AgentID: "zone1", AgentType: "general-purpose",
 		TranscriptPath: "/tmp/coolant-test/transcript.jsonl",
 		Timestamp:      t0.Add(10 * time.Second),
 	})
 
-	h.FocusAgent("link1")
+	h.FocusAgent("zone1")
 	lines := h.intelView()
-	raw := strings.Join(lines, "\n")
-
-	// Raw output must contain OSC 8 open sequence with file:// URI
-	if !strings.Contains(raw, "\033]8;;file:///tmp/coolant-test/transcript.jsonl\a") {
-		t.Errorf("absolute path should produce OSC 8 link\nraw:\n%q", raw)
+	// The size row (index 2) must contain bubblezone markers (\x1b[...z)
+	// which inflate len() beyond ansi.StringWidth — the telltale of zone.Mark.
+	sizeRow := lines[2]
+	visWidth := ansi.StringWidth(sizeRow)
+	rawLen := len(sizeRow)
+	if rawLen <= visWidth {
+		t.Errorf("size row should contain zone markers (len=%d should exceed visWidth=%d)", rawLen, visWidth)
 	}
-	// And the closing sequence
-	if !strings.Contains(raw, "\033]8;;\a") {
-		t.Errorf("OSC 8 link missing close sequence\nraw:\n%q", raw)
+	// Visible text should include "transcript" as the click target
+	if !strings.Contains(ansi.Strip(sizeRow), "transcript") {
+		t.Error("size row should contain 'transcript' label")
 	}
-	// Stripped content should still show the path
-	for _, l := range lines {
-		if strings.Contains(ansi.Strip(l), "/tmp/coolant-test/transcript.jsonl") {
-			return // success
-		}
-	}
-	t.Error("stripped output should contain the path text")
 }
 
-func TestFocusedIntelAbsolutePathWithSpacesEncodesURI(t *testing.T) {
+func TestFocusedTranscriptPath(t *testing.T) {
 	h := newHorizontalForTest(t)
 	state := h.State()
 	t0 := time.Now().Add(time.Millisecond)
 	state.HandleEvent(collector.GateEvent{
-		Event: collector.EventAgentStart, AgentID: "space1", AgentType: "general-purpose",
+		Event: collector.EventAgentStart, AgentID: "tp1", AgentType: "general-purpose",
 		Timestamp: t0,
 	})
 	state.HandleEvent(collector.GateEvent{
-		Event: collector.EventAgentStop, AgentID: "space1", AgentType: "general-purpose",
-		TranscriptPath: "/Users/dev/.claude-worktrees/my project/agent.jsonl",
+		Event: collector.EventAgentStop, AgentID: "tp1", AgentType: "general-purpose",
+		TranscriptPath: "/tmp/test/transcript.jsonl",
 		Timestamp:      t0.Add(5 * time.Second),
 	})
 
-	h.FocusAgent("space1")
-	lines := h.intelView()
-	raw := strings.Join(lines, "\n")
+	// Not focused — should return empty
+	if got := h.FocusedTranscriptPath(); got != "" {
+		t.Errorf("FocusedTranscriptPath without focus = %q, want empty", got)
+	}
 
-	// Spaces must be percent-encoded in the URI, slashes preserved
-	wantURI := "file:///Users/dev/.claude-worktrees/my%20project/agent.jsonl"
-	if !strings.Contains(raw, wantURI) {
-		t.Errorf("path with spaces should produce percent-encoded URI\nwant: %q\nraw:\n%q", wantURI, raw)
+	// Focus — should return the path
+	h.FocusAgent("tp1")
+	if got := h.FocusedTranscriptPath(); got != "/tmp/test/transcript.jsonl" {
+		t.Errorf("FocusedTranscriptPath = %q, want %q", got, "/tmp/test/transcript.jsonl")
 	}
-	// Visible text should show the original unencoded path
-	for _, l := range lines {
-		if strings.Contains(ansi.Strip(l), "my project/agent.jsonl") {
-			return
-		}
+
+	// Dismiss — should return empty again
+	h.DismissIntel()
+	if got := h.FocusedTranscriptPath(); got != "" {
+		t.Errorf("FocusedTranscriptPath after dismiss = %q, want empty", got)
 	}
-	t.Error("visible text should show unencoded path with spaces")
 }
 
-func TestFocusedIntelRelativePathNoOSC8(t *testing.T) {
+func TestFocusedIntelNoZoneMarkWithoutAbsolutePath(t *testing.T) {
 	h := newHorizontalForTest(t)
 	state := h.State()
 	t0 := time.Now().Add(time.Millisecond)
@@ -473,32 +468,12 @@ func TestFocusedIntelRelativePathNoOSC8(t *testing.T) {
 
 	h.FocusAgent("rel1")
 	lines := h.intelView()
-	raw := strings.Join(lines, "\n")
-
-	if strings.Contains(raw, "\033]8;;") {
-		t.Errorf("relative path should NOT produce OSC 8 link\nraw:\n%q", raw)
-	}
-}
-
-func TestFocusedIntelEmptyPathNoOSC8(t *testing.T) {
-	h := newHorizontalForTest(t)
-	state := h.State()
-	t0 := time.Now().Add(time.Millisecond)
-	state.HandleEvent(collector.GateEvent{
-		Event: collector.EventAgentStart, AgentID: "empty1", AgentType: "general-purpose",
-		Timestamp: t0,
-	})
-	state.HandleEvent(collector.GateEvent{
-		Event: collector.EventAgentStop, AgentID: "empty1", AgentType: "general-purpose",
-		Timestamp: t0.Add(5 * time.Second),
-	})
-
-	h.FocusAgent("empty1")
-	lines := h.intelView()
-	raw := strings.Join(lines, "\n")
-
-	if strings.Contains(raw, "\033]8;;") {
-		t.Errorf("empty path should NOT produce OSC 8 link\nraw:\n%q", raw)
+	// Size row should NOT have zone markers for relative paths
+	sizeRow := lines[2]
+	visWidth := ansi.StringWidth(sizeRow)
+	rawLen := len(sizeRow)
+	if rawLen > visWidth+50 {
+		t.Errorf("size row should not contain zone markers for relative path (len=%d, visWidth=%d)", rawLen, visWidth)
 	}
 }
 

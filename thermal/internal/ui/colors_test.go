@@ -23,6 +23,14 @@ func TestAgentZoneIDEmpty(t *testing.T) {
 	}
 }
 
+func TestPathZoneID(t *testing.T) {
+	got := PathZoneID("abc123")
+	want := "path:abc123"
+	if got != want {
+		t.Errorf("PathZoneID(%q) = %q, want %q", "abc123", got, want)
+	}
+}
+
 func TestOSC8LinkFraming(t *testing.T) {
 	got := OSC8Link("file:///tmp/test.jsonl", "test.jsonl")
 	// Must start with OSC 8 open: ESC ] 8 ; ; uri BEL

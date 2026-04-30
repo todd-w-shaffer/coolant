@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strconv"
@@ -297,6 +298,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.layout.FocusAgent(hit)
 				m.lastFocusTime = time.Now()
 				return m, nil
+			}
+			// Path zone click — open transcript in OS default handler.
+			if id := m.layout.FocusedAgentID(); id != "" {
+				if zi := zone.Get(ui.PathZoneID(id)); zi != nil && zi.InBounds(msg) {
+					if path := m.layout.FocusedTranscriptPath(); path != "" {
+						exec.Command("open", path).Start() //nolint:errcheck
+						return m, nil
+					}
+				}
 			}
 			// Category zone click.
 			for _, cat := range collector.Categories {
