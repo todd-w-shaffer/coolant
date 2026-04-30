@@ -14,51 +14,80 @@ Subtree CLAUDE.md files load only when files inside them are accessed. **Before 
 - **`scripts/CLAUDE.md`** — Bash conventions, common.sh helpers, lock semantics, state files, gate system + terminology mapping.
 - **`dev/otel/CLAUDE.md`** — Local Prometheus+Grafana dogfood stack and verified CC metric names.
 
-## Cross-repo spec access
+## Spec access
 
-TUI specs live in the private companion repo at
-`~/Desktop/apps/thermal-enterprise/docs/backlog/tui/`. Two gitignored
-paths in this repo coordinate with that one:
+Specs come in two flavors with different storage rules:
+
+- **Coolant-internal specs** (e.g., aggregator, cc-otel adapter,
+  scoreboard widget — anything scoped to thermo / scripts /
+  claude-statusline / dev-otel internals). Live in coolant.
+- **TUI / enterprise-bound specs** — design and strategy material
+  bound for the private companion repo at
+  `~/Desktop/apps/thermal-enterprise/docs/backlog/tui/`.
+
+Two gitignored paths in this repo coordinate with the enterprise
+repo and host in-flight work for both flavors:
 
 - `docs/.tui-specs` — read-side symlink. Points at enterprise's
-  `docs/backlog/tui/`. Use for reading specs during `/spec-to-ship`
-  or any coolant-side work that needs to consult a spec.
-- `docs/_drafts/` — write-side scratch dir. Gitignored so drafts
-  never stage or commit. Write new enterprise-bound specs here when
-  they emerge mid-flow from a coolant session.
+  `docs/backlog/tui/`. Use for reading TRACKED enterprise specs
+  during `/spec-to-ship` or any coolant-side work that needs to
+  consult one.
+- `docs/_drafts/` — write-side scratch dir, **first-class
+  implementation source**. Gitignored so drafts never stage or
+  commit. Read them, edit them, `/spec-to-ship` from them
+  directly while iterating — works for both coolant-internal AND
+  enterprise-bound specs.
 
 ### Rules
 
 - **Reading enterprise material from coolant CWD.** Always OK via
   `docs/.tui-specs/` symlink or absolute path.
-- **Drafting enterprise material from coolant CWD.** Allowed into
-  `docs/_drafts/` only. Gitignored → classifier never sees it →
-  zero commit risk. No CWD switch required.
-- **Promoting drafts and committing to enterprise.** Requires a CWD
-  switch to thermal-enterprise. A sweep prompt from an enterprise
-  session reads coolant's `docs/_drafts/`, moves ready files
-  (frontmatter `status: ready`) into `docs/backlog/tui/`, and commits
-  from enterprise CWD.
-- **Editing or amending existing enterprise specs.** Requires a CWD
-  switch. A tracked enterprise file is one `git add -f` away from a
-  real leak — don't edit live enterprise specs from coolant CWD.
+- **Drafting from coolant CWD.** Allowed into `docs/_drafts/` for
+  both flavors. Gitignored → classifier never sees it → zero
+  commit risk. No CWD switch required.
+- **Implementing from a draft.** OK from coolant CWD against
+  `docs/_drafts/<spec>.md` directly. No promotion required —
+  promotion is a separate, opt-in act (see lifecycle below).
+- **Promotion is opt-in, not mandatory.** Only when truly
+  backlogging (handing off, parking long-term, wanting an
+  enterprise audit pass):
+  - **Coolant-internal specs** → `git mv` from `_drafts/` into
+    a tracked coolant location (e.g., `docs/backlog/`) and
+    commit from coolant CWD.
+  - **TUI / enterprise-bound specs** → CWD switch to
+    thermal-enterprise; sweep reads `_drafts/`
+    (`status: ready`) and moves them into `backlog/tui/`.
+- **Editing or amending existing enterprise specs.** Requires a
+  CWD switch. A tracked enterprise file is one `git add -f` away
+  from a real leak — don't edit live enterprise specs from
+  coolant CWD.
 
 ### Readiness signal
 
 Drafts carry frontmatter `status: draft` while in flight;
-`status: ready` when the coolant session considers them ready for
-the enterprise sweep.
+`status: ready` when the spec is ready to implement OR ready for
+promotion (the two no longer chain — `ready` is a marker, not a
+gate that must precede promotion).
 
 ### Spec lifecycle
 
 1. **Seed / draft** — coolant CWD, write to `docs/_drafts/`
-   (`status: draft`); or thermal-enterprise CWD, write directly.
-2. **Promote** — thermal-enterprise CWD, sweep reads coolant's
-   `_drafts/` (`status: ready`), moves to `backlog/tui/`, commits.
-3. **Audit / expand** — thermal-enterprise CWD (tracked specs only).
-4. **Implement** — coolant CWD, read spec via `docs/.tui-specs/`.
-5. **Archive** — thermal-enterprise CWD, `git mv` shipped spec to
-   `backlog/tui/archive/`.
+   (`status: draft`); or thermal-enterprise CWD, write directly
+   into `backlog/tui/`. Stays in `_drafts/` as long as you're
+   iterating, regardless of flavor.
+2. **Implement** — `/spec-to-ship` from `docs/_drafts/<spec>.md`
+   directly while drafts are live. No promotion required. For
+   already-tracked enterprise specs, read via
+   `docs/.tui-specs/<spec>.md`.
+3. **Promote (optional, when backlogging)** —
+   - Coolant-internal: `git mv _drafts/<spec>.md docs/backlog/`
+     in coolant CWD, commit.
+   - Enterprise: CWD switch to thermal-enterprise, sweep moves
+     `status: ready` drafts into `backlog/tui/`.
+4. **Audit / expand** — for TUI specs only, thermal-enterprise
+   CWD (tracked specs).
+5. **Archive** — `git mv` shipped spec to its repo's archive
+   folder (`docs/backlog/archive/` or `backlog/tui/archive/`).
 
 ## Surfaces
 
@@ -151,9 +180,11 @@ Historical artifacts kept for nostalgia. May be stale or broken.
 
 ## JSONL event bus (the bash↔Go seam)
 
-Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. This is the *only* runtime data path between the two layers — there are zero direct calls. The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
+Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. This is the *only* bash→Go runtime data path — there are zero direct calls. The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
 
 Every line carries `"schema":1` (envelope shape contract — bumps on rename or removal, additive optional fields stay at 1). Writes are serialized via the non-reentrant `coolant_lock` mkdir-mutex so parallel hooks emitting >PIPE_BUF payloads can't splice. Lock-acquisition timeout falls through to an unsynchronized write and bumps `$COOLANT_DEGRADED_COUNT` (out-of-band counter, truncated each SessionStart). The Go schema gate at `internal/stats` filters pre-versioning events at parse time — old and new envelopes coexist in the same JSONL ("virtual chop").
+
+A second JSONL bus carries Claude Code's beta OTEL emissions: thermo embeds an OTLP/HTTP receiver on `127.0.0.1:4318`, writes parsed metric data points to `$TMPDIR/coolant-$USER.cc-otel.jsonl`, and an in-process tailer feeds the cc-otel reconcile loop in `internal/otel/cc/`. The reconciliation surface is read-only against CC OTEL — drift surfaces as filing-grade findings written to the durable `~/.coolant/cc-otel-findings.jsonl`. Review via `thermo cc-findings`; enable via `scripts/enable-cc-otel.sh`. The findings file persists `session.id`, `user.account_uuid`, and `organization.id` for triage; `user.email` is stripped at the receiver before reaching disk.
 
 ## Distribution
 

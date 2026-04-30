@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -20,6 +22,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/layout"
 	appmodel "github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/otel/cc"
 	"github.com/toddwshaffer/coolant/thermal/internal/stats"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
@@ -55,6 +58,12 @@ type model struct {
 	// the fsync — without this, a quit during the 30s tick window
 	// loses the unwritten delta.
 	checkpointDone chan struct{}
+
+	// ccOtelDone closes after the CC OTEL receiver/tailer/reconcile
+	// goroutine's final flush — paired with m.done on tea.Quit.
+	// Mirrors checkpointDone so process exit can't race a midflight
+	// reconcile tick or receiver shutdown.
+	ccOtelDone chan struct{}
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
@@ -71,6 +80,7 @@ func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 		updateChan:     make(chan string, 1),
 		aggregator:     agg,
 		checkpointDone: make(chan struct{}),
+		ccOtelDone:     make(chan struct{}),
 	}
 	m.layout.State().AttachAggregator(agg)
 	// Self-check the wire-up so a future refactor that drops the
@@ -117,6 +127,11 @@ func (m model) Init() tea.Cmd {
 	} else {
 		close(m.checkpointDone)
 	}
+
+	// CC OTEL pipeline (§0.1b startup ordering: findings writer FIRST,
+	// adapter, tailer, reconcile, receiver LAST so the bind-failure
+	// path goes through the same writer everyone else uses).
+	startCcOtel(m.aggregator, m.done, m.ccOtelDone)
 
 	cmds := []tea.Cmd{waitForSnapshot(m.snapChan), waitForEvent(m.eventChan), animTick()}
 
@@ -317,6 +332,113 @@ func (m model) View() tea.View {
 	return v
 }
 
+// startCcOtel wires up the CC OTEL pipeline per spec §0.1b. The
+// goroutine startup order is FIXED:
+//  1. findings writer (NewWriter creates the path lazily on first
+//     write — mkdir 0o700 ~/.coolant inside Writer.appendLine)
+//  2. adapter struct
+//  3. tailer goroutine
+//  4. reconcile goroutine
+//  5. receiver goroutine LAST — its bind-failure path emits one
+//     receiver_bind_failed finding through the writer initialized in
+//     step 1.
+//
+// `ccOtelDone` is closed after every CC OTEL goroutine has finished
+// its terminal flush. main() waits on it post-Run so process exit
+// can't race the receiver shutdown or a final reconcile tick.
+func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone chan<- struct{}) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		// No HOME → no durable findings; degrade silently.
+		close(ccOtelDone)
+		return
+	}
+
+	findingsPath := filepath.Join(home, ".coolant", "cc-otel-findings.jsonl")
+	writer := cc.NewWriter(findingsPath, os.Stderr)
+
+	jsonlPath := os.Getenv("COOLANT_CC_OTEL_JSONL")
+	if jsonlPath == "" {
+		jsonlPath = coolantTmpPath("cc-otel.jsonl")
+	}
+
+	port := 4318
+	if v := os.Getenv("COOLANT_CC_OTEL_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n < 65536 {
+			port = n
+		}
+	}
+
+	tailer := cc.NewMetricsTailer(jsonlPath)
+	tailer.Findings = writer
+
+	adapter := cc.NewAdapter(cc.AdapterConfig{
+		Findings:       writer,
+		CoolantVersion: version.Version,
+	})
+
+	receiver, err := cc.NewReceiver(cc.ReceiverConfig{
+		Addr:           "127.0.0.1",
+		Port:           port,
+		JSONLPath:      jsonlPath,
+		Findings:       writer,
+		CoolantVersion: version.Version,
+	})
+	if err != nil {
+		close(ccOtelDone)
+		return
+	}
+
+	reconciler := cc.NewReconciler(cc.ReconcilerConfig{
+		Tailer:             tailer,
+		Aggregator:         aggregator,
+		Adapter:            adapter,
+		Findings:           writer,
+		LastReceiverPostTS: receiver.LastSuccessfulPostTS,
+	})
+
+	tailer.Start()
+
+	reconcileTicker := time.NewTicker(60 * time.Second)
+	rolloverTimer := time.NewTimer(durationToNextUTCMidnight() + 30*time.Second)
+
+	go func() {
+		defer close(ccOtelDone)
+		defer reconcileTicker.Stop()
+		defer rolloverTimer.Stop()
+
+		// Receiver started LAST per §0.1b so the bind-failure path
+		// flows through the writer initialized at step 1. Bind failure
+		// here only logs a single finding and the loop continues —
+		// reconcile no-ops cleanly when the JSONL stays empty.
+		_ = receiver.Start()
+
+		for {
+			select {
+			case <-done:
+				_ = receiver.Shutdown(context.Background())
+				tailer.Stop()
+				_ = reconciler.ReconcileToday()
+				return
+			case <-reconcileTicker.C:
+				_ = reconciler.ReconcileToday()
+			case <-rolloverTimer.C:
+				_ = reconciler.ReconcileWindow(1)
+				tailer.PruneOlderThan(7)
+				rolloverTimer.Reset(durationToNextUTCMidnight() + 30*time.Second)
+			}
+		}
+	}()
+}
+
+// durationToNextUTCMidnight returns the time.Duration until the next
+// UTC midnight tick. Reused on every rollover firing.
+func durationToNextUTCMidnight() time.Duration {
+	now := time.Now().UTC()
+	next := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	return next.Sub(now)
+}
+
 // productionStatsConfig falls through to in-memory-only when HOME
 // can't be resolved — empty CachePath disables persistence but keeps
 // the aggregator usable.
@@ -352,6 +474,8 @@ func main() {
 			os.Exit(0)
 		case "stats":
 			os.Exit(runStats(os.Stdout, os.Stderr, os.Args[2:], productionStatsConfig()))
+		case "cc-findings":
+			os.Exit(runCcFindings(os.Stdout, os.Stderr, os.Args[2:], productionStatsConfig()))
 		}
 	}
 
@@ -362,7 +486,12 @@ func main() {
 	listAnims := flag.Bool("list-animations", false, "List available animation profiles and exit")
 	kittHighScore := flag.Bool("kitt-highscore", true, "KITT scans completed agents instead of ghosts")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	ccOtelPort := flag.Int("cc-otel-port", 0, "CC OTEL receiver port override (default 4318; env COOLANT_CC_OTEL_PORT)")
 	flag.Parse()
+
+	if *ccOtelPort > 0 {
+		os.Setenv("COOLANT_CC_OTEL_PORT", strconv.Itoa(*ccOtelPort))
+	}
 
 	if *showVersion {
 		fmt.Println(version.Version)
@@ -448,4 +577,7 @@ func main() {
 	// goroutine then runs its terminal Checkpoint and closes
 	// checkpointDone. Bounded by the disk I/O — typically <50ms.
 	<-m.checkpointDone
+	if m.ccOtelDone != nil {
+		<-m.ccOtelDone
+	}
 }

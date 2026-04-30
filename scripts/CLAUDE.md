@@ -13,7 +13,7 @@ Bash layer: SessionStart / PreToolUse / Subagent hooks, reconciled counters, JSO
 
 ## State files
 
-State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log, agent-starts tsv (agent_id<TAB>epoch_s for duration_s computation on stop; 24h entries self-prune), version cache, and `coolant-$USER.session` (the session-id sidecar written by `preflight.sh` on `SessionStart` and read by `_reconcile_counter` + Go's `TailEvents` to scope per-session counters). No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks.
+State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log, agent-starts tsv (agent_id<TAB>epoch_s for duration_s computation on stop; 24h entries self-prune), version cache, `coolant-$USER.session` (the session-id sidecar written by `preflight.sh` on `SessionStart` and read by `_reconcile_counter` + Go's `TailEvents` to scope per-session counters), and `coolant-$USER.cc-otel.jsonl` (raw metric data points from thermo's embedded OTLP receiver — sibling to events.jsonl, consumed by `internal/otel/cc/` reconciliation). No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks. Durable state — cross-session aggregates and CC OTEL drift findings — lives in `~/.coolant/` (`stats.json`, `cc-otel-findings.jsonl`).
 
 ## Gate system
 
