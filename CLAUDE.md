@@ -12,7 +12,6 @@ Subtree CLAUDE.md files load only when files inside them are accessed. **Before 
 
 - **`thermal/CLAUDE.md`** — Go thermal dashboard: deps, internal package groups, full Go API gotchas (bubbletea/lipgloss/theme/anim/widgets/stats/bubblezone), terminal-rendering gotchas, preview tools.
 - **`scripts/CLAUDE.md`** — Bash conventions, common.sh helpers, lock semantics, state files, gate system + terminology mapping.
-- **`dev/otel/CLAUDE.md`** — Local Prometheus+Grafana dogfood stack and verified CC metric names.
 
 ## Spec access
 
@@ -159,7 +158,6 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 - `thermal/` — Go thermal dashboard (see `thermal/CLAUDE.md`).
 - `.claude-plugin/`, `install.sh`, `claude-statusline/` — plugin manifest, installer, and the braille statusline.
 - `docs/` — design docs, theming plans, backlog specs.
-- `dev/otel/` — local Prometheus+Grafana dogfood stack (see `dev/otel/CLAUDE.md`).
 - `tests/` — bats tests for the bash layer.
 - `skills/coolant/SKILL.md` — the `/coolant` skill entry.
 - `assets/` — VHS tapes + demo GIFs.
