@@ -139,7 +139,7 @@ func (m model) Init() tea.Cmd {
 	if !config.C.Updates.Disabled {
 		go func() {
 			defer close(m.updateChan)
-			cachePath := coolantTmpPath("latest-version")
+			cachePath := coolantTmpPath(updater.CacheFilename)
 			latest, avail := updater.Check(version.Version, cachePath, config.C.Updates.CheckIntervalSec)
 			if avail {
 				m.updateChan <- latest
@@ -486,6 +486,8 @@ func main() {
 			os.Exit(runStats(os.Stdout, os.Stderr, os.Args[2:], productionStatsConfig()))
 		case "cc-findings":
 			os.Exit(runCcFindings(os.Stdout, os.Stderr, os.Args[2:], productionStatsConfig()))
+		case upgradeVerb, upgradeFlag:
+			os.Exit(runUpgrade(os.Stdout, os.Stderr))
 		}
 	}
 

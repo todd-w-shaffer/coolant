@@ -12,6 +12,13 @@ import (
 
 const defaultURL = "https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/VERSION"
 
+// CacheFilename is the suffix passed to coolantTmpPath for the shared
+// latest-version cache. Read by the daily-TTL updater (this package),
+// invalidated by the self-upgrade path (internal/upgrader), and read
+// by claude-statusline/statusline.sh and scripts/upgrade.sh on the
+// bash side — rename touches all four readers.
+const CacheFilename = "latest-version"
+
 func Check(currentVersion, cachePath string, ttlSeconds int) (string, bool) {
 	return CheckWithURL(currentVersion, cachePath, ttlSeconds, defaultURL)
 }

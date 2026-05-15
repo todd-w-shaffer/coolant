@@ -132,3 +132,83 @@ EOF
   run bash -n "$PROJECT_ROOT/scripts/upgrade.sh"
   [ "$status" -eq 0 ]
 }
+
+# ── thermo upgrade delegation (integration) ────────
+#
+# These tests run the real scripts/upgrade.sh against a stubbed PATH
+# (mock thermo + mock curl). They lock the binary-refresh contract:
+# delegate to `thermo upgrade` when supported, fall back to in-place
+# curl when it isn't.
+
+@test "upgrade.sh delegates binary refresh to 'thermo upgrade' when supported" {
+  mkdir -p "$TEST_TMPDIR/bin" "$TEST_TMPDIR/stub"
+
+  # Stub thermo: 'upgrade' writes a marker and exits 0; '--version'
+  # echoes a fixed string.
+  cat > "$TEST_TMPDIR/bin/thermo" << EOF
+#!/bin/bash
+if [ "\$1" = "upgrade" ]; then
+  echo "delegated" > "$TEST_TMPDIR/upgrade-marker"
+  exit 0
+fi
+if [ "\$1" = "--version" ]; then
+  echo "0.6.0"
+fi
+EOF
+  chmod +x "$TEST_TMPDIR/bin/thermo"
+  cp "$TEST_TMPDIR/bin/thermo" "$TEST_TMPDIR/thermo-snapshot"
+
+  # Stub curl: if invoked with -o, overwrite the target with a sentinel.
+  # If the production script reaches this stub for the binary, the
+  # post-test diff will detect the clobber and the test fails.
+  cat > "$TEST_TMPDIR/stub/curl" << 'EOF'
+#!/bin/bash
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    echo "CURL_CLOBBERED" > "$2"
+    exit 0
+  fi
+  shift
+done
+exit 0
+EOF
+  chmod +x "$TEST_TMPDIR/stub/curl"
+
+  PATH="$TEST_TMPDIR/bin:$TEST_TMPDIR/stub:$PATH" run bash "$PROJECT_ROOT/scripts/upgrade.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$TEST_TMPDIR/upgrade-marker" ]
+  diff -q "$TEST_TMPDIR/bin/thermo" "$TEST_TMPDIR/thermo-snapshot"
+}
+
+@test "upgrade.sh falls back to curl when 'thermo upgrade' subcommand fails" {
+  mkdir -p "$TEST_TMPDIR/bin" "$TEST_TMPDIR/stub"
+
+  # Stub thermo: 'upgrade' fails (simulates older binary that predates
+  # the subcommand); '--version' echoes a fixed string.
+  cat > "$TEST_TMPDIR/bin/thermo" << EOF
+#!/bin/bash
+if [ "\$1" = "upgrade" ]; then exit 1; fi
+if [ "\$1" = "--version" ]; then echo "0.4.0"; fi
+EOF
+  chmod +x "$TEST_TMPDIR/bin/thermo"
+
+  # Stub curl: writes a "new" thermo executable in place. Post-test
+  # we confirm the binary's bytes changed.
+  cat > "$TEST_TMPDIR/stub/curl" << 'EOF'
+#!/bin/bash
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    printf '#!/bin/bash\necho "0.6.0"\n' > "$2"
+    exit 0
+  fi
+  shift
+done
+exit 0
+EOF
+  chmod +x "$TEST_TMPDIR/stub/curl"
+
+  PATH="$TEST_TMPDIR/bin:$TEST_TMPDIR/stub:$PATH" run bash "$PROJECT_ROOT/scripts/upgrade.sh"
+  [ "$status" -eq 0 ]
+  # Curl path was used — the binary's contents now reflect the stub.
+  grep -q '0.6.0' "$TEST_TMPDIR/bin/thermo"
+}

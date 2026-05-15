@@ -9,6 +9,15 @@ import (
 	"time"
 )
 
+func TestCacheFilenameLocksBashContract(t *testing.T) {
+	// claude-statusline/statusline.sh and scripts/upgrade.sh hard-code
+	// "latest-version" — renaming the Go constant compiles fine but
+	// silently desynchronizes both bash readers. Lock the value.
+	if CacheFilename != "latest-version" {
+		t.Errorf("CacheFilename = %q, want %q (bash readers will break on rename)", CacheFilename, "latest-version")
+	}
+}
+
 func TestDevVersionShortCircuits(t *testing.T) {
 	_, avail := Check("dev", "/nonexistent", 86400)
 	if avail {

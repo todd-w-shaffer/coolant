@@ -58,15 +58,23 @@ if [ "$OS" != "Darwin" ]; then
 fi
 
 # ── upgrade thermo ─────────────────────────────────
+# Prefer the in-binary `thermo upgrade` subcommand — atomic sibling-temp
+# + os.Rename swap, safe against partial downloads. Falls back to the
+# legacy in-place curl for binaries that predate the subcommand or
+# can't run at all (corrupt, exec-permission lost, etc.).
 NEW_THERMO_VERSION=""
 if [ -n "$THERMO_BIN" ]; then
-  ASSET="thermo-darwin-${ARCH}"
-  URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
-  if curl -fsSL "$URL" -o "$THERMO_BIN" 2>/dev/null; then
-    chmod +x "$THERMO_BIN"
+  if "$THERMO_BIN" upgrade >/dev/null 2>&1; then
     NEW_THERMO_VERSION=$("$THERMO_BIN" --version 2>/dev/null || echo "unknown")
   else
-    NEW_THERMO_VERSION="$OLD_THERMO_VERSION"
+    ASSET="thermo-darwin-${ARCH}"
+    URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+    if curl -fsSL "$URL" -o "$THERMO_BIN" 2>/dev/null; then
+      chmod +x "$THERMO_BIN"
+      NEW_THERMO_VERSION=$("$THERMO_BIN" --version 2>/dev/null || echo "unknown")
+    else
+      NEW_THERMO_VERSION="$OLD_THERMO_VERSION"
+    fi
   fi
 fi
 
