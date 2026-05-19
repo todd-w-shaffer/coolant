@@ -72,6 +72,20 @@ func TestHelpViewMentionsClickToInspect(t *testing.T) {
 	}
 }
 
+// TestHelpViewFitsInGaugeRows guards against the silent-truncation failure
+// mode in overlayContent: if helpView returns more lines than the gauge row
+// height, the excess drops on the floor with no warning. The current gauge
+// budget is 6 lines (see Horizontal.SetSize: h.gauges.SetSize(w, 6)). When
+// adding new help rows (e.g. sparkline toggle keys), either reduce existing
+// rows or merge toggle keys into the descriptive lines.
+func TestHelpViewFitsInGaugeRows(t *testing.T) {
+	h := newHorizontalForTest(t)
+	const gaugeRows = 6
+	if got := len(h.helpView()); got > gaugeRows {
+		t.Errorf("helpView returned %d lines, exceeds gauge row budget of %d — overlayContent will truncate keyboard shortcuts silently", got, gaugeRows)
+	}
+}
+
 func TestHelpViewCoversAllBindings(t *testing.T) {
 	h := newHorizontalForTest(t)
 	lines := h.helpView()

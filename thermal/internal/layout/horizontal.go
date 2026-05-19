@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"github.com/charmbracelet/x/ansi"
 	zone "github.com/lrstanley/bubblezone/v2"
 
@@ -49,6 +50,7 @@ type Horizontal struct {
 	focusedAgentID string // non-empty → focused-agent sub-mode within intel
 	collapsed      bool
 	theme          *theme.Theme
+	keys           keys.KeyMap
 }
 
 func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizontal {
@@ -58,6 +60,7 @@ func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizonta
 		gauges:   widgets.NewGauges(th, ap),
 		alerts:   widgets.NewAlerts(th),
 		theme:    th,
+		keys:     km,
 	}
 	h.rates = widgets.NewRates(th, km)
 	return h
@@ -251,6 +254,16 @@ func overlayContent(help, gaugeLines []string) []string {
 	return out
 }
 
+// helpView renders the full help overlay. Key-binding lines (filter + main)
+// are generated from h.keys via renderKeyGroup — adding a binding to KeyMap
+// automatically surfaces here. Descriptive legend lines (sparklines, sessions,
+// agents) remain hand-curated because they explain on-screen glyphs rather
+// than keyboard shortcuts.
+//
+// Line-count contract: must stay ≤ 6 to fit the gauge-row height. See
+// TestHelpViewFitsInGaugeRows in horizontal_help_test.go — overlayContent
+// silently truncates beyond that, which would drop keyboard shortcuts on
+// the floor.
 func (h *Horizontal) helpView() []string {
 	d := h.theme.HelpColor
 	ct := ui.ColorText
@@ -258,6 +271,7 @@ func (h *Horizontal) helpView() []string {
 	sp := h.theme.SessionPhase
 
 	diamond := func(c color.Color) string { return ct(c, ui.SessionDiamondGlyph) }
+	groups := h.keys.FullHelp()
 
 	return []string{
 		" " + dim("sparklines") + " " + ct(d, "CPU cores") + "  " + ct(d, "MEM app memory") + "  " +
@@ -271,13 +285,26 @@ func (h *Horizontal) helpView() []string {
 		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphMid) + dim(ui.AgentGlyphFilled) + " " +
 			ct(d, "subagents — tidal wave, ghosts KITT-scan") + dim(" · ") +
 			ct(d, "click dot for details"),
-		" " + dim("filter") + " " + ct(d, "[ prev") + "  " + ct(d, "] next") + "  " + ct(d, "\\ clear") + "  " +
-			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
+		" " + dim("filter") + " " + renderKeyGroup(groups[2], d) + "  " +
 			dim("click a headline category to filter"),
-		" " + ct(d, "i session intel") + "  " +
-			dim("|") + " " + ct(d, "x clear completed") + "  " + ct(d, "c collapse"),
+		" " + renderKeyGroup(groups[1], d),
 		" " + dim("press any key to dismiss"),
 	}
+}
+
+// renderKeyGroup turns a FullHelp group of key bindings into a space-separated
+// help fragment using each binding's registered Key/Desc labels. Single source
+// of truth: edit keys.go to change labels, helpView picks them up.
+func renderKeyGroup(group []key.Binding, c color.Color) string {
+	parts := make([]string, 0, len(group))
+	for _, b := range group {
+		help := b.Help()
+		if help.Key == "" {
+			continue
+		}
+		parts = append(parts, ui.ColorText(c, help.Key+" "+help.Desc))
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (h *Horizontal) intelView() []string {
