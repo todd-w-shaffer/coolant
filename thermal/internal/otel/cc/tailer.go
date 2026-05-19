@@ -24,11 +24,17 @@ type AggregateKey struct {
 }
 
 // AggregateValue carries the running sum and count plus the most-recent
-// data-point timestamp.
+// data-point timestamp. LastValue is the most recent data-point value —
+// distinct from Sum (which sums every line absorbed). For cumulative
+// temporality (coolant's CC OTEL config — `scripts/enable-cc-otel.sh:77`),
+// each data point IS the running cumulative, so LastValue is the
+// authoritative "tokens-so-far" reading. Sum is sum-of-cumulatives and
+// the wrong number for that case.
 type AggregateValue struct {
-	Sum    float64
-	Count  int64
-	LastTS time.Time
+	Sum       float64
+	Count     int64
+	LastTS    time.Time
+	LastValue float64
 }
 
 // MetricsTailer mirrors collector/events.go's polling-tail pattern with
@@ -190,6 +196,7 @@ func (mt *MetricsTailer) absorbLine(line []byte) {
 	v.Count++
 	if ts.After(v.LastTS) {
 		v.LastTS = ts
+		v.LastValue = jl.Value
 	}
 }
 
@@ -241,6 +248,20 @@ func (mt *MetricsTailer) SumDay(metric string, attrs map[string]string, dayKey s
 		return v.Sum
 	}
 	return 0
+}
+
+// LatestCumulative returns the most recent data-point value and timestamp
+// for a (metric, attrs, dayKey) bucket. For CC's cumulative temporality
+// the returned value is the running cumulative as of the last absorbed
+// line — the live-throughput fan-in subtracts its prior-tick snapshot
+// from this to derive deltas. ok=false when the bucket is empty.
+func (mt *MetricsTailer) LatestCumulative(metric string, attrs map[string]string, dayKey string) (float64, time.Time, bool) {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	if v, ok := mt.aggregate[AggregateKey{Metric: metric, Attrs: canonicalAttrs(attrs), DayKey: dayKey}]; ok {
+		return v.LastValue, v.LastTS, true
+	}
+	return 0, time.Time{}, false
 }
 
 // Count returns the number of data points absorbed for a (metric, attrs) bucket
