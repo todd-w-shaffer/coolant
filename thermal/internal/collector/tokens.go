@@ -19,6 +19,52 @@ const ActiveSessionWindow = 60 * time.Second
 // machines with many historical session dirs.
 const rediscoveryInterval = 5 * time.Second
 
+// cacheWindowSize is the number of slow-loop ticks (1s each) over which the
+// displayed cache hit ratio is averaged. Long enough to absorb single-message
+// noise; short enough that a fresh cache miss visibly moves the readout.
+const cacheWindowSize = 30
+
+// cacheDelta is one tick's contribution to the rolling cache-hit ratio.
+type cacheDelta struct {
+	read  int64 // cache_read_input_tokens delta over the tick
+	total int64 // (input + cache_create + cache_read) delta over the tick
+}
+
+// cacheWindow is a ring buffer of recent per-tick deltas used to compute the
+// rolling cache hit ratio displayed on the dashboard. The lifetime average
+// stabilizes too high on long sessions ("locked at 100%"); a window of recent
+// activity lets a cache miss show up in real time.
+type cacheWindow struct {
+	deltas [cacheWindowSize]cacheDelta
+	pos    int
+	full   bool
+}
+
+func (w *cacheWindow) add(d cacheDelta) {
+	w.deltas[w.pos] = d
+	w.pos++
+	if w.pos == cacheWindowSize {
+		w.pos = 0
+		w.full = true
+	}
+}
+
+func (w *cacheWindow) ratio() float64 {
+	n := w.pos
+	if w.full {
+		n = cacheWindowSize
+	}
+	var sumRead, sumTotal int64
+	for i := 0; i < n; i++ {
+		sumRead += w.deltas[i].read
+		sumTotal += w.deltas[i].total
+	}
+	if sumTotal == 0 {
+		return 0
+	}
+	return float64(sumRead) / float64(sumTotal)
+}
+
 // Usage holds the four token counters emitted by Claude Code's transcript
 // rows. Matches Anthropic's usage object shape.
 type Usage struct {
@@ -39,21 +85,13 @@ func NewTokenAccumulator() *TokenAccumulator {
 	return &TokenAccumulator{}
 }
 
-// Apply adds a usage to the running totals.
+// Apply adds a usage to the running totals. CacheHitRatio is NOT updated here;
+// it's derived from the recent-tick window in TokenCollector.Tick.
 func (a *TokenAccumulator) Apply(u Usage) {
 	a.Stats.InputTotal += u.Input
 	a.Stats.OutputTotal += u.Output
 	a.Stats.CacheCreateTotal += u.CacheCreate
 	a.Stats.CacheReadTotal += u.CacheRead
-	a.Stats.CacheHitRatio = computeCacheHitRatio(a.Stats)
-}
-
-func computeCacheHitRatio(s TokenStats) float64 {
-	denom := float64(s.InputTotal + s.CacheCreateTotal + s.CacheReadTotal)
-	if denom == 0 {
-		return 0
-	}
-	return float64(s.CacheReadTotal) / denom
 }
 
 // transcriptRow is the minimal shape we need from each assistant JSONL row.
@@ -88,14 +126,18 @@ func parseTranscriptLine(line []byte) (string, Usage, bool) {
 // only the LAST id per file is sufficient because rows from one response
 // arrive consecutively.
 type TokenCollector struct {
-	acc         *TokenAccumulator
-	offsets     map[string]int64
-	lastMsgIDs  map[string]string
-	projects    string // ~/.claude/projects/ (overridable for tests)
-	lastTotal   int64
-	lastTick    time.Time
-	cachedFiles []string
-	lastDiscov  time.Time
+	acc           *TokenAccumulator
+	offsets       map[string]int64
+	lastMsgIDs    map[string]string
+	projects      string // ~/.claude/projects/ (overridable for tests)
+	lastTotal     int64
+	lastInput     int64
+	lastCacheCrt  int64
+	lastCacheRead int64
+	lastTick      time.Time
+	cachedFiles   []string
+	lastDiscov    time.Time
+	window        cacheWindow
 }
 
 func NewTokenCollector() *TokenCollector {
@@ -131,21 +173,32 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 		tc.scanFile(path)
 	}
 
-	total := tc.acc.Stats.InputTotal + tc.acc.Stats.OutputTotal +
-		tc.acc.Stats.CacheCreateTotal + tc.acc.Stats.CacheReadTotal
+	s := &tc.acc.Stats
+	total := s.InputTotal + s.OutputTotal + s.CacheCreateTotal + s.CacheReadTotal
 
 	if !tc.lastTick.IsZero() {
 		dt := now.Sub(tc.lastTick).Seconds()
 		if dt > 0 {
 			sample := float64(total-tc.lastTotal) / dt
-			tc.acc.Stats.TokensPerSec = config.RateSmoothAlpha*sample +
-				(1-config.RateSmoothAlpha)*tc.acc.Stats.TokensPerSec
+			s.TokensPerSec = config.RateSmoothAlpha*sample +
+				(1-config.RateSmoothAlpha)*s.TokensPerSec
 		}
+
+		readDelta := s.CacheReadTotal - tc.lastCacheRead
+		totalDelta := (s.InputTotal - tc.lastInput) +
+			(s.CacheCreateTotal - tc.lastCacheCrt) +
+			readDelta
+		tc.window.add(cacheDelta{read: readDelta, total: totalDelta})
+		s.CacheHitRatio = tc.window.ratio()
 	}
+
 	tc.lastTotal = total
+	tc.lastInput = s.InputTotal
+	tc.lastCacheCrt = s.CacheCreateTotal
+	tc.lastCacheRead = s.CacheReadTotal
 	tc.lastTick = now
-	tc.acc.Stats.ActiveSessions = len(tc.cachedFiles)
-	return tc.acc.Stats
+	s.ActiveSessions = len(tc.cachedFiles)
+	return *s
 }
 
 // activeSessionFiles returns session JSONL files modified within

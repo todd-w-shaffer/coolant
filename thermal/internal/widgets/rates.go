@@ -136,7 +136,7 @@ func (r *Rates) View() string {
 	// Token throughput + cache hit % — suppress when no transcript activity
 	if tok := snap.Tokens; tok.ActiveSessions > 0 && (tok.InputTotal+tok.OutputTotal+tok.CacheCreateTotal+tok.CacheReadTotal) > 0 {
 		sb.WriteString("  ")
-		sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("tok %s/s · cache %d%%", humanizeRate(tok.TokensPerSec), int(tok.CacheHitRatio*100+0.5))))
+		sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("tok %s/s · cache %.1f%%", humanizeRate(tok.TokensPerSec), tok.CacheHitRatio*100)))
 	}
 
 	// Static indicators: Desktop, Chrome

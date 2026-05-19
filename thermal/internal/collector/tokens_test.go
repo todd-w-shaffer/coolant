@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestTokenCollectorDedupesMultiBlockResponse(t *testing.T) {
@@ -48,41 +49,61 @@ func TestTokenCollectorDedupesMultiBlockResponse(t *testing.T) {
 	}
 }
 
-func TestComputeCacheHitRatio(t *testing.T) {
-	tests := []struct {
-		name string
-		s    TokenStats
-		want float64
-	}{
-		{
-			name: "all zeros",
-			s:    TokenStats{},
-			want: 0,
-		},
-		{
-			name: "canonical formula uses cache_read / (input + cache_create + cache_read)",
-			s:    TokenStats{InputTotal: 100, CacheCreateTotal: 200, CacheReadTotal: 700, OutputTotal: 9999},
-			want: 0.7, // 700 / (100 + 200 + 700); output is excluded
-		},
-		{
-			name: "no cache reads yet",
-			s:    TokenStats{InputTotal: 1000, CacheCreateTotal: 500},
-			want: 0,
-		},
-		{
-			name: "pure cache hit",
-			s:    TokenStats{CacheReadTotal: 1000},
-			want: 1.0,
-		},
+func TestCacheWindowEmpty(t *testing.T) {
+	var w cacheWindow
+	if got := w.ratio(); got != 0 {
+		t.Errorf("empty window ratio = %v, want 0", got)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := computeCacheHitRatio(tt.s)
-			if math.Abs(got-tt.want) > 1e-9 {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
+func TestCacheWindowSingleDelta(t *testing.T) {
+	var w cacheWindow
+	// 700 cache_read out of (100 input + 200 cache_create + 700 cache_read) = 70%
+	w.add(cacheDelta{read: 700, total: 100 + 200 + 700})
+	if got := w.ratio(); math.Abs(got-0.7) > 1e-9 {
+		t.Errorf("ratio = %v, want 0.7", got)
+	}
+}
+
+func TestCacheWindowAveragesAcrossTicks(t *testing.T) {
+	var w cacheWindow
+	w.add(cacheDelta{read: 0, total: 100})    // tick 1: 0% hit
+	w.add(cacheDelta{read: 100, total: 100}) // tick 2: 100% hit
+	// Combined: 100 read / 200 total = 50%
+	if got := w.ratio(); math.Abs(got-0.5) > 1e-9 {
+		t.Errorf("ratio = %v, want 0.5", got)
+	}
+}
+
+func TestCacheWindowEvictsAfterCapacity(t *testing.T) {
+	// Fill the window with 100%-hit deltas, then push one 0%-hit delta past
+	// the capacity and verify the very-first 100% delta is gone (otherwise
+	// the window would still read 100% from sticky history).
+	var w cacheWindow
+	for i := 0; i < cacheWindowSize; i++ {
+		w.add(cacheDelta{read: 100, total: 100})
+	}
+	if got := w.ratio(); got != 1.0 {
+		t.Fatalf("full-100%% window ratio = %v, want 1.0", got)
+	}
+	// Replace the oldest entry with a 0%-hit delta.
+	w.add(cacheDelta{read: 0, total: 100})
+	// New sum: (cacheWindowSize-1)*100 read / cacheWindowSize*100 total
+	want := float64(cacheWindowSize-1) / float64(cacheWindowSize)
+	if got := w.ratio(); math.Abs(got-want) > 1e-9 {
+		t.Errorf("ratio after eviction = %v, want %v", got, want)
+	}
+}
+
+func TestCacheWindowIgnoresZeroTotalTicks(t *testing.T) {
+	// Idle ticks (no token activity) shouldn't poison the ratio.
+	var w cacheWindow
+	w.add(cacheDelta{read: 90, total: 100}) // 90%
+	for i := 0; i < 5; i++ {
+		w.add(cacheDelta{}) // idle ticks
+	}
+	if got := w.ratio(); math.Abs(got-0.9) > 1e-9 {
+		t.Errorf("ratio with idle ticks = %v, want 0.9", got)
 	}
 }
 
@@ -112,6 +133,39 @@ func TestParseTranscriptLineSkipsNonAssistantRows(t *testing.T) {
 		if _, _, ok := parseTranscriptLine([]byte(c)); ok {
 			t.Errorf("parseTranscriptLine(%q) returned ok=true, want false", c)
 		}
+	}
+}
+
+func TestTokenCollectorTickProducesWindowedCacheRatio(t *testing.T) {
+	// Drive a couple of ticks against a real session file and verify the
+	// reported CacheHitRatio reflects the delta-window, not the lifetime
+	// total. With cold-start, tick #1 seeds the offset; tick #2 sees the
+	// freshly appended message and that single delta defines the ratio.
+	dir := t.TempDir()
+	tc := NewTokenCollector()
+	tc.projects = dir
+	// Put the file inside a project subdir so the glob picks it up.
+	projDir := filepath.Join(dir, "demo-project")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projDir, "session.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t0 := time.Now()
+	tc.Tick(t0) // cold-start: seeds offset to 0
+
+	// One message: cache_read 800, input 200, cache_create 0 → 80% windowed
+	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":200,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":800}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	stats := tc.Tick(t0.Add(time.Second))
+	if got := stats.CacheHitRatio; math.Abs(got-0.8) > 1e-9 {
+		t.Errorf("windowed CacheHitRatio = %v, want 0.8", got)
 	}
 }
 
