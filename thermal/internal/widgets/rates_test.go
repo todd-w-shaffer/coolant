@@ -7,6 +7,27 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
+func TestHumanizeRate(t *testing.T) {
+	tests := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0"},
+		{47, "47"},
+		{999, "999"},
+		{1000, "1.0k"},
+		{1234, "1.2k"},
+		{1_500_000, "1.5M"},
+		{2_000_000_000, "2.0G"},
+		{-5, "0"},
+	}
+	for _, tt := range tests {
+		if got := humanizeRate(tt.in); got != tt.want {
+			t.Errorf("humanizeRate(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 // ── sessionGroupCounts ───────────────────────────────────────
 
 func TestSessionGroupCountsEmpty(t *testing.T) {

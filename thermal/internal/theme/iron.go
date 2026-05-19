@@ -98,9 +98,10 @@ func Iron() *Theme {
 		IdleColor: lipgloss.Color("99"),  // medium purple
 
 		// Rate display
-		SpawnColor: lipgloss.Color("208"), // amber
-		DeathColor: lipgloss.Color("99"),  // medium purple
-		NetColor:   lipgloss.Color("248"), // light gray
+		SpawnColor:  lipgloss.Color("208"), // amber
+		DeathColor:  lipgloss.Color("99"),  // medium purple
+		NetColor:    lipgloss.Color("248"), // light gray
+		TokensColor: lipgloss.Color("213"), // pink — token throughput accent
 
 		// Heat bloom ramp — FLIR blackbody aesthetic.
 		BloomRamp: [4]BloomRampStop{

@@ -56,11 +56,27 @@ type SessionTree struct {
 	Descendants []ProcessInfo
 }
 
+// TokenStats holds aggregated Claude Code transcript token activity.
+// Totals are cumulative across all observed assistant messages since the
+// collector started. CacheHitRatio uses the canonical Anthropic formula
+// (cache_read / (input + cache_create + cache_read); output is excluded).
+type TokenStats struct {
+	InputTotal       int64
+	OutputTotal      int64
+	CacheCreateTotal int64
+	CacheReadTotal   int64
+	TokensPerSec     float64 // EMA-smoothed total throughput (all four counters)
+	CacheHitRatio    float64 // 0.0–1.0
+	ActiveSessions   int     // session files with mtime within ActiveSessionWindow
+}
+
+
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {
 	System            SystemStats
 	Sessions          []SessionTree // one per Claude root process
 	AllProcs          []ProcessInfo // flat list of all Claude descendants
+	Tokens            TokenStats    // Claude Code transcript token activity
 	Online            bool          // can we reach the Claude API?
 	DesktopRunning    bool          // Claude Desktop (Electron) main process detected
 	ChromeHostRunning bool          // chrome-native-host (browser extension bridge) detected

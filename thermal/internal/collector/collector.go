@@ -56,8 +56,10 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 		mu              sync.Mutex
 		online          bool        // last-known network state
 		slow            SystemStats // last-known subprocess-heavy stats
+		tokens          TokenStats  // last-known transcript token activity
 		lastSlowSuccess time.Time   // zero until first slow loop completes
 	)
+	tokenCollector := NewTokenCollector()
 
 	// Slow loop: network + swap/vm_stat/GPU at 1s
 	go func() {
@@ -70,12 +72,13 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 			case <-netTicker.C:
 				ctx, cancel := context.WithTimeout(context.Background(), config.CollectTimeout)
 
-				// Run network check and slow stats concurrently
+				// Run network check, slow stats, and token tail concurrently
 				var netResult bool
 				var statsResult SystemStats
+				var tokensResult TokenStats
 				var wg sync.WaitGroup
 
-				wg.Add(2)
+				wg.Add(3)
 				go func() {
 					defer wg.Done()
 					netCtx, netCancel := context.WithTimeout(ctx, config.NetCheckTimeout)
@@ -86,12 +89,17 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 					defer wg.Done()
 					statsResult = cfg.SlowCollect(ctx)
 				}()
+				go func() {
+					defer wg.Done()
+					tokensResult = tokenCollector.Tick(time.Now())
+				}()
 				wg.Wait()
 				cancel()
 
 				mu.Lock()
 				online = netResult
 				slow = statsResult
+				tokens = tokensResult
 				lastSlowSuccess = time.Now()
 				mu.Unlock()
 			}
@@ -125,6 +133,7 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 			snap.System.BatteryPercent = slow.BatteryPercent
 			snap.System.BatteryState = slow.BatteryState
 			snap.System.BatteryTimeRemaining = slow.BatteryTimeRemaining
+			snap.Tokens = tokens
 			if !lastSlowSuccess.IsZero() {
 				snap.SlowAge = time.Since(lastSlowSuccess)
 			}

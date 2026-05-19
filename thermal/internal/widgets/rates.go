@@ -14,6 +14,25 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
+// humanizeRate formats a per-second rate compactly: 47 → "47", 1234 → "1.2k",
+// 1_500_000 → "1.5M". Negative or NaN values render as "0".
+func humanizeRate(v float64) string {
+	if v != v || v < 0 { // NaN or negative
+		return "0"
+	}
+	switch {
+	case v < 1000:
+		return fmt.Sprintf("%d", int(v+0.5))
+	case v < 1_000_000:
+		return fmt.Sprintf("%.1fk", v/1000)
+	case v < 1_000_000_000:
+		return fmt.Sprintf("%.1fM", v/1_000_000)
+	default:
+		return fmt.Sprintf("%.1fG", v/1_000_000_000)
+	}
+}
+
+
 type Rates struct {
 	width int
 	state *model.AppState
@@ -113,6 +132,12 @@ func (r *Rates) View() string {
 	sb.WriteString(ui.ColorText(r.theme.DeathColor, deathStr))
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
+
+	// Token throughput + cache hit % — suppress when no transcript activity
+	if tok := snap.Tokens; tok.ActiveSessions > 0 && (tok.InputTotal+tok.OutputTotal+tok.CacheCreateTotal+tok.CacheReadTotal) > 0 {
+		sb.WriteString("  ")
+		sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("tok %s/s · cache %d%%", humanizeRate(tok.TokensPerSec), int(tok.CacheHitRatio*100+0.5))))
+	}
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {
