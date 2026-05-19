@@ -180,6 +180,12 @@ const (
 	SwapSparkCrit   = 8.0  // GB — aligns with SwapHotBytes (half physical RAM)
 	GPUSparkWarn    = 60.0 // GPU Device Utilization %
 	GPUSparkCrit    = 85.0
+	// Token throughput is EMA-smoothed across the four counter axes
+	// (input/output/cache create/cache read). Defaults sized for typical
+	// Claude Code usage: sustained heavy work ≈500 tok/s, parallel agents
+	// pushing rate-limit pressure ≈2000 tok/s.
+	TokenSparkWarn = 500.0
+	TokenSparkCrit = 2000.0
 )
 
 // ── Battery ───────────────────────────────────────────────

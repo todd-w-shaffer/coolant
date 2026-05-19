@@ -17,16 +17,41 @@ type springState struct {
 	vel float64
 }
 
+// SparklineSlot identifies a gauge slot by stable index. Toggle keys and the
+// visibility mask address slots by these constants so renaming a label or
+// reordering the visual stack doesn't ripple through dispatch code.
+type SparklineSlot int
+
+const (
+	SlotCPU SparklineSlot = iota
+	SlotMEM
+	SlotDecomp // labeled SWAP on-screen — historical; see plans/graph-toggles.md parking lot
+	SlotToken
+	NumSparklineSlots = 4
+)
+
+// MaxVisibleSparklines is the cap enforced by ToggleVisible. Toggling on a
+// hidden slot when this many are already visible is a silent no-op.
+const MaxVisibleSparklines = 3
+
 // Gauge label words — pre-rendered once at init.
-var gaugeLabels [3]BrailleWord
+var gaugeLabels [NumSparklineSlots]BrailleWord
 
 func init() {
-	gaugeLabels[0] = RenderBrailleWord("CPU")
-	gaugeLabels[1] = RenderBrailleWord("MEM")
-	gaugeLabels[2] = RenderBrailleWord("SWAP")
+	gaugeLabels[SlotCPU] = RenderBrailleWord("CPU")
+	gaugeLabels[SlotMEM] = RenderBrailleWord("MEM")
+	gaugeLabels[SlotDecomp] = RenderBrailleWord("SWAP")
+	gaugeLabels[SlotToken] = RenderBrailleWord("TOK")
 }
 
-// Gauges renders 3 sparklines: CPU%, MEM%, compressor decompressions/tick.
+// Gauges renders up to MaxVisibleSparklines of NumSparklineSlots possible
+// sparklines: CPU%, MEM%, compressor decompressions/tick, token throughput.
+// Visibility is per-slot via the visible mask; the user toggles slots via
+// keys wired in Horizontal.ToggleSparkline. Hidden slots skip RenderSparkline
+// upstream (no marker leakage, no width budget consumed). Springs and render
+// history continue to update for hidden slots so toggling one on shows
+// current data rather than an empty graph.
+//
 // Braille text labels scroll in at startup and get pushed off by incoming data.
 // Numeric readouts are spring-animated for smooth easing between values.
 // Sparklines scroll at animation rate (30fps) via spring-interpolated render history.
@@ -35,13 +60,14 @@ type Gauges struct {
 	state         *model.AppState
 	tick          int
 	spring        harmonica.Spring
-	springs       [3]springState // one per gauge: cpu, mem, compressor
-	targets       [3]float64     // snapshot target values
-	renderHistory [3][]float64   // spring-interpolated samples pushed every AnimTick
-	renderOnline  []bool         // online/offline state pushed every AnimTick
-	peaks         [3]float64     // decaying peak per gauge — snaps up, fades slowly
-	seeded        bool           // true after first snapshot (skip spring on init)
-	sparkBufs     [3]*SparkBufs  // reusable interpolation buffers, one per gauge
+	springs       [NumSparklineSlots]springState // one per slot
+	targets       [NumSparklineSlots]float64     // snapshot target values
+	renderHistory [NumSparklineSlots][]float64   // spring-interpolated samples pushed every AnimTick
+	renderOnline  []bool                         // online/offline state pushed every AnimTick
+	peaks         [NumSparklineSlots]float64     // decaying peak per slot — snaps up, fades slowly
+	seeded        bool                           // true after first snapshot (skip spring on init)
+	sparkBufs     [NumSparklineSlots]*SparkBufs  // reusable interpolation buffers, one per slot
+	visible       [NumSparklineSlots]bool        // per-slot visibility; default set in NewGauges
 	theme         *theme.Theme
 	anim          *anim.Profile
 	dimmed        bool // render via theme's dim LUTs (for behind-overlay mode)
@@ -52,11 +78,55 @@ type Gauges struct {
 func (g *Gauges) SetDimmed(d bool) { g.dimmed = d }
 
 func NewGauges(th *theme.Theme, ap *anim.Profile) *Gauges {
-	return &Gauges{
+	g := &Gauges{
 		spring: harmonica.NewSpring(harmonica.FPS(config.AnimFPS), ap.SpringFreq, ap.SpringDamping),
 		theme:  th,
 		anim:   ap,
 	}
+	// Default visible set: CPU + MEM + Token (3 of 4). Decomp ("SWAP") is
+	// available via toggle but hidden by default — token displaces it as
+	// the third default-visible signal per plans/graph-toggles.md.
+	g.visible[SlotCPU] = true
+	g.visible[SlotMEM] = true
+	g.visible[SlotToken] = true
+	return g
+}
+
+// VisibleCount returns how many slots are currently shown.
+func (g *Gauges) VisibleCount() int {
+	n := 0
+	for _, v := range g.visible {
+		if v {
+			n++
+		}
+	}
+	return n
+}
+
+// IsVisible reports whether a slot is currently rendered.
+func (g *Gauges) IsVisible(slot SparklineSlot) bool {
+	if slot < 0 || int(slot) >= NumSparklineSlots {
+		return false
+	}
+	return g.visible[slot]
+}
+
+// ToggleVisible flips a slot's visibility. Toggling on when
+// MaxVisibleSparklines are already shown is a silent no-op — the user must
+// toggle one off to free a slot first. Centralizes the 3-visible invariant
+// so dispatch code can't bypass it.
+func (g *Gauges) ToggleVisible(slot SparklineSlot) {
+	if slot < 0 || int(slot) >= NumSparklineSlots {
+		return
+	}
+	if g.visible[slot] {
+		g.visible[slot] = false
+		return
+	}
+	if g.VisibleCount() >= MaxVisibleSparklines {
+		return // silent no-op — sparkline row is full
+	}
+	g.visible[slot] = true
 }
 
 func (g *Gauges) SetSize(w, h int) {
@@ -70,10 +140,10 @@ func (g *Gauges) Update(state *model.AppState) {
 		return
 	}
 
-	decomps := float64(state.Current.System.Decompressions)
-	g.targets[0] = state.Current.System.CPUPercent
-	g.targets[1] = state.Current.System.MemPercent()
-	g.targets[2] = decomps
+	g.targets[SlotCPU] = state.Current.System.CPUPercent
+	g.targets[SlotMEM] = state.Current.System.MemPercent()
+	g.targets[SlotDecomp] = float64(state.Current.System.Decompressions)
+	g.targets[SlotToken] = state.Current.Tokens.TokensPerSec
 
 	// First snapshot: jump to target immediately (no spring from zero)
 	if !g.seeded {
@@ -186,6 +256,7 @@ func (g *Gauges) View() string {
 	}
 
 	type gauge struct {
+		slot    SparklineSlot
 		data    []float64
 		display float64 // spring-animated value (for numeric readout)
 		max     float64
@@ -195,7 +266,7 @@ func (g *Gauges) View() string {
 	}
 
 	fmtPct := func(v float64) string { return fmt.Sprintf("%3d%%", int(v)) }
-	fmtDecomp := func(v float64) string {
+	fmtCount := func(v float64) string {
 		n := int64(v)
 		switch {
 		case n >= 1_000_000:
@@ -207,32 +278,45 @@ func (g *Gauges) View() string {
 		}
 	}
 
-	gauges := []gauge{
-		{g.renderHistory[0], g.springs[0].pos, 100,
-			CPUSparkThresh(), 0, fmtPct},
-		{g.renderHistory[1], g.springs[1].pos, 100,
-			MemSparkThresh(), 1, fmtPct},
-		{g.renderHistory[2], g.springs[2].pos, g.peaks[2],
-			DecompSparkThresh(), 2, fmtDecomp},
+	// Slot order is fixed; visible slots render in this order with hidden
+	// slots dropped (no placeholder gap). dotIdx pulls from theme.GaugeDots
+	// by slot to keep label colors stable across visibility changes.
+	allGauges := []gauge{
+		{SlotCPU, g.renderHistory[SlotCPU], g.springs[SlotCPU].pos, 100,
+			CPUSparkThresh(), int(SlotCPU), fmtPct},
+		{SlotMEM, g.renderHistory[SlotMEM], g.springs[SlotMEM].pos, 100,
+			MemSparkThresh(), int(SlotMEM), fmtPct},
+		{SlotDecomp, g.renderHistory[SlotDecomp], g.springs[SlotDecomp].pos, g.peaks[SlotDecomp],
+			DecompSparkThresh(), int(SlotDecomp), fmtCount},
+		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, g.peaks[SlotToken],
+			TokenSparkThresh(), int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
 	}
 
 	var lines []string
 	valuePad := strings.Repeat(" ", valueWidth)
 
-	for i, ga := range gauges {
+	for _, ga := range allGauges {
+		// Skip hidden slots entirely — never call RenderSparkline on them.
+		// This honors the bubblezone policy (never post-filter marker-bearing
+		// strings) and keeps the per-frame cost proportional to visible
+		// sparklines.
+		if !g.visible[ga.slot] {
+			continue
+		}
+
 		// Lazily allocate reusable interpolation buffers
-		if g.sparkBufs[i] == nil {
-			g.sparkBufs[i] = NewSparkBufs(sparkWidth)
+		if g.sparkBufs[ga.slot] == nil {
+			g.sparkBufs[ga.slot] = NewSparkBufs(sparkWidth)
 		}
 
 		// Render 2-row sparkline with online/offline mask (buffer-pooled)
-		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+i*2, g.sparkBufs[i], g.theme, g.dimmed)
+		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+int(ga.slot)*2, g.sparkBufs[ga.slot], g.theme, g.dimmed)
 
 		labelANSI := g.theme.GaugeDots[ga.dotIdx].ANSI
 		if g.dimmed {
 			labelANSI = g.theme.GaugeDots[ga.dotIdx].DimmedANSI
 		}
-		pair = OverlayLabel(pair, gaugeLabels[i], len(ga.data), sparkWidth, labelANSI)
+		pair = OverlayLabel(pair, gaugeLabels[ga.slot], len(ga.data), sparkWidth, labelANSI)
 
 		// Current value — spring-animated, colored by severity gradient
 		var coloredVal string

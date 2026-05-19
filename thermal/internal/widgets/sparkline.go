@@ -115,6 +115,9 @@ func SwapSparkThresh() theme.SparkThresholds {
 func GPUSparkThresh() theme.SparkThresholds {
 	return theme.SparkThresholds{Warn: config.C.Sparklines.GPUWarn, Crit: config.C.Sparklines.GPUCrit}
 }
+func TokenSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.TokenWarn, Crit: config.C.Sparklines.TokenCrit}
+}
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
 // Allocate once via NewSparkBufs and pass to RenderSparkline.
