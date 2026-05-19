@@ -168,6 +168,16 @@ func (h *Horizontal) IsCollapsed() bool {
 	return h.collapsed
 }
 
+// Sparkline visibility toggles — one per slot. Each delegates to
+// Gauges.ToggleVisible which enforces the MaxVisibleSparklines cap (toggle-on
+// when 3 are visible is a silent no-op). Keeping these as named methods (vs.
+// passing a slot id from dispatch) means main.go's key switch doesn't need
+// to import the widgets package.
+func (h *Horizontal) ToggleSparklineCPU()    { h.gauges.ToggleVisible(widgets.SlotCPU) }
+func (h *Horizontal) ToggleSparklineMEM()    { h.gauges.ToggleVisible(widgets.SlotMEM) }
+func (h *Horizontal) ToggleSparklineDecomp() { h.gauges.ToggleVisible(widgets.SlotDecomp) }
+func (h *Horizontal) ToggleSparklineToken()  { h.gauges.ToggleVisible(widgets.SlotToken) }
+
 func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
 	if state.IsIdle() {
@@ -273,9 +283,24 @@ func (h *Horizontal) helpView() []string {
 	diamond := func(c color.Color) string { return ct(c, ui.SessionDiamondGlyph) }
 	groups := h.keys.FullHelp()
 
+	toggles := h.keys.SparklineToggles()
+	entry := func(t key.Binding, slot widgets.SparklineSlot, label string) string {
+		// Bracketed toggle key + label. Visible slots render in the help
+		// color; hidden slots dim so the user can see at a glance which
+		// keys are "on" without flipping focus to the dashboard itself.
+		text := "[" + t.Help().Key + "] " + label
+		if h.gauges.IsVisible(slot) {
+			return ct(d, text)
+		}
+		return dim(text)
+	}
+
 	return []string{
-		" " + dim("sparklines") + " " + ct(d, "CPU cores") + "  " + ct(d, "MEM app memory") + "  " +
-			ct(d, "SWAP compressor pressure — spikes before lockup") + "  " +
+		" " + dim("sparklines") + " " +
+			entry(toggles[widgets.SlotCPU], widgets.SlotCPU, "CPU cores") + "  " +
+			entry(toggles[widgets.SlotMEM], widgets.SlotMEM, "MEM app memory") + "  " +
+			entry(toggles[widgets.SlotDecomp], widgets.SlotDecomp, "SWAP compressor pressure") + "  " +
+			entry(toggles[widgets.SlotToken], widgets.SlotToken, "TOK tokens/sec") + "  " +
 			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
 		" " + dim("sessions") + " " + diamond(sp.Idle) + "  " + ct(d, "idle") + " " +
 			diamond(sp.Active) + " " + ct(d, "active") + "  " +

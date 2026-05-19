@@ -280,6 +280,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.layout.State().IsIdle() {
 				m.layout.ToggleIntel()
 			}
+		case key.Matches(msg, m.keys.ToggleCPU):
+			m.layout.ToggleSparklineCPU()
+		case key.Matches(msg, m.keys.ToggleMEM):
+			m.layout.ToggleSparklineMEM()
+		case key.Matches(msg, m.keys.ToggleDecomp):
+			m.layout.ToggleSparklineDecomp()
+		case key.Matches(msg, m.keys.ToggleToken):
+			m.layout.ToggleSparklineToken()
 		}
 
 	case tea.WindowSizeMsg:
