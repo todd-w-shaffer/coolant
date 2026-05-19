@@ -86,6 +86,27 @@ func TestHelpViewFitsInGaugeRows(t *testing.T) {
 	}
 }
 
+// TestHelpViewIncludesSparklineToggles asserts every sparkline toggle key
+// appears in the help overlay. SparklineToggles are intentionally not part of
+// FullHelp (they render inline on the sparklines line instead of as a generic
+// key group), so the existing TestHelpViewCoversAllBindings doesn't cover
+// them — this is the parallel guard.
+func TestHelpViewIncludesSparklineToggles(t *testing.T) {
+	h := newHorizontalForTest(t)
+	lines := h.helpView()
+	var combined string
+	for _, line := range lines {
+		combined += ansi.Strip(line) + " "
+	}
+	km := keys.Default()
+	for _, b := range km.SparklineToggles() {
+		help := b.Help()
+		if !strings.Contains(combined, help.Key) {
+			t.Errorf("helpView missing sparkline toggle key %q (desc: %q)", help.Key, help.Desc)
+		}
+	}
+}
+
 func TestHelpViewCoversAllBindings(t *testing.T) {
 	h := newHorizontalForTest(t)
 	lines := h.helpView()
