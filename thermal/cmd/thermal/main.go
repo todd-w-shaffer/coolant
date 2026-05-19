@@ -111,7 +111,11 @@ func (m model) Init() tea.Cmd {
 	if m.demoMode {
 		go demo.RunV2(m.snapChan, m.eventChan, 250*time.Millisecond, m.done)
 	} else {
-		go collector.Run(m.snapChan, config.FastInterval, m.done)
+		// CC OTEL pipeline brought up FIRST so its adapter can fan into
+		// TokenCollector. Returns nil on bind-failure-degrade — Run
+		// falls back to transcript-only without further wiring.
+		ccAdapter := startCcOtel(m.aggregator, m.done, m.ccOtelDone)
+		go collector.Run(m.snapChan, config.FastInterval, m.done, ccAdapter)
 	}
 
 	evPath := os.Getenv("COOLANT_EVENTS")
@@ -143,10 +147,12 @@ func (m model) Init() tea.Cmd {
 		close(m.checkpointDone)
 	}
 
-	// CC OTEL pipeline (§0.1b startup ordering: findings writer FIRST,
-	// adapter, tailer, reconcile, receiver LAST so the bind-failure
-	// path goes through the same writer everyone else uses).
-	startCcOtel(m.aggregator, m.done, m.ccOtelDone)
+	// In demo mode, CC OTEL is unused (demo drives the channels
+	// directly). For live mode, startCcOtel ran above so the adapter
+	// could be passed into collector.Run.
+	if m.demoMode {
+		close(m.ccOtelDone)
+	}
 
 	cmds := []tea.Cmd{waitForSnapshot(m.snapChan), waitForEvent(m.eventChan), animTick()}
 
@@ -473,12 +479,18 @@ func (m model) View() tea.View {
 // `ccOtelDone` is closed after every CC OTEL goroutine has finished
 // its terminal flush. main() waits on it post-Run so process exit
 // can't race the receiver shutdown or a final reconcile tick.
-func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone chan<- struct{}) {
+//
+// Returns the wired adapter so the caller can pass it into
+// collector.Run for the live-throughput fan-in. Returns nil when
+// startup bails early (no HOME, receiver construction failed) — the
+// collector then runs transcript-only, matching the documented
+// degrade path.
+func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone chan<- struct{}) *cc.Adapter {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		// No HOME → no durable findings; degrade silently.
 		close(ccOtelDone)
-		return
+		return nil
 	}
 
 	findingsPath := filepath.Join(home, ".coolant", "cc-otel-findings.jsonl")
@@ -513,8 +525,14 @@ func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone 
 	})
 	if err != nil {
 		close(ccOtelDone)
-		return
+		return nil
 	}
+
+	// Wire the live-throughput fan-in seam now that both halves exist.
+	// Setters are nil-safe and survive past startCcOtel return: the
+	// adapter is shared with the long-running reconciler goroutine.
+	adapter.SetTailer(tailer)
+	adapter.SetLastReceiverPostTS(receiver.LastSuccessfulPostTS)
 
 	reconciler := cc.NewReconciler(cc.ReconcilerConfig{
 		Tailer:             tailer,
@@ -556,6 +574,7 @@ func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone 
 			}
 		}
 	}()
+	return adapter
 }
 
 // durationToNextUTCMidnight returns the time.Duration until the next

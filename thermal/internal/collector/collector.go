@@ -45,6 +45,9 @@ type ProcSampler func(ctx context.Context) ProcSample
 // RunConfig holds injectable dependencies for the collector loops.
 // ProcCollect may be nil — the loop then delivers snapshots with no
 // process-tree data (used by tests that only exercise the CPU/slow paths).
+// OTELView is optional — when non-nil it enables the live-throughput fan-in
+// inside TokenCollector. Nil keeps the transcript-only behavior that matches
+// the bind-failure-degrade path.
 type RunConfig struct {
 	FastCollect    FastCollector
 	SlowCollect    SlowCollector // swap + vm_stat, every base tick (fixed 1s)
@@ -52,9 +55,12 @@ type RunConfig struct {
 	BatteryCollect SlowCollector // battery fields, slow cadence (BatteryInterval)
 	ProcCollect    ProcSampler
 	NetCheck       NetChecker
+	OTELView       OTELTokenView
 }
 
-// DefaultRunConfig returns production dependencies.
+// DefaultRunConfig returns production dependencies. OTELView stays nil
+// so callers can attach the CC adapter post-construction (it lives in
+// a different package the collector intentionally doesn't import).
 func DefaultRunConfig() RunConfig {
 	// Pre-allocate reusable maps for process collection (cleared each tick).
 	// The collector is driven only from the slow loop, so reuse is safe.
@@ -79,9 +85,13 @@ func DefaultRunConfig() RunConfig {
 //     cadence (see slowSchedule). Cached results merge into each fast Snapshot.
 //
 // Both loops send Snapshots to ch. The fast loop carries last-known slow stats
-// and online state so every snapshot is complete.
-func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}) {
-	RunWith(ch, interval, done, DefaultRunConfig())
+// and online state so every snapshot is complete. otelView may be nil — in
+// that case the collector runs in transcript-only mode (identical to the
+// behavior when the OTEL receiver fails to bind).
+func Run(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, otelView OTELTokenView) {
+	cfg := DefaultRunConfig()
+	cfg.OTELView = otelView
+	RunWith(ch, interval, done, cfg)
 }
 
 // RunWith is the testable core of Run — same behavior, injectable dependencies.
@@ -97,7 +107,11 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 		procSeq         uint64      // bumps each fresh proc scan so the model can dedup stale re-deliveries
 		lastSlowSuccess time.Time   // zero until first slow loop completes
 	)
-	tokenCollector := NewTokenCollector()
+	var tcOpts []TokenCollectorOption
+	if cfg.OTELView != nil {
+		tcOpts = append(tcOpts, WithOTELView(cfg.OTELView))
+	}
+	tokenCollector := NewTokenCollector(tcOpts...)
 
 	// Nil sub-collectors (tests exercising only a subset) become no-ops, so the
 	// always-run base group (swap/vm_stat + token tail + procs) stays

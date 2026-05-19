@@ -39,6 +39,40 @@ func fakeNet(online bool) NetChecker {
 	return func(ctx context.Context) bool { return online }
 }
 
+func TestRunWith_OTELViewReachesTokenSnapshot(t *testing.T) {
+	snapCh := make(chan Snapshot, 16)
+	done := make(chan struct{})
+	defer close(done)
+
+	view := &fakeOTELView{
+		live: true, ok: true,
+		input: 4242, output: 100,
+	}
+	cfg := RunConfig{
+		FastCollect: fakeFast(0),
+		SlowCollect: fakeSlow(0),
+		NetCheck:    fakeNet(false),
+		OTELView:    view,
+	}
+
+	go RunWith(snapCh, 10*time.Millisecond, done, cfg)
+
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case s, ok := <-snapCh:
+			if !ok {
+				t.Fatal("snapCh closed before token snapshot reflected OTEL view")
+			}
+			if s.Tokens.InputTotal == 4242 {
+				return // OTEL view propagated end-to-end
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for OTEL view to reach Tokens.InputTotal")
+		}
+	}
+}
+
 func TestRunWith_DeliversSnapshots(t *testing.T) {
 	snapCh := make(chan Snapshot, 16)
 	done := make(chan struct{})
