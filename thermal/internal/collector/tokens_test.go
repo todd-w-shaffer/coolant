@@ -169,6 +169,23 @@ func TestTokenCollectorTickProducesWindowedCacheRatio(t *testing.T) {
 	}
 }
 
+// fakeOTELView is a controllable OTELTokenView for the fan-in tests —
+// avoids booting the OTEL receiver / tailer for collector-level tests.
+type fakeOTELView struct {
+	input, output, cacheCreate, cacheRead int64
+	ok                                    bool
+	live                                  bool
+	driftCalls                            []string
+}
+
+func (f *fakeOTELView) OTELTokens(time.Time) (int64, int64, int64, int64, bool) {
+	return f.input, f.output, f.cacheCreate, f.cacheRead, f.ok
+}
+func (f *fakeOTELView) IsOTELLive(time.Time) bool { return f.live }
+func (f *fakeOTELView) ObserveTokenSchemaDrift(field, _ string) {
+	f.driftCalls = append(f.driftCalls, field)
+}
+
 // seedTranscriptProject creates a project dir + empty session.jsonl and
 // returns (tc-projects-root, session-file-path). Caller writes JSONL to
 // session-file-path to drive transcript activity.
@@ -216,6 +233,169 @@ func TestTokenCollector_IORateExcludesCacheRead(t *testing.T) {
 	}
 	if stats.IOTokensPerSec != 0 {
 		t.Errorf("cache_read delta leaked into IOTokensPerSec: %v (want 0)", stats.IOTokensPerSec)
+	}
+}
+
+// LOAD TEST (research Q3): both transcript + OTEL active and reporting
+// the SAME tokens for a normal foreground turn. The naive merge would
+// 2x-inflate every input/output token. The either-or rule must produce
+// OTEL numbers only.
+func TestTokenCollector_FanIn_OTELLiveSuppressesTranscriptDouble(t *testing.T) {
+	dir, path := seedTranscriptProject(t)
+
+	view := &fakeOTELView{
+		live: true, ok: true,
+		input: 1000, output: 500, cacheCreate: 100, cacheRead: 200,
+	}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = dir
+
+	t0 := time.Now()
+	tc.Tick(t0) // cold start seeds transcript offset
+
+	// Both sources now report the same usage (the normal foreground case
+	// the research called out — naive merge would emit 2x).
+	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":1000,"output_tokens":500,"cache_creation_input_tokens":100,"cache_read_input_tokens":200}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stats := tc.Tick(t0.Add(time.Second))
+
+	if stats.InputTotal != 1000 {
+		t.Errorf("InputTotal want 1000 (OTEL-only, NOT 2000 naive-sum), got %d", stats.InputTotal)
+	}
+	if stats.OutputTotal != 500 {
+		t.Errorf("OutputTotal want 500, got %d", stats.OutputTotal)
+	}
+	if stats.CacheCreateTotal != 100 {
+		t.Errorf("CacheCreateTotal want 100, got %d", stats.CacheCreateTotal)
+	}
+	if stats.CacheReadTotal != 200 {
+		t.Errorf("CacheReadTotal want 200, got %d", stats.CacheReadTotal)
+	}
+}
+
+func TestTokenCollector_FanIn_OTELOnlyWhenNoTranscript(t *testing.T) {
+	view := &fakeOTELView{
+		live: true, ok: true,
+		input: 700, output: 200, cacheCreate: 50, cacheRead: 100,
+	}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = "" // no transcript
+
+	t0 := time.Now()
+	tc.Tick(t0)
+	stats := tc.Tick(t0.Add(time.Second))
+
+	if stats.InputTotal != 700 || stats.OutputTotal != 200 ||
+		stats.CacheCreateTotal != 50 || stats.CacheReadTotal != 100 {
+		t.Errorf("OTEL-only totals mismatch: %+v", stats)
+	}
+}
+
+func TestTokenCollector_FanIn_TranscriptOnlyWhenNoView(t *testing.T) {
+	dir, path := seedTranscriptProject(t)
+
+	tc := NewTokenCollector() // no view
+	tc.projects = dir
+	t0 := time.Now()
+	tc.Tick(t0)
+
+	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":42,"output_tokens":7,"cache_creation_input_tokens":3,"cache_read_input_tokens":11}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stats := tc.Tick(t0.Add(time.Second))
+
+	if stats.InputTotal != 42 || stats.OutputTotal != 7 ||
+		stats.CacheCreateTotal != 3 || stats.CacheReadTotal != 11 {
+		t.Errorf("transcript-only totals mismatch: %+v", stats)
+	}
+}
+
+// Source flip from OTEL → transcript must surface transcript numbers
+// without sampling a giant negative delta into the rate. The OTEL totals
+// here are deliberately much larger than transcript so a naive
+// "input+output - last" sample would go strongly negative.
+func TestTokenCollector_FanIn_OTELOfflineRevertsWithoutRateSpike(t *testing.T) {
+	dir, path := seedTranscriptProject(t)
+	view := &fakeOTELView{
+		live: true, ok: true,
+		input: 5000, output: 1000,
+	}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = dir
+
+	t0 := time.Now()
+	tc.Tick(t0) // cold start
+
+	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	live := tc.Tick(t0.Add(time.Second))
+	if live.InputTotal != 5000 {
+		t.Fatalf("OTEL-live first tick: InputTotal want 5000, got %d", live.InputTotal)
+	}
+
+	// OTEL goes silent past the debounce window.
+	view.live = false
+	off := tc.Tick(t0.Add(2 * time.Second))
+
+	if off.InputTotal != 100 {
+		t.Errorf("after OTEL offline: InputTotal want 100 (transcript), got %d", off.InputTotal)
+	}
+	if off.IOTokensPerSec < 0 {
+		t.Errorf("source flip yielded negative rate: %v", off.IOTokensPerSec)
+	}
+}
+
+// Schema-drift gate: receiver live, lookup returns ok=false AFTER we'd
+// previously seen ok=true (i.e. OTEL was producing data and stopped).
+// That's the "attribute got renamed" signature — fire the drift call
+// and fall back to transcript for this tick.
+func TestTokenCollector_FanIn_SchemaDriftFiresAfterPreviouslySeenData(t *testing.T) {
+	dir, path := seedTranscriptProject(t)
+	view := &fakeOTELView{live: true, ok: true, input: 500}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = dir
+
+	t0 := time.Now()
+	tc.Tick(t0)
+
+	// Tick with OTEL producing.
+	tc.Tick(t0.Add(time.Second))
+
+	// Now OTEL still live but lookup misses (simulating an attribute rename).
+	view.ok = false
+	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":42,"output_tokens":7,"cache_creation_input_tokens":3,"cache_read_input_tokens":11}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stats := tc.Tick(t0.Add(2 * time.Second))
+
+	if stats.InputTotal != 42 {
+		t.Errorf("drift fallback: InputTotal want 42 (transcript), got %d", stats.InputTotal)
+	}
+	if len(view.driftCalls) == 0 {
+		t.Errorf("expected ObserveTokenSchemaDrift call, got none")
+	}
+}
+
+// Cold start with OTEL never having produced data must NOT fire a
+// false-positive drift call. Receiver might be live but the first
+// export simply hasn't landed yet.
+func TestTokenCollector_FanIn_NoDriftCallOnColdStartLookupMiss(t *testing.T) {
+	view := &fakeOTELView{live: true, ok: false}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = ""
+
+	t0 := time.Now()
+	tc.Tick(t0)
+	tc.Tick(t0.Add(time.Second))
+
+	if len(view.driftCalls) != 0 {
+		t.Errorf("cold-start lookup miss must not fire drift: got %v", view.driftCalls)
 	}
 }
 

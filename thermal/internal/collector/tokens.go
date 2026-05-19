@@ -114,6 +114,16 @@ func parseTranscriptLine(line []byte) (string, Usage, bool) {
 	return row.Message.ID, *row.Message.Usage, true
 }
 
+// OTELTokenView is the OTEL fan-in surface TokenCollector consumes when
+// configured via WithOTELView. Satisfied by *otel/cc.Adapter — declared
+// here as a local interface (duck-typed) so the collector package
+// doesn't gain a dependency on the cc package. Tests provide a fake.
+type OTELTokenView interface {
+	OTELTokens(now time.Time) (input, output, cacheCreate, cacheRead int64, ok bool)
+	IsOTELLive(now time.Time) bool
+	ObserveTokenSchemaDrift(field, ccVersion string)
+}
+
 // TokenCollector polls Claude Code session transcript files, accumulates token
 // usage, and computes a smoothed throughput rate. Designed for the slow loop —
 // session files do not update at sub-second cadence.
@@ -123,6 +133,11 @@ func parseTranscriptLine(line []byte) (string, Usage, bool) {
 // the same usage object. Only the first row per id is counted. Tracking
 // only the LAST id per file is sufficient because rows from one response
 // arrive consecutively.
+//
+// When WithOTELView is supplied, Tick fans in OTEL throughput via an
+// either-or merge: when OTELTokenView reports live + ok, OTEL totals
+// replace the transcript baseline for the returned TokenStats; when
+// stale or missing, transcript stays authoritative.
 type TokenCollector struct {
 	acc             *TokenAccumulator
 	offsets         map[string]int64
@@ -136,16 +151,39 @@ type TokenCollector struct {
 	cachedFiles     []string
 	lastDiscov      time.Time
 	window          cacheWindow
-	lastActiveBytes int64 // sum of os.Stat sizes across active transcript files, last tick — drives PrettyTokensPerSec
+	lastActiveBytes int64   // sum of transcript file sizes (from offsets), last tick — drives PrettyTokensPerSec
+	lastIOPerS      float64 // raw last per-tick input+output rate, carried across no-sample / source-flip ticks
+	lastPrettyPerS  float64 // raw last per-tick chars÷4 rate from transcript byte growth
+
+	otel             OTELTokenView
+	lastSourceOTEL   bool // tracks whether prior tick rendered OTEL — flip clamps deltas
+	otelEverProduced bool // sticky: once OTEL returned ok=true, lookup miss becomes drift
+	driftFired       bool // one-shot per process — never spam ObserveTokenSchemaDrift
 }
 
-func NewTokenCollector() *TokenCollector {
-	return &TokenCollector{
+// TokenCollectorOption configures NewTokenCollector. Variadic so callers
+// can pass zero options for the transcript-only baseline and tests get
+// the same nil-safe path that runs when the OTEL receiver fails to bind.
+type TokenCollectorOption func(*TokenCollector)
+
+// WithOTELView attaches an OTEL fan-in source. When the view reports
+// IsOTELLive + ok, its cumulative totals are authoritative for the
+// emitted TokenStats; when stale, transcript is authoritative.
+func WithOTELView(v OTELTokenView) TokenCollectorOption {
+	return func(tc *TokenCollector) { tc.otel = v }
+}
+
+func NewTokenCollector(opts ...TokenCollectorOption) *TokenCollector {
+	tc := &TokenCollector{
 		acc:        NewTokenAccumulator(),
 		offsets:    make(map[string]int64),
 		lastMsgIDs: make(map[string]string),
 		projects:   defaultProjectsDir(),
 	}
+	for _, opt := range opts {
+		opt(tc)
+	}
+	return tc
 }
 
 func defaultProjectsDir() string {
@@ -163,6 +201,12 @@ func defaultProjectsDir() string {
 // Active-file discovery is throttled to rediscoveryInterval; in between, the
 // cached set is reused. This keeps the per-second cost bounded even when
 // ~/.claude/projects/ holds hundreds of historical session directories.
+//
+// When WithOTELView is configured and the view reports IsOTELLive + ok,
+// OTEL cumulative totals are authoritative — the transcript scan still
+// runs (so the baseline is ready if OTEL goes silent), but the emitted
+// TokenStats reports OTEL numbers. Naive sum would 2× foreground turns
+// since both sources report the same assistant message.
 func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 	if now.Sub(tc.lastDiscov) >= rediscoveryInterval {
 		tc.cachedFiles = tc.activeSessionFiles(now)
@@ -172,60 +216,106 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 		tc.scanFile(path)
 	}
 
-	s := &tc.acc.Stats
+	src := &tc.acc.Stats
 
 	// Sum transcript file sizes from the offsets map — scanFile already
 	// advanced offsets[path] to the post-tail size for every active file,
-	// so no separate os.Stat syscalls are needed.
+	// so no separate os.Stat syscalls are needed. Drives PrettyTokensPerSec,
+	// which is always transcript-derived, independent of the OTEL fan-in.
 	var activeBytes int64
 	for _, path := range tc.cachedFiles {
 		activeBytes += tc.offsets[path]
 	}
 
+	// Either-or source select: OTEL authoritative when live + ok, else
+	// transcript. A naive sum would 2× every foreground turn since both
+	// sources report the same assistant message.
+	useOTEL := false
+	var out TokenStats
+	if tc.otel != nil && tc.otel.IsOTELLive(now) {
+		in, op, cC, cR, ok := tc.otel.OTELTokens(now)
+		switch {
+		case ok:
+			tc.otelEverProduced = true
+			useOTEL = true
+			out.InputTotal = in
+			out.OutputTotal = op
+			out.CacheCreateTotal = cC
+			out.CacheReadTotal = cR
+		case tc.otelEverProduced && !tc.driftFired:
+			// Live receiver, lookup miss, previously produced — strong
+			// signal of attribute rename. Fire the drift gate once. Fall
+			// back to transcript for this tick.
+			tc.otel.ObserveTokenSchemaDrift("token_lookup_miss", "")
+			tc.driftFired = true
+		}
+	}
+	if !useOTEL {
+		out.InputTotal = src.InputTotal
+		out.OutputTotal = src.OutputTotal
+		out.CacheCreateTotal = src.CacheCreateTotal
+		out.CacheReadTotal = src.CacheReadTotal
+	}
+
+	sourceFlipped := useOTEL != tc.lastSourceOTEL
+
 	if !tc.lastTick.IsZero() {
 		dt := now.Sub(tc.lastTick).Seconds()
 		if dt > 0 {
-			// IO rate excludes cache_create + cache_read on purpose —
-			// the sparkline and the rates-line "io N/s" both consume
-			// this field, and they want "fresh model traffic" not
-			// "API token pressure dominated by cached prefix re-reads."
-			// Raw per-tick rate (no EMA): smoothing here would force the
-			// renderer to display a decay tail because each renderHistory
-			// sample is the scalar of that tick; the gauge spring handles
-			// visual easing.
-			ioSample := float64((s.InputTotal-tc.lastInput)+(s.OutputTotal-tc.lastOutput)) / dt
-			if ioSample < 0 {
-				ioSample = 0 // defensive — should never happen within a stable source
-			}
-			s.IOTokensPerSec = ioSample
-
-			// chars÷4 from transcript byte growth. Includes JSONL envelope
-			// overhead (timestamps, uuids, role tags) so it overestimates
-			// pure-text tokens by a constant factor — acceptable for a
-			// "visual feel" sparkline, not a billing-grade signal.
+			// PRTY: chars÷4 from transcript byte growth. Source-independent
+			// (OTEL has no byte stream), so it is computed every tick — a
+			// source flip doesn't disturb the transcript file growth. Includes
+			// JSONL envelope overhead, so it overestimates pure-text tokens by
+			// a constant factor — fine for a "visual feel" sparkline.
 			bytesDelta := activeBytes - tc.lastActiveBytes
 			if bytesDelta < 0 {
 				bytesDelta = 0 // file rotated / deleted between ticks
 			}
-			s.PrettyTokensPerSec = float64(bytesDelta) / 4.0 / dt
-		}
+			tc.lastPrettyPerS = float64(bytesDelta) / 4.0 / dt
 
-		readDelta := s.CacheReadTotal - tc.lastCacheRead
-		totalDelta := (s.InputTotal - tc.lastInput) +
-			(s.CacheCreateTotal - tc.lastCacheCrt) +
-			readDelta
-		tc.window.add(cacheDelta{read: readDelta, total: totalDelta})
-		s.CacheHitRatio = tc.window.ratio()
+			// IO rate + cache window come from the authoritative source. IO
+			// excludes cache_create + cache_read on purpose — the sparkline and
+			// "io N/s" want fresh model traffic, not cached prefix re-reads. Raw
+			// per-tick rate (no EMA): the gauge spring handles visual easing.
+			// Skip on a source flip so a cross-source delta doesn't pollute the
+			// rate or the cache window.
+			if !sourceFlipped {
+				ioSample := float64((out.InputTotal-tc.lastInput)+(out.OutputTotal-tc.lastOutput)) / dt
+				if ioSample < 0 {
+					ioSample = 0 // defensive — should never happen within a stable source
+				}
+				tc.lastIOPerS = ioSample
+
+				readDelta := out.CacheReadTotal - tc.lastCacheRead
+				if readDelta < 0 {
+					readDelta = 0
+				}
+				inDelta := out.InputTotal - tc.lastInput
+				if inDelta < 0 {
+					inDelta = 0
+				}
+				ccDelta := out.CacheCreateTotal - tc.lastCacheCrt
+				if ccDelta < 0 {
+					ccDelta = 0
+				}
+				tc.window.add(cacheDelta{read: readDelta, total: inDelta + ccDelta + readDelta})
+			}
+		}
 	}
 
-	tc.lastInput = s.InputTotal
-	tc.lastOutput = s.OutputTotal
-	tc.lastCacheCrt = s.CacheCreateTotal
-	tc.lastCacheRead = s.CacheReadTotal
+	out.IOTokensPerSec = tc.lastIOPerS
+	out.PrettyTokensPerSec = tc.lastPrettyPerS
+	out.CacheHitRatio = tc.window.ratio()
+	out.ActiveSessions = len(tc.cachedFiles)
+
+	tc.lastInput = out.InputTotal
+	tc.lastOutput = out.OutputTotal
+	tc.lastCacheCrt = out.CacheCreateTotal
+	tc.lastCacheRead = out.CacheReadTotal
 	tc.lastActiveBytes = activeBytes
 	tc.lastTick = now
-	s.ActiveSessions = len(tc.cachedFiles)
-	return *s
+	tc.lastSourceOTEL = useOTEL
+	return out
 }
 
 // activeSessionFiles returns session JSONL files modified within

@@ -314,7 +314,13 @@ func (a *Adapter) IsOTELLive(now time.Time) bool {
 
 // ObserveTokenSchemaDrift is the TokenCollector-facing wrapper over
 // ObserveSchemaDrift that supplies the "claude_code" namespace so the
-// fan-in doesn't have to depend on the namespace literal.
+// fan-in doesn't have to depend on the namespace literal. Callers that
+// pass ccVersion="" get the adapter's own configured version (which is
+// the common case — the fan-in lives at a layer that doesn't know CC's
+// reported version directly).
 func (a *Adapter) ObserveTokenSchemaDrift(fieldName, ccVersion string) {
+	if ccVersion == "" {
+		ccVersion = a.cfg.CCVersion
+	}
 	a.ObserveSchemaDrift(fieldName, "claude_code", ccVersion)
 }
