@@ -1,8 +1,11 @@
 package cc
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // allEightCCMetrics is the authoritative list per
@@ -131,6 +134,127 @@ func TestSchemaMap_RecognizesGenAINamespace(t *testing.T) {
 	if !IsKnownCCAttr("gen_ai.usage.input_tokens") {
 		t.Errorf("gen_ai.usage.* fields per the OTel semantic-conventions migration path")
 	}
+}
+
+// OTELTokenView contract: *Adapter implements the surface TokenCollector
+// uses to fan in live OTEL throughput.
+
+func TestOTELTokens_SumsAcrossQuerySources(t *testing.T) {
+	a := NewAdapter(AdapterConfig{})
+	tailer := NewMetricsTailer(filepath.Join(t.TempDir(), "cc-otel.jsonl"))
+	a.SetTailer(tailer)
+
+	now := time.Now().UTC()
+	dayKey := now.Format("2006-01-02")
+
+	// Three query_source values, all contributing to input. cacheRead /
+	// cacheCreation use CC's CamelCase.
+	seed := func(qs, typ string, val float64) {
+		tailer.absorbLine(mustMarshalLine(t, jsonlLine{
+			Schema: 1, TS: now.Format(time.RFC3339Nano),
+			Metric: "claude_code.token.usage", Value: val,
+			Attrs: map[string]string{"query_source": qs, "type": typ},
+		}))
+	}
+	seed("main", "input", 100)
+	seed("subagent", "input", 50)
+	seed("auxiliary", "input", 25)
+	seed("main", "output", 200)
+	seed("main", "cacheRead", 30)
+	seed("auxiliary", "cacheCreation", 7)
+	_ = dayKey
+
+	in, out, cC, cR, ok := a.OTELTokens(now)
+	if !ok {
+		t.Fatalf("OTELTokens want ok=true after seeding")
+	}
+	if in != 175 {
+		t.Errorf("input want 175 (100+50+25 across all query_source), got %d", in)
+	}
+	if out != 200 {
+		t.Errorf("output want 200, got %d", out)
+	}
+	if cC != 7 {
+		t.Errorf("cacheCreate want 7 (auxiliary only), got %d", cC)
+	}
+	if cR != 30 {
+		t.Errorf("cacheRead want 30 (main only), got %d", cR)
+	}
+}
+
+func TestOTELTokens_NilTailerReturnsNotOK(t *testing.T) {
+	a := NewAdapter(AdapterConfig{})
+	in, out, cC, cR, ok := a.OTELTokens(time.Now())
+	if ok || in != 0 || out != 0 || cC != 0 || cR != 0 {
+		t.Errorf("nil tailer want zero-quadruple ok=false, got in=%d out=%d cC=%d cR=%d ok=%v", in, out, cC, cR, ok)
+	}
+}
+
+func TestIsOTELLive_RespectsCleanlyOfflineWindow(t *testing.T) {
+	a := NewAdapter(AdapterConfig{})
+
+	// No probe wired → not live.
+	if a.IsOTELLive(time.Now()) {
+		t.Errorf("unset LastReceiverPostTS want IsOTELLive=false")
+	}
+
+	// Zero-time probe → not live (never seen a POST).
+	a.SetLastReceiverPostTS(func() time.Time { return time.Time{} })
+	if a.IsOTELLive(time.Now()) {
+		t.Errorf("zero-time probe want IsOTELLive=false")
+	}
+
+	// Recent POST → live.
+	now := time.Now().UTC()
+	a.SetLastReceiverPostTS(func() time.Time { return now.Add(-30 * time.Second) })
+	if !a.IsOTELLive(now) {
+		t.Errorf("30s-stale POST want IsOTELLive=true (window is 2min)")
+	}
+
+	// >2min stale → not live.
+	a.SetLastReceiverPostTS(func() time.Time { return now.Add(-3 * time.Minute) })
+	if a.IsOTELLive(now) {
+		t.Errorf("3min-stale POST want IsOTELLive=false")
+	}
+}
+
+func TestObserveTokenSchemaDrift_PassesNamespaceConstant(t *testing.T) {
+	w, findingsPath := newTestWriter(t)
+	a := NewAdapter(AdapterConfig{Findings: w, CCVersion: "1.x.x"})
+
+	a.ObserveTokenSchemaDrift("cacheRead", "1.x.x")
+
+	data, err := readBytesFile(findingsPath)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, `"finding_kind":"schema_drift"`) {
+		t.Errorf("expected schema_drift finding via passthrough: %s", got)
+	}
+	if !strings.Contains(got, `"field_name":"cacheRead"`) {
+		t.Errorf("expected field_name=cacheRead in detail: %s", got)
+	}
+	if !strings.Contains(got, `"namespace":"claude_code"`) {
+		t.Errorf("expected namespace=claude_code (passthrough constant): %s", got)
+	}
+
+	// Same (field, ccVersion) is suppressed; only one finding written.
+	a.ObserveTokenSchemaDrift("cacheRead", "1.x.x")
+	if got := a.driftCount("cacheRead", "1.x.x"); got != 1 {
+		t.Errorf("passthrough must dedupe via existing ObserveSchemaDrift, got %d", got)
+	}
+}
+
+// mustMarshalLine returns the JSONL bytes for a jsonlLine, since
+// absorbLine takes raw bytes.
+func mustMarshalLine(t *testing.T, jl jsonlLine) []byte {
+	t.Helper()
+	b, err := json.Marshal(jl)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return b
 }
 
 // readBytesFile is a small helper to read a file's contents — the test
