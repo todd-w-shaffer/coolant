@@ -43,7 +43,7 @@ var slotLabels = [NumSparklineSlots]struct{ short, long string }{
 	SlotCPU:    {"CPU", "CPU cores"},
 	SlotMEM:    {"MEM", "MEM app memory"},
 	SlotDecomp: {"SWAP", "SWAP compressor pressure"},
-	SlotToken:  {"TOK", "TOK tokens/sec"},
+	SlotToken:  {"TKNS", "TKNS tokens/sec"},
 	SlotPretty: {"PRTY", "PRTY chars÷4"},
 }
 

@@ -77,7 +77,7 @@ func Default() KeyMap {
 		),
 		ToggleToken: key.NewBinding(
 			key.WithKeys("4"),
-			key.WithHelp("4", "toggle TOK"),
+			key.WithHelp("4", "toggle TKNS"),
 		),
 		TogglePretty: key.NewBinding(
 			key.WithKeys("5"),

@@ -29,7 +29,7 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 		{"ToggleCPU", km.ToggleCPU, []string{"1"}, "1", "toggle CPU"},
 		{"ToggleMEM", km.ToggleMEM, []string{"2"}, "2", "toggle MEM"},
 		{"ToggleDecomp", km.ToggleDecomp, []string{"3"}, "3", "toggle SWAP"},
-		{"ToggleToken", km.ToggleToken, []string{"4"}, "4", "toggle TOK"},
+		{"ToggleToken", km.ToggleToken, []string{"4"}, "4", "toggle TKNS"},
 		{"TogglePretty", km.TogglePretty, []string{"5"}, "5", "toggle PRTY"},
 	}
 
