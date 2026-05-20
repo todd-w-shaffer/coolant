@@ -65,7 +65,7 @@ type TokenStats struct {
 	OutputTotal      int64
 	CacheCreateTotal int64
 	CacheReadTotal   int64
-	TokensPerSec     float64 // EMA-smoothed total throughput (all four counters)
+	TokensPerSec     float64 // raw per-tick throughput (all four counters); drops to 0 between bursts so the sparkline amplitude tracks current activity (visual easing comes from the gauge spring)
 	CacheHitRatio    float64 // 0.0–1.0
 	ActiveSessions   int     // session files with mtime within ActiveSessionWindow
 }

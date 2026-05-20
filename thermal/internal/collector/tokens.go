@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"github.com/toddwshaffer/coolant/thermal/internal/config"
 )
 
 // ActiveSessionWindow defines how stale a session file's mtime can be before
@@ -180,8 +178,17 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 		dt := now.Sub(tc.lastTick).Seconds()
 		if dt > 0 {
 			sample := float64(total-tc.lastTotal) / dt
-			s.TokensPerSec = config.RateSmoothAlpha*sample +
-				(1-config.RateSmoothAlpha)*s.TokensPerSec
+			if sample < 0 {
+				sample = 0 // defensive — should never happen within a stable source
+			}
+			// Raw per-tick rate. EMA smoothing was removed once the
+			// sparkline landed: smoothing here would force the renderer
+			// to display a decay tail (color decays via spring, amplitude
+			// would not) because each history sample is the smoothed
+			// scalar of that tick. The gauge spring handles visual easing
+			// of step changes; the source signal needs to actually drop
+			// to 0 between bursts for the bars to fall away.
+			s.TokensPerSec = sample
 		}
 
 		readDelta := s.CacheReadTotal - tc.lastCacheRead
