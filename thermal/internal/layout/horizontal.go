@@ -264,16 +264,10 @@ func overlayContent(help, gaugeLines []string) []string {
 	return out
 }
 
-// helpView renders the full help overlay. Key-binding lines (filter + main)
-// are generated from h.keys via renderKeyGroup — adding a binding to KeyMap
-// automatically surfaces here. Descriptive legend lines (sparklines, sessions,
-// agents) remain hand-curated because they explain on-screen glyphs rather
-// than keyboard shortcuts.
-//
-// Line-count contract: must stay ≤ 6 to fit the gauge-row height. See
-// TestHelpViewFitsInGaugeRows in horizontal_help_test.go — overlayContent
-// silently truncates beyond that, which would drop keyboard shortcuts on
-// the floor.
+// helpView must return ≤ 6 lines — overlayContent silently truncates
+// beyond the gauge-row height and would drop keyboard shortcuts on the
+// floor. Key-binding lines are generated from h.keys so new bindings
+// surface here without a parallel edit.
 func (h *Horizontal) helpView() []string {
 	d := h.theme.HelpColor
 	ct := ui.ColorText

@@ -61,9 +61,8 @@ func (r *Rates) SetSize(w, h int) {
 	r.help.SetWidth(w)
 }
 
-// decayedIOPeak returns ioPeak with exponential decay applied since the last
-// snap-up. Half-life is ioPeakHalfLife seconds — a peak of 1000 reads as 500
-// two seconds later. Returns 0 if no peak has ever been recorded.
+// decayedIOPeak returns ioPeak after applying exponential decay since the
+// last snap-up. Half-life is ioPeakHalfLife.
 func (r *Rates) decayedIOPeak() float64 {
 	if r.ioPeak <= 0 {
 		return 0
@@ -166,14 +165,9 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// Token throughput + cache hit % — always rendered. The "io" segment
-	// shows BOTH the live per-tick rate (snaps to 0 between bursts) and a
-	// "(peak N)" companion that decays slowly so the eye has time to catch
-	// the burst magnitude after the live value has already returned to 0.
-	// The "(peak ...)" parenthetical is suppressed when the decayed peak is
-	// below 1 — at that point the live value is the only useful number.
-	// Pairs with the toggleable TOK sparkline whose amplitude tracks
-	// current activity raw (Phase 5).
+	// The "(peak N)" companion exists because IOTokensPerSec snaps back
+	// to 0 the tick after a burst — too fast for the eye to read the
+	// number. Suppressed below 1 to avoid "(peak 0)" noise during idle.
 	tok := snap.Tokens
 	sb.WriteString("  ")
 	ioFragment := fmt.Sprintf("io %s/s", humanizeRate(tok.IOTokensPerSec))

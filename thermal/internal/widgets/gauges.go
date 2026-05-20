@@ -25,7 +25,7 @@ type SparklineSlot int
 const (
 	SlotCPU SparklineSlot = iota
 	SlotMEM
-	SlotDecomp // labeled SWAP on-screen — historical; see plans/graph-toggles.md parking lot
+	SlotDecomp // labeled SWAP on-screen — actually compressor decompressions/tick, not swap bytes
 	SlotToken
 	NumSparklineSlots = 4
 )
@@ -45,16 +45,9 @@ func init() {
 }
 
 // Gauges renders up to MaxVisibleSparklines of NumSparklineSlots possible
-// sparklines: CPU%, MEM%, compressor decompressions/tick, token throughput.
-// Visibility is per-slot via the visible mask; the user toggles slots via
-// keys wired in Horizontal.ToggleSparkline. Hidden slots skip RenderSparkline
-// upstream (no marker leakage, no width budget consumed). Springs and render
-// history continue to update for hidden slots so toggling one on shows
-// current data rather than an empty graph.
-//
-// Braille text labels scroll in at startup and get pushed off by incoming data.
-// Numeric readouts are spring-animated for smooth easing between values.
-// Sparklines scroll at animation rate (30fps) via spring-interpolated render history.
+// sparklines. Hidden slots skip RenderSparkline upstream — never post-filter
+// marker-bearing strings (bubblezone constraint). Springs and renderHistory
+// keep updating for hidden slots so toggling on doesn't show an empty graph.
 type Gauges struct {
 	width         int
 	state         *model.AppState
@@ -83,9 +76,9 @@ func NewGauges(th *theme.Theme, ap *anim.Profile) *Gauges {
 		theme:  th,
 		anim:   ap,
 	}
-	// Default visible set: CPU + MEM + Token (3 of 4). Decomp ("SWAP") is
-	// available via toggle but hidden by default — token displaces it as
-	// the third default-visible signal per plans/graph-toggles.md.
+	// Default visible set: CPU + MEM + Token. Decomp is toggleable but
+	// hidden by default — token is more broadly useful to Claude Code
+	// users, decomp is a specialized memory-pressure signal.
 	g.visible[SlotCPU] = true
 	g.visible[SlotMEM] = true
 	g.visible[SlotToken] = true
@@ -111,10 +104,9 @@ func (g *Gauges) IsVisible(slot SparklineSlot) bool {
 	return g.visible[slot]
 }
 
-// ToggleVisible flips a slot's visibility. Toggling on when
-// MaxVisibleSparklines are already shown is a silent no-op — the user must
-// toggle one off to free a slot first. Centralizes the 3-visible invariant
-// so dispatch code can't bypass it.
+// ToggleVisible flips a slot's visibility. Toggle-on with the row full is
+// a silent no-op so the MaxVisibleSparklines cap can't be bypassed from
+// dispatch code that doesn't know about it.
 func (g *Gauges) ToggleVisible(slot SparklineSlot) {
 	if slot < 0 || int(slot) >= NumSparklineSlots {
 		return
@@ -278,10 +270,9 @@ func (g *Gauges) View() string {
 		}
 	}
 
-	// Slot order is fixed; visible slots render in this order with hidden
-	// slots dropped (no placeholder gap). dotIdx pulls from theme.GaugeDots
-	// by slot to keep label colors stable across visibility changes.
-	allGauges := []gauge{
+	// Fixed-size array (not slice) so this stays on the stack — View runs
+	// every render frame.
+	allGauges := [NumSparklineSlots]gauge{
 		{SlotCPU, g.renderHistory[SlotCPU], g.springs[SlotCPU].pos, 100,
 			CPUSparkThresh(), int(SlotCPU), fmtPct},
 		{SlotMEM, g.renderHistory[SlotMEM], g.springs[SlotMEM].pos, 100,
@@ -296,10 +287,7 @@ func (g *Gauges) View() string {
 	valuePad := strings.Repeat(" ", valueWidth)
 
 	for _, ga := range allGauges {
-		// Skip hidden slots entirely — never call RenderSparkline on them.
-		// This honors the bubblezone policy (never post-filter marker-bearing
-		// strings) and keeps the per-frame cost proportional to visible
-		// sparklines.
+		// Skip upstream of RenderSparkline (bubblezone marker policy).
 		if !g.visible[ga.slot] {
 			continue
 		}
