@@ -3,7 +3,6 @@ package widgets
 import (
 	"fmt"
 	"image/color"
-	"math"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats/format"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
@@ -35,18 +35,15 @@ func humanizeRate(v float64) string {
 
 
 type Rates struct {
-	width    int
-	state    *model.AppState
-	theme    *theme.Theme
-	keys     keys.KeyMap
-	help     *HelpRenderer
-	ioPeak   float64   // last observed peak IOTokensPerSec, decays exponentially
-	ioPeakAt time.Time // wall-clock timestamp of the last snap-up
-	now      func() time.Time
+	width int
+	state *model.AppState
+	theme *theme.Theme
+	keys  keys.KeyMap
+	help  *HelpRenderer
 }
 
 func NewRates(th *theme.Theme, km keys.KeyMap) *Rates {
-	return &Rates{theme: th, keys: km, help: NewHelpRenderer(th), now: time.Now}
+	return &Rates{theme: th, keys: km, help: NewHelpRenderer(th)}
 }
 
 func (r *Rates) SetSize(w, h int) {
@@ -54,43 +51,8 @@ func (r *Rates) SetSize(w, h int) {
 	r.help.SetWidth(w)
 }
 
-// ioPeakHalfLife derives the readout's decay rate from the sparkline's
-// visible window so the number fades roughly in step with the bar scrolling
-// off the left edge. sparkWidth = width - 7 (margin + value readout +
-// trailing space) and the visible window holds (sparkWidth + 1) / 30
-// seconds of samples. Half-life = window / 4 puts the tail at ~6% by the
-// time the bar has fully scrolled.
-func (r *Rates) ioPeakHalfLife() float64 {
-	sparkSeconds := float64(r.width-6) / 30.0
-	if sparkSeconds < 1 {
-		sparkSeconds = 1 // very narrow terminal floor
-	}
-	return sparkSeconds / 4
-}
-
-// decayedIOPeak returns ioPeak after exponential decay since the last
-// snap-up.
-func (r *Rates) decayedIOPeak() float64 {
-	if r.ioPeak <= 0 {
-		return 0
-	}
-	elapsed := r.now().Sub(r.ioPeakAt).Seconds()
-	if elapsed <= 0 {
-		return r.ioPeak
-	}
-	return r.ioPeak * math.Exp2(-elapsed/r.ioPeakHalfLife())
-}
-
 func (r *Rates) Update(state *model.AppState) {
 	r.state = state
-	if state != nil && state.Current != nil {
-		// Snap the peak up whenever the live rate exceeds the current
-		// (decayed) peak. Otherwise the prior peak continues to fade.
-		if rate := state.Current.Tokens.IOTokensPerSec; rate > r.decayedIOPeak() {
-			r.ioPeak = rate
-			r.ioPeakAt = r.now()
-		}
-	}
 }
 
 func (r *Rates) View() string {
@@ -172,13 +134,13 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// The displayed rate IS the decayed peak: snaps up on burst, eases
-	// out over the sparkline window. Raw IOTokensPerSec would snap back
-	// to 0 the tick after a burst — too fast for the eye to read.
+	// Cumulative input+output tokens since thermo launched. Stays
+	// monotonic across the transcript↔OTEL source flip — collector
+	// merges OTEL totals onto out.{Input,Output}Total without zeroing.
 	tok := snap.Tokens
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.TokensColor,
-		fmt.Sprintf("io %s/s · cache %.1f%%", humanizeRate(r.decayedIOPeak()), tok.CacheHitRatio*100)))
+		fmt.Sprintf("tok %s · cache %.1f%%", format.FormatCount(tok.InputTotal+tok.OutputTotal), tok.CacheHitRatio*100)))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {

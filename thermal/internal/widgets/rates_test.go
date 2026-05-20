@@ -3,7 +3,6 @@ package widgets
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
@@ -187,121 +186,77 @@ func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 	}
 }
 
-// newRatesForDecay sets up a Rates with width=126 so ioPeakHalfLife
-// resolves to 1s (sparkSeconds = (126-6)/30 = 4; half-life = 4/4 = 1).
-// Clean math for the decay tests below.
-func newRatesForDecay(t *testing.T, clock *fakeClock) *Rates {
-	t.Helper()
+// TestTokReadoutShowsCumulative pins the render rule: the token value
+// in the rates line is cumulative InputTotal + OutputTotal since launch,
+// formatted via format.FormatCount.
+func TestTokReadoutShowsCumulative(t *testing.T) {
+	state := fixtureState()
 	r := NewRates(testTheme, keys.Default())
-	r.now = clock.Now
 	r.SetSize(126, 1)
-	return r
+
+	state.Current.Tokens.InputTotal = 600
+	state.Current.Tokens.OutputTotal = 400
+	r.Update(state)
+	got := r.View()
+	if !strings.Contains(got, "tok 1.0K") {
+		t.Errorf("View should contain 'tok 1.0K'; got:\n%s", got)
+	}
+	if strings.Contains(got, "tok 1.0K/s") {
+		t.Errorf("readout must not carry /s suffix (cumulative, not rate); got:\n%s", got)
+	}
 }
 
-// TestIOPeakSnapsUpAndDecays verifies snap-up on burst and exponential
-// fade between bursts with half-life derived from the sparkline window.
-func TestIOPeakSnapsUpAndDecays(t *testing.T) {
+// TestTokReadoutMonotonic verifies the cumulative readout never steps
+// backward across snapshots — the old decay-peak rule would have
+// emitted a fading number when the burst ended; cumulative climbs.
+func TestTokReadoutMonotonic(t *testing.T) {
 	state := fixtureState()
-	t0 := mustTime("2026-05-19T12:00:00Z")
-	clock := &fakeClock{at: t0}
-	r := newRatesForDecay(t, clock)
-
-	state.Current.Tokens.IOTokensPerSec = 1000
-	r.Update(state)
-	if got := r.decayedIOPeak(); got != 1000 {
-		t.Fatalf("after snap-up, peak = %v, want 1000", got)
-	}
-
-	clock.at = t0.Add(time.Second) // one half-life
-	state.Current.Tokens.IOTokensPerSec = 0
-	r.Update(state)
-	if got := r.decayedIOPeak(); got < 490 || got > 510 {
-		t.Errorf("after 1s (1 half-life), peak = %v, want ~500", got)
-	}
-
-	clock.at = t0.Add(2 * time.Second) // two half-lives
-	r.Update(state)
-	if got := r.decayedIOPeak(); got < 240 || got > 260 {
-		t.Errorf("after 2s (2 half-lives), peak = %v, want ~250", got)
-	}
-}
-
-// TestIOPeakResetsOnNewHighRate verifies a fresh high rate during the
-// decay tail snaps the peak back up and resets the decay clock.
-func TestIOPeakResetsOnNewHighRate(t *testing.T) {
-	state := fixtureState()
-	t0 := mustTime("2026-05-19T12:00:00Z")
-	clock := &fakeClock{at: t0}
-	r := newRatesForDecay(t, clock)
-
-	state.Current.Tokens.IOTokensPerSec = 800
-	r.Update(state)
-
-	clock.at = t0.Add(time.Second)
-	state.Current.Tokens.IOTokensPerSec = 1500
-	r.Update(state)
-	if got := r.decayedIOPeak(); got != 1500 {
-		t.Errorf("after new high snap-up, peak = %v, want 1500", got)
-	}
-}
-
-// TestIOReadoutShowsDecayedPeak pins the render rule: the io value in
-// the rates line is the decayed peak (not the raw IOTokensPerSec).
-func TestIOReadoutShowsDecayedPeak(t *testing.T) {
-	state := fixtureState()
-	t0 := mustTime("2026-05-19T12:00:00Z")
-	clock := &fakeClock{at: t0}
-	r := newRatesForDecay(t, clock)
-
-	state.Current.Tokens.IOTokensPerSec = 1000
-	r.Update(state)
-	if got := r.View(); !strings.Contains(got, "io 1.0k/s") {
-		t.Errorf("at burst, View should contain 'io 1.0k/s'; got:\n%s", got)
-	}
-
-	// Live rate drops to 0; readout should still show the decaying peak,
-	// not 0.
-	clock.at = t0.Add(time.Second)
-	state.Current.Tokens.IOTokensPerSec = 0
-	r.Update(state)
-	if got := r.View(); !strings.Contains(got, "io 500/s") {
-		t.Errorf("during decay, View should contain 'io 500/s'; got:\n%s", got)
-	}
-}
-
-// TestIOPeakHalfLifeScalesWithWidth verifies the derivation: a wider
-// terminal gets a longer half-life because its sparkline window holds
-// more time.
-func TestIOPeakHalfLifeScalesWithWidth(t *testing.T) {
 	r := NewRates(testTheme, keys.Default())
+	r.SetSize(126, 1)
 
-	r.SetSize(126, 1) // sparkSeconds = 4 → half-life = 1
-	if got := r.ioPeakHalfLife(); got < 0.99 || got > 1.01 {
-		t.Errorf("width=126: half-life = %v, want ~1.0", got)
+	state.Current.Tokens.InputTotal = 500
+	state.Current.Tokens.OutputTotal = 500
+	r.Update(state)
+	first := r.View()
+
+	state.Current.Tokens.InputTotal = 1200
+	state.Current.Tokens.OutputTotal = 800
+	r.Update(state)
+	second := r.View()
+
+	if !strings.Contains(first, "tok 1.0K") {
+		t.Errorf("first snapshot: expected 'tok 1.0K'; got:\n%s", first)
 	}
-
-	r.SetSize(246, 1) // sparkSeconds = 8 → half-life = 2
-	if got := r.ioPeakHalfLife(); got < 1.99 || got > 2.01 {
-		t.Errorf("width=246: half-life = %v, want ~2.0", got)
-	}
-
-	r.SetSize(30, 1) // sparkSeconds clamped → half-life = 0.25
-	if got := r.ioPeakHalfLife(); got < 0.24 || got > 0.26 {
-		t.Errorf("width=30: half-life = %v, want ~0.25", got)
+	if !strings.Contains(second, "tok 2.0K") {
+		t.Errorf("second snapshot: expected 'tok 2.0K'; got:\n%s", second)
 	}
 }
 
-// fakeClock satisfies func() time.Time for injecting deterministic time
-// into Rates.now during decay tests.
-type fakeClock struct{ at time.Time }
+// TestTokReadoutAcrossOTELFlip simulates a transcript→OTEL source flip
+// by having the collector's totals jump (as they would when OTEL takes
+// over the cumulative baseline). The widget only consumes the final
+// TokenStats, so this is a black-box assertion that no widget-side
+// bookkeeping snapshots a baseline that could go backward.
+func TestTokReadoutAcrossOTELFlip(t *testing.T) {
+	state := fixtureState()
+	r := NewRates(testTheme, keys.Default())
+	r.SetSize(126, 1)
 
-func (c *fakeClock) Now() time.Time { return c.at }
-
-func mustTime(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		panic(err)
+	state.Current.Tokens.InputTotal = 800
+	state.Current.Tokens.OutputTotal = 200
+	r.Update(state)
+	if got := r.View(); !strings.Contains(got, "tok 1.0K") {
+		t.Errorf("pre-flip: expected 'tok 1.0K'; got:\n%s", got)
 	}
-	return t
+
+	// OTEL takes over — totals replace transcript baseline. Cumulative
+	// stays non-decreasing because OTEL has already been ticking in
+	// the background; the collector merges them as the new authority.
+	state.Current.Tokens.InputTotal = 3000
+	state.Current.Tokens.OutputTotal = 2000
+	r.Update(state)
+	if got := r.View(); !strings.Contains(got, "tok 5.0K") {
+		t.Errorf("post-flip: expected 'tok 5.0K'; got:\n%s", got)
+	}
 }
 
