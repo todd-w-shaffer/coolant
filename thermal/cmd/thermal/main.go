@@ -288,6 +288,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout.ToggleSparklineDecomp()
 		case key.Matches(msg, m.keys.ToggleToken):
 			m.layout.ToggleSparklineToken()
+		case key.Matches(msg, m.keys.TogglePretty):
+			m.layout.ToggleSparklinePretty()
 		}
 
 	case tea.WindowSizeMsg:

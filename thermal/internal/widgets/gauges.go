@@ -27,7 +27,8 @@ const (
 	SlotMEM
 	SlotDecomp // labeled SWAP on-screen — actually compressor decompressions/tick, not swap bytes
 	SlotToken
-	NumSparklineSlots = 4
+	SlotPretty // chars÷4 estimate from transcript byte growth — mimics CC's UI counter
+	NumSparklineSlots = 5
 )
 
 // MaxVisibleSparklines is the cap enforced by ToggleVisible. Toggling on a
@@ -42,6 +43,7 @@ func init() {
 	gaugeLabels[SlotMEM] = RenderBrailleWord("MEM")
 	gaugeLabels[SlotDecomp] = RenderBrailleWord("SWAP")
 	gaugeLabels[SlotToken] = RenderBrailleWord("TOK")
+	gaugeLabels[SlotPretty] = RenderBrailleWord("PRTY")
 }
 
 // Gauges renders up to MaxVisibleSparklines of NumSparklineSlots possible
@@ -136,6 +138,7 @@ func (g *Gauges) Update(state *model.AppState) {
 	g.targets[SlotMEM] = state.Current.System.MemPercent()
 	g.targets[SlotDecomp] = float64(state.Current.System.Decompressions)
 	g.targets[SlotToken] = state.Current.Tokens.IOTokensPerSec
+	g.targets[SlotPretty] = state.Current.Tokens.PrettyTokensPerSec
 
 	// First snapshot: jump to target immediately (no spring from zero)
 	if !g.seeded {
@@ -278,6 +281,7 @@ func (g *Gauges) View() string {
 	// heavy bursts clipping above 100% (already signalled red by color).
 	// Decomp keeps autoscale because its range spans many orders of magnitude.
 	tokThresh := TokenSparkThresh()
+	prettyThresh := PrettySparkThresh()
 
 	// Fixed-size array (not slice) so this stays on the stack — View runs
 	// every render frame.
@@ -290,6 +294,8 @@ func (g *Gauges) View() string {
 			DecompSparkThresh(), int(SlotDecomp), fmtCount},
 		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Warn,
 			tokThresh, int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
+		{SlotPretty, g.renderHistory[SlotPretty], g.springs[SlotPretty].pos, prettyThresh.Warn,
+			prettyThresh, int(SlotPretty) % len(g.theme.GaugeDots), fmtCount},
 	}
 
 	var lines []string

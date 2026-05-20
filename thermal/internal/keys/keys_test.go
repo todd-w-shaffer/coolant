@@ -30,6 +30,7 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 		{"ToggleMEM", km.ToggleMEM, []string{"2"}, "2", "toggle MEM"},
 		{"ToggleDecomp", km.ToggleDecomp, []string{"3"}, "3", "toggle SWAP"},
 		{"ToggleToken", km.ToggleToken, []string{"4"}, "4", "toggle TOK"},
+		{"TogglePretty", km.TogglePretty, []string{"5"}, "5", "toggle PRTY"},
 	}
 
 	for _, tt := range tests {
@@ -65,7 +66,7 @@ func TestShortHelpOrder(t *testing.T) {
 func TestSparklineTogglesOrder(t *testing.T) {
 	km := Default()
 	toggles := km.SparklineToggles()
-	want := []key.Binding{km.ToggleCPU, km.ToggleMEM, km.ToggleDecomp, km.ToggleToken}
+	want := []key.Binding{km.ToggleCPU, km.ToggleMEM, km.ToggleDecomp, km.ToggleToken, km.TogglePretty}
 	if len(toggles) != len(want) {
 		t.Fatalf("SparklineToggles() length = %d, want %d", len(toggles), len(want))
 	}

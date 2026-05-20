@@ -136,6 +136,7 @@ type TokenCollector struct {
 	cachedFiles   []string
 	lastDiscov    time.Time
 	window        cacheWindow
+	lastActiveBytes int64 // sum of os.Stat sizes across active transcript files, last tick — drives PrettyTokensPerSec
 }
 
 func NewTokenCollector() *TokenCollector {
@@ -173,6 +174,17 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 
 	s := &tc.acc.Stats
 
+	// Sum transcript file sizes across active sessions. Drives the
+	// PrettyTokensPerSec estimate via byte growth between ticks — mimics
+	// CC's UI counter (chars÷4) but at the file system's per-content-block
+	// granularity rather than per-text-chunk.
+	var activeBytes int64
+	for _, path := range tc.cachedFiles {
+		if fi, err := os.Stat(path); err == nil {
+			activeBytes += fi.Size()
+		}
+	}
+
 	if !tc.lastTick.IsZero() {
 		dt := now.Sub(tc.lastTick).Seconds()
 		if dt > 0 {
@@ -189,6 +201,16 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 				ioSample = 0 // defensive — should never happen within a stable source
 			}
 			s.IOTokensPerSec = ioSample
+
+			// chars÷4 from transcript byte growth. Includes JSONL envelope
+			// overhead (timestamps, uuids, role tags) so it overestimates
+			// pure-text tokens by a constant factor — acceptable for a
+			// "visual feel" sparkline, not a billing-grade signal.
+			bytesDelta := activeBytes - tc.lastActiveBytes
+			if bytesDelta < 0 {
+				bytesDelta = 0 // file rotated / deleted between ticks
+			}
+			s.PrettyTokensPerSec = float64(bytesDelta) / 4.0 / dt
 		}
 
 		readDelta := s.CacheReadTotal - tc.lastCacheRead
@@ -203,6 +225,7 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 	tc.lastOutput = s.OutputTotal
 	tc.lastCacheCrt = s.CacheCreateTotal
 	tc.lastCacheRead = s.CacheReadTotal
+	tc.lastActiveBytes = activeBytes
 	tc.lastTick = now
 	s.ActiveSessions = len(tc.cachedFiles)
 	return *s

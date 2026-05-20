@@ -177,6 +177,7 @@ func (h *Horizontal) ToggleSparklineCPU()    { h.gauges.ToggleVisible(widgets.Sl
 func (h *Horizontal) ToggleSparklineMEM()    { h.gauges.ToggleVisible(widgets.SlotMEM) }
 func (h *Horizontal) ToggleSparklineDecomp() { h.gauges.ToggleVisible(widgets.SlotDecomp) }
 func (h *Horizontal) ToggleSparklineToken()  { h.gauges.ToggleVisible(widgets.SlotToken) }
+func (h *Horizontal) ToggleSparklinePretty() { h.gauges.ToggleVisible(widgets.SlotPretty) }
 
 func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
@@ -295,6 +296,7 @@ func (h *Horizontal) helpView() []string {
 			entry(toggles[widgets.SlotMEM], widgets.SlotMEM, "MEM app memory") + "  " +
 			entry(toggles[widgets.SlotDecomp], widgets.SlotDecomp, "SWAP compressor pressure") + "  " +
 			entry(toggles[widgets.SlotToken], widgets.SlotToken, "TOK tokens/sec") + "  " +
+			entry(toggles[widgets.SlotPretty], widgets.SlotPretty, "PRTY chars÷4") + "  " +
 			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
 		" " + dim("sessions") + " " + diamond(sp.Idle) + "  " + ct(d, "idle") + " " +
 			diamond(sp.Active) + " " + ct(d, "active") + "  " +

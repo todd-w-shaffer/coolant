@@ -22,6 +22,7 @@ type KeyMap struct {
 	ToggleMEM    key.Binding
 	ToggleDecomp key.Binding
 	ToggleToken  key.Binding
+	TogglePretty key.Binding
 }
 
 func Default() KeyMap {
@@ -78,6 +79,10 @@ func Default() KeyMap {
 			key.WithKeys("4"),
 			key.WithHelp("4", "toggle TOK"),
 		),
+		TogglePretty: key.NewBinding(
+			key.WithKeys("5"),
+			key.WithHelp("5", "toggle PRTY"),
+		),
 	}
 }
 
@@ -86,7 +91,7 @@ func Default() KeyMap {
 // inline with each sparkline's descriptive label in the help overlay, not
 // as a generic key group.
 func (k KeyMap) SparklineToggles() []key.Binding {
-	return []key.Binding{k.ToggleCPU, k.ToggleMEM, k.ToggleDecomp, k.ToggleToken}
+	return []key.Binding{k.ToggleCPU, k.ToggleMEM, k.ToggleDecomp, k.ToggleToken, k.TogglePretty}
 }
 
 // ShortHelp satisfies bubbles/help.KeyMap. Order is load-bearing — tests

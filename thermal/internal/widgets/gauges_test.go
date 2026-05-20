@@ -154,6 +154,7 @@ func TestDefaultVisibleSparklineSet(t *testing.T) {
 		SlotMEM:    true,
 		SlotDecomp: false,
 		SlotToken:  true,
+		SlotPretty: false,
 	}
 	for slot, want := range wantVisible {
 		if got := g.IsVisible(slot); got != want {
