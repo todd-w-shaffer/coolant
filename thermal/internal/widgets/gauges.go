@@ -143,7 +143,7 @@ func (g *Gauges) Update(state *model.AppState) {
 	g.targets[SlotCPU] = state.Current.System.CPUPercent
 	g.targets[SlotMEM] = state.Current.System.MemPercent()
 	g.targets[SlotDecomp] = float64(state.Current.System.Decompressions)
-	g.targets[SlotToken] = state.Current.Tokens.TokensPerSec
+	g.targets[SlotToken] = state.Current.Tokens.IOTokensPerSec
 
 	// First snapshot: jump to target immediately (no spring from zero)
 	if !g.seeded {

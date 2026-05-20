@@ -128,8 +128,8 @@ type TokenCollector struct {
 	offsets       map[string]int64
 	lastMsgIDs    map[string]string
 	projects      string // ~/.claude/projects/ (overridable for tests)
-	lastTotal     int64
 	lastInput     int64
+	lastOutput    int64
 	lastCacheCrt  int64
 	lastCacheRead int64
 	lastTick      time.Time
@@ -172,23 +172,23 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 	}
 
 	s := &tc.acc.Stats
-	total := s.InputTotal + s.OutputTotal + s.CacheCreateTotal + s.CacheReadTotal
 
 	if !tc.lastTick.IsZero() {
 		dt := now.Sub(tc.lastTick).Seconds()
 		if dt > 0 {
-			sample := float64(total-tc.lastTotal) / dt
-			if sample < 0 {
-				sample = 0 // defensive — should never happen within a stable source
+			// IO rate excludes cache_create + cache_read on purpose —
+			// the sparkline and the rates-line "io N/s" both consume
+			// this field, and they want "fresh model traffic" not
+			// "API token pressure dominated by cached prefix re-reads."
+			// Raw per-tick rate (no EMA): smoothing here would force the
+			// renderer to display a decay tail because each renderHistory
+			// sample is the scalar of that tick; the gauge spring handles
+			// visual easing.
+			ioSample := float64((s.InputTotal-tc.lastInput)+(s.OutputTotal-tc.lastOutput)) / dt
+			if ioSample < 0 {
+				ioSample = 0 // defensive — should never happen within a stable source
 			}
-			// Raw per-tick rate. EMA smoothing was removed once the
-			// sparkline landed: smoothing here would force the renderer
-			// to display a decay tail (color decays via spring, amplitude
-			// would not) because each history sample is the smoothed
-			// scalar of that tick. The gauge spring handles visual easing
-			// of step changes; the source signal needs to actually drop
-			// to 0 between bursts for the bars to fall away.
-			s.TokensPerSec = sample
+			s.IOTokensPerSec = ioSample
 		}
 
 		readDelta := s.CacheReadTotal - tc.lastCacheRead
@@ -199,8 +199,8 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 		s.CacheHitRatio = tc.window.ratio()
 	}
 
-	tc.lastTotal = total
 	tc.lastInput = s.InputTotal
+	tc.lastOutput = s.OutputTotal
 	tc.lastCacheCrt = s.CacheCreateTotal
 	tc.lastCacheRead = s.CacheReadTotal
 	tc.lastTick = now

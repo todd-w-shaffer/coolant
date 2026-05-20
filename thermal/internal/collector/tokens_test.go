@@ -169,6 +169,56 @@ func TestTokenCollectorTickProducesWindowedCacheRatio(t *testing.T) {
 	}
 }
 
+// seedTranscriptProject creates a project dir + empty session.jsonl and
+// returns (tc-projects-root, session-file-path). Caller writes JSONL to
+// session-file-path to drive transcript activity.
+func seedTranscriptProject(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	projDir := filepath.Join(dir, "demo-project")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(projDir, "session.jsonl")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir, path
+}
+
+// IOTokensPerSec must reflect input+output only — a tick whose ONLY
+// change is a huge cache_read delta must report zero IO rate. Guards
+// against regressions that would re-introduce cache-read-driven
+// 200k/s spikes on the sparkline.
+func TestTokenCollector_IORateExcludesCacheRead(t *testing.T) {
+	dir, path := seedTranscriptProject(t)
+	tc := NewTokenCollector()
+	tc.projects = dir
+
+	t0 := time.Now()
+	// Tick 1: one assistant message with some input/output and zero cache.
+	body1 := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":100,"output_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tc.Tick(t0)
+
+	// Tick 2 (one second later): a second message whose ONLY delta is
+	// a giant cache_read. Input/output unchanged from tick 1.
+	body2 := body1 + `{"type":"assistant","message":{"id":"m2","usage":{"input_tokens":0,"output_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":250000}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stats := tc.Tick(t0.Add(time.Second))
+
+	if stats.CacheReadTotal != 250000 {
+		t.Fatalf("test precondition: CacheReadTotal want 250000, got %d", stats.CacheReadTotal)
+	}
+	if stats.IOTokensPerSec != 0 {
+		t.Errorf("cache_read delta leaked into IOTokensPerSec: %v (want 0)", stats.IOTokensPerSec)
+	}
+}
+
 func TestTokenCollectorColdStartSkipsHistory(t *testing.T) {
 	// A pre-existing session file should not have its accumulated history
 	// counted as "just happened" on first scan. Offsets must seed to file size

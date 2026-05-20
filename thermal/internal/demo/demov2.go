@@ -316,7 +316,7 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 				OutputTotal:      tokOutput,
 				CacheCreateTotal: tokCacheCreate,
 				CacheReadTotal:   tokCacheRead,
-				TokensPerSec:     tokRateEMA,
+				IOTokensPerSec:   tokRateEMA,
 				CacheHitRatio:    float64(tokCacheRead) / float64(tokInput+tokCacheCreate+tokCacheRead),
 				ActiveSessions:   activeSessions,
 			}
