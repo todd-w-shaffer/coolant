@@ -270,6 +270,13 @@ func (g *Gauges) View() string {
 		}
 	}
 
+	// Token uses its crit threshold as a fixed max (like CPU's 100) — the
+	// peak-based autoscale would shrink the scale to small bursts and
+	// re-amplify low values to full height, which reads as the bar
+	// "growing" when nothing is happening. Decomp keeps autoscale because
+	// its natural range spans many orders of magnitude.
+	tokThresh := TokenSparkThresh()
+
 	// Fixed-size array (not slice) so this stays on the stack — View runs
 	// every render frame.
 	allGauges := [NumSparklineSlots]gauge{
@@ -279,8 +286,8 @@ func (g *Gauges) View() string {
 			MemSparkThresh(), int(SlotMEM), fmtPct},
 		{SlotDecomp, g.renderHistory[SlotDecomp], g.springs[SlotDecomp].pos, g.peaks[SlotDecomp],
 			DecompSparkThresh(), int(SlotDecomp), fmtCount},
-		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, g.peaks[SlotToken],
-			TokenSparkThresh(), int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
+		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Crit,
+			tokThresh, int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
 	}
 
 	var lines []string
