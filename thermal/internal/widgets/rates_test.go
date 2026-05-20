@@ -1,10 +1,13 @@
 package widgets
 
 import (
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 )
 
 func TestHumanizeRate(t *testing.T) {
@@ -183,3 +186,104 @@ func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 		}
 	}
 }
+
+// TestIOPeakSnapsUpAndDecays drives Rates with a sequence of synthetic
+// snapshots and a fake clock to verify (1) the readout peak snaps up
+// immediately when a higher rate lands, (2) the peak decays toward zero
+// once the live rate drops, with a 2-second half-life.
+func TestIOPeakSnapsUpAndDecays(t *testing.T) {
+	state := fixtureState()
+	t0 := mustTime("2026-05-19T12:00:00Z")
+	clock := &fakeClock{at: t0}
+
+	r := NewRates(testTheme, keys.Default())
+	r.now = clock.Now
+
+	// Burst: live rate spikes to 1000.
+	state.Current.Tokens.IOTokensPerSec = 1000
+	r.Update(state)
+	if got := r.decayedIOPeak(); got != 1000 {
+		t.Fatalf("after snap-up, peak = %v, want 1000", got)
+	}
+
+	// 2 seconds later, live rate is back to 0. Peak should have halved.
+	clock.at = t0.Add(2 * time.Second)
+	state.Current.Tokens.IOTokensPerSec = 0
+	r.Update(state)
+	if got := r.decayedIOPeak(); got < 490 || got > 510 {
+		t.Errorf("after 2s decay, peak = %v, want ~500", got)
+	}
+
+	// 4 seconds total later, peak should be ~250 (two half-lives).
+	clock.at = t0.Add(4 * time.Second)
+	r.Update(state)
+	if got := r.decayedIOPeak(); got < 240 || got > 260 {
+		t.Errorf("after 4s decay, peak = %v, want ~250", got)
+	}
+}
+
+// TestIOPeakResetsOnNewHighRate verifies that a fresh high rate during the
+// decay tail snaps the peak back up and resets the decay clock.
+func TestIOPeakResetsOnNewHighRate(t *testing.T) {
+	state := fixtureState()
+	t0 := mustTime("2026-05-19T12:00:00Z")
+	clock := &fakeClock{at: t0}
+
+	r := NewRates(testTheme, keys.Default())
+	r.now = clock.Now
+
+	state.Current.Tokens.IOTokensPerSec = 800
+	r.Update(state)
+
+	// 1 second later, peak has decayed to ~566. A new rate of 1500 should
+	// snap up and reset.
+	clock.at = t0.Add(time.Second)
+	state.Current.Tokens.IOTokensPerSec = 1500
+	r.Update(state)
+	if got := r.decayedIOPeak(); got != 1500 {
+		t.Errorf("after new high snap-up, peak = %v, want 1500", got)
+	}
+}
+
+// TestIOPeakSuppressionWhenBelowOne pins the rendering rule: when the
+// decayed peak falls below 1, the "(peak ...)" parenthetical is dropped
+// from the rates line. Avoids "(peak 0)" noise during long idle stretches.
+func TestIOPeakSuppressionWhenBelowOne(t *testing.T) {
+	state := fixtureState()
+	t0 := mustTime("2026-05-19T12:00:00Z")
+	clock := &fakeClock{at: t0}
+
+	r := NewRates(testTheme, keys.Default())
+	r.now = clock.Now
+	r.SetSize(244, 1)
+
+	// Burst.
+	state.Current.Tokens.IOTokensPerSec = 1000
+	r.Update(state)
+	clock.at = t0.Add(20 * time.Second) // ten half-lives → peak ≈ 1
+	state.Current.Tokens.IOTokensPerSec = 0
+	r.Update(state)
+	rendered := r.View()
+	if peak := r.decayedIOPeak(); peak >= 1 {
+		t.Skipf("decayed peak still %v after 20s — half-life math drifted, can't assert suppression", peak)
+	}
+	// "(peak" must not appear once decayed peak < 1.
+	if strings.Contains(rendered, "(peak") {
+		t.Errorf("rendered rates line contains '(peak ...)' when decayed peak should be < 1:\n%s", rendered)
+	}
+}
+
+// fakeClock satisfies func() time.Time for injecting deterministic time
+// into Rates.now during decay tests.
+type fakeClock struct{ at time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.at }
+
+func mustTime(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+

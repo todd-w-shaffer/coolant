@@ -3,6 +3,7 @@ package widgets
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"strings"
 	"time"
 
@@ -13,6 +14,13 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
+
+// ioPeakHalfLife is how long it takes the io-rate readout's peak value to
+// halve when no new sample exceeds it. Sized so the eye has time to catch the
+// number after a burst — IO samples land at the collector tick rate (~1Hz)
+// and the raw IOTokensPerSec snaps back to 0 the next tick, so the readout
+// needed a slower-decaying display value to stay readable.
+const ioPeakHalfLife = 2.0 // seconds
 
 // humanizeRate formats a per-second rate compactly: 47 → "47", 1234 → "1.2k",
 // 1_500_000 → "1.5M". Negative or NaN values render as "0".
@@ -34,15 +42,18 @@ func humanizeRate(v float64) string {
 
 
 type Rates struct {
-	width int
-	state *model.AppState
-	theme *theme.Theme
-	keys  keys.KeyMap
-	help  *HelpRenderer
+	width    int
+	state    *model.AppState
+	theme    *theme.Theme
+	keys     keys.KeyMap
+	help     *HelpRenderer
+	ioPeak   float64   // last observed peak IOTokensPerSec, decays exponentially
+	ioPeakAt time.Time // wall-clock timestamp of the last snap-up
+	now      func() time.Time
 }
 
 func NewRates(th *theme.Theme, km keys.KeyMap) *Rates {
-	return &Rates{theme: th, keys: km, help: NewHelpRenderer(th)}
+	return &Rates{theme: th, keys: km, help: NewHelpRenderer(th), now: time.Now}
 }
 
 func (r *Rates) SetSize(w, h int) {
@@ -50,8 +61,30 @@ func (r *Rates) SetSize(w, h int) {
 	r.help.SetWidth(w)
 }
 
+// decayedIOPeak returns ioPeak with exponential decay applied since the last
+// snap-up. Half-life is ioPeakHalfLife seconds — a peak of 1000 reads as 500
+// two seconds later. Returns 0 if no peak has ever been recorded.
+func (r *Rates) decayedIOPeak() float64 {
+	if r.ioPeak <= 0 {
+		return 0
+	}
+	elapsed := r.now().Sub(r.ioPeakAt).Seconds()
+	if elapsed <= 0 {
+		return r.ioPeak
+	}
+	return r.ioPeak * math.Exp2(-elapsed/ioPeakHalfLife)
+}
+
 func (r *Rates) Update(state *model.AppState) {
 	r.state = state
+	if state != nil && state.Current != nil {
+		// Snap the peak up whenever the live rate exceeds the current
+		// (decayed) peak. Otherwise the prior peak continues to fade.
+		if rate := state.Current.Tokens.IOTokensPerSec; rate > r.decayedIOPeak() {
+			r.ioPeak = rate
+			r.ioPeakAt = r.now()
+		}
+	}
 }
 
 func (r *Rates) View() string {
@@ -133,15 +166,22 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// Token throughput + cache hit % — always rendered. Cold start shows
-	// "io 0/s · cache 0.0%" until the collector observes its first
-	// transcript usage block; after that the values update live and the
-	// field stays visible through idle stretches. Pairs with the toggleable
-	// TOK sparkline, which also renders during idle (Phase 5 dropped the
-	// EMA so amplitude tracks current activity).
+	// Token throughput + cache hit % — always rendered. The "io" segment
+	// shows BOTH the live per-tick rate (snaps to 0 between bursts) and a
+	// "(peak N)" companion that decays slowly so the eye has time to catch
+	// the burst magnitude after the live value has already returned to 0.
+	// The "(peak ...)" parenthetical is suppressed when the decayed peak is
+	// below 1 — at that point the live value is the only useful number.
+	// Pairs with the toggleable TOK sparkline whose amplitude tracks
+	// current activity raw (Phase 5).
 	tok := snap.Tokens
 	sb.WriteString("  ")
-	sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("io %s/s · cache %.1f%%", humanizeRate(tok.IOTokensPerSec), tok.CacheHitRatio*100)))
+	ioFragment := fmt.Sprintf("io %s/s", humanizeRate(tok.IOTokensPerSec))
+	if peak := r.decayedIOPeak(); peak >= 1 {
+		ioFragment += fmt.Sprintf(" (peak %s)", humanizeRate(peak))
+	}
+	ioFragment += fmt.Sprintf(" · cache %.1f%%", tok.CacheHitRatio*100)
+	sb.WriteString(ui.ColorText(r.theme.TokensColor, ioFragment))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {
