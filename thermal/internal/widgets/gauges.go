@@ -270,11 +270,13 @@ func (g *Gauges) View() string {
 		}
 	}
 
-	// Token uses its crit threshold as a fixed max (like CPU's 100) — the
-	// peak-based autoscale would shrink the scale to small bursts and
-	// re-amplify low values to full height, which reads as the bar
-	// "growing" when nothing is happening. Decomp keeps autoscale because
-	// its natural range spans many orders of magnitude.
+	// Token uses its warn threshold as the fixed max (like CPU's 100) —
+	// the peak-based autoscale would shrink the scale to small bursts and
+	// re-amplify low values to full height, but anchoring at crit (4000)
+	// left typical chat (~300-500 io/s) reading as ~10% scale — barely
+	// visible. Warn (1000) anchors typical replies around 30-50% with
+	// heavy bursts clipping above 100% (already signalled red by color).
+	// Decomp keeps autoscale because its range spans many orders of magnitude.
 	tokThresh := TokenSparkThresh()
 
 	// Fixed-size array (not slice) so this stays on the stack — View runs
@@ -286,7 +288,7 @@ func (g *Gauges) View() string {
 			MemSparkThresh(), int(SlotMEM), fmtPct},
 		{SlotDecomp, g.renderHistory[SlotDecomp], g.springs[SlotDecomp].pos, g.peaks[SlotDecomp],
 			DecompSparkThresh(), int(SlotDecomp), fmtCount},
-		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Crit,
+		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Warn,
 			tokThresh, int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
 	}
 
