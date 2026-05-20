@@ -133,8 +133,12 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// Token throughput + cache hit % — suppress when no transcript activity
-	if tok := snap.Tokens; tok.ActiveSessions > 0 && (tok.InputTotal+tok.OutputTotal+tok.CacheCreateTotal+tok.CacheReadTotal) > 0 {
+	// Token throughput + cache hit % — suppress only at cold start (no
+	// transcript activity ever observed). Once any tokens have been
+	// counted the field stays visible so the rates line stays consistent
+	// with the sparkline, which (after Phase 5) renders 0 amplitude
+	// during idle rather than disappearing.
+	if tok := snap.Tokens; (tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal + tok.CacheReadTotal) > 0 {
 		sb.WriteString("  ")
 		sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("io %s/s · cache %.1f%%", humanizeRate(tok.IOTokensPerSec), tok.CacheHitRatio*100)))
 	}
