@@ -133,15 +133,15 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// Token throughput + cache hit % — suppress only at cold start (no
-	// transcript activity ever observed). Once any tokens have been
-	// counted the field stays visible so the rates line stays consistent
-	// with the sparkline, which (after Phase 5) renders 0 amplitude
-	// during idle rather than disappearing.
-	if tok := snap.Tokens; (tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal + tok.CacheReadTotal) > 0 {
-		sb.WriteString("  ")
-		sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("io %s/s · cache %.1f%%", humanizeRate(tok.IOTokensPerSec), tok.CacheHitRatio*100)))
-	}
+	// Token throughput + cache hit % — always rendered. Cold start shows
+	// "io 0/s · cache 0.0%" until the collector observes its first
+	// transcript usage block; after that the values update live and the
+	// field stays visible through idle stretches. Pairs with the toggleable
+	// TOK sparkline, which also renders during idle (Phase 5 dropped the
+	// EMA so amplitude tracks current activity).
+	tok := snap.Tokens
+	sb.WriteString("  ")
+	sb.WriteString(ui.ColorText(r.theme.TokensColor, fmt.Sprintf("io %s/s · cache %.1f%%", humanizeRate(tok.IOTokensPerSec), tok.CacheHitRatio*100)))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {
