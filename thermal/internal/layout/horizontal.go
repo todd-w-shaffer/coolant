@@ -290,14 +290,15 @@ func (h *Horizontal) helpView() []string {
 		return dim(text)
 	}
 
+	var sparkParts []string
+	for slot := widgets.SparklineSlot(0); int(slot) < widgets.NumSparklineSlots; slot++ {
+		sparkParts = append(sparkParts, entry(toggles[slot], slot, widgets.SlotLongLabel(slot)))
+	}
+	sparkLine := " " + dim("sparklines") + " " + strings.Join(sparkParts, "  ") + "  " +
+		dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome")
+
 	return []string{
-		" " + dim("sparklines") + " " +
-			entry(toggles[widgets.SlotCPU], widgets.SlotCPU, "CPU cores") + "  " +
-			entry(toggles[widgets.SlotMEM], widgets.SlotMEM, "MEM app memory") + "  " +
-			entry(toggles[widgets.SlotDecomp], widgets.SlotDecomp, "SWAP compressor pressure") + "  " +
-			entry(toggles[widgets.SlotToken], widgets.SlotToken, "TOK tokens/sec") + "  " +
-			entry(toggles[widgets.SlotPretty], widgets.SlotPretty, "PRTY chars÷4") + "  " +
-			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
+		sparkLine,
 		" " + dim("sessions") + " " + diamond(sp.Idle) + "  " + ct(d, "idle") + " " +
 			diamond(sp.Active) + " " + ct(d, "active") + "  " +
 			diamond(sp.Language) + " " + ct(d, "language") + "  " +

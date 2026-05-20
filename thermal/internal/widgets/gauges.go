@@ -35,15 +35,33 @@ const (
 // hidden slot when this many are already visible is a silent no-op.
 const MaxVisibleSparklines = 3
 
-// Gauge label words — pre-rendered once at init.
+// slotLabels is the single source of truth for sparkline naming. The short
+// form drives the braille label rendered on the sparkline itself; the long
+// form drives the help-overlay description. Adding a slot means appending
+// one entry here, not editing strings in two files.
+var slotLabels = [NumSparklineSlots]struct{ short, long string }{
+	SlotCPU:    {"CPU", "CPU cores"},
+	SlotMEM:    {"MEM", "MEM app memory"},
+	SlotDecomp: {"SWAP", "SWAP compressor pressure"},
+	SlotToken:  {"TOK", "TOK tokens/sec"},
+	SlotPretty: {"PRTY", "PRTY chars÷4"},
+}
+
+// SlotLongLabel returns the help-overlay description for a slot.
+func SlotLongLabel(slot SparklineSlot) string {
+	if slot < 0 || int(slot) >= NumSparklineSlots {
+		return ""
+	}
+	return slotLabels[slot].long
+}
+
+// Gauge label words — pre-rendered once at init from slotLabels[*].short.
 var gaugeLabels [NumSparklineSlots]BrailleWord
 
 func init() {
-	gaugeLabels[SlotCPU] = RenderBrailleWord("CPU")
-	gaugeLabels[SlotMEM] = RenderBrailleWord("MEM")
-	gaugeLabels[SlotDecomp] = RenderBrailleWord("SWAP")
-	gaugeLabels[SlotToken] = RenderBrailleWord("TOK")
-	gaugeLabels[SlotPretty] = RenderBrailleWord("PRTY")
+	for slot, lbl := range slotLabels {
+		gaugeLabels[slot] = RenderBrailleWord(lbl.short)
+	}
 }
 
 // Gauges renders up to MaxVisibleSparklines of NumSparklineSlots possible
@@ -273,15 +291,11 @@ func (g *Gauges) View() string {
 		}
 	}
 
-	// Token uses its warn threshold as the fixed max (like CPU's 100) —
-	// the peak-based autoscale would shrink the scale to small bursts and
-	// re-amplify low values to full height, but anchoring at crit (4000)
-	// left typical chat (~300-500 io/s) reading as ~10% scale — barely
-	// visible. Warn (1000) anchors typical replies around 30-50% with
-	// heavy bursts clipping above 100% (already signalled red by color).
-	// Decomp keeps autoscale because its range spans many orders of magnitude.
+	// Token/Pretty use the warn threshold as a fixed max. Autoscale via
+	// g.peaks would rescale small bursts to full height between turns,
+	// making the bar appear to "grow" while idle. Decomp keeps autoscale
+	// because its range spans many orders of magnitude.
 	tokThresh := TokenSparkThresh()
-	prettyThresh := PrettySparkThresh()
 
 	// Fixed-size array (not slice) so this stays on the stack — View runs
 	// every render frame.
@@ -294,8 +308,8 @@ func (g *Gauges) View() string {
 			DecompSparkThresh(), int(SlotDecomp), fmtCount},
 		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Warn,
 			tokThresh, int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
-		{SlotPretty, g.renderHistory[SlotPretty], g.springs[SlotPretty].pos, prettyThresh.Warn,
-			prettyThresh, int(SlotPretty) % len(g.theme.GaugeDots), fmtCount},
+		{SlotPretty, g.renderHistory[SlotPretty], g.springs[SlotPretty].pos, tokThresh.Warn,
+			tokThresh, int(SlotPretty) % len(g.theme.GaugeDots), fmtCount},
 	}
 
 	var lines []string

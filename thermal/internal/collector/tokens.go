@@ -174,15 +174,12 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 
 	s := &tc.acc.Stats
 
-	// Sum transcript file sizes across active sessions. Drives the
-	// PrettyTokensPerSec estimate via byte growth between ticks — mimics
-	// CC's UI counter (chars÷4) but at the file system's per-content-block
-	// granularity rather than per-text-chunk.
+	// Sum transcript file sizes from the offsets map — scanFile already
+	// advanced offsets[path] to the post-tail size for every active file,
+	// so no separate os.Stat syscalls are needed.
 	var activeBytes int64
 	for _, path := range tc.cachedFiles {
-		if fi, err := os.Stat(path); err == nil {
-			activeBytes += fi.Size()
-		}
+		activeBytes += tc.offsets[path]
 	}
 
 	if !tc.lastTick.IsZero() {

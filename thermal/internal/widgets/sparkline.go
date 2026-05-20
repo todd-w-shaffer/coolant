@@ -119,11 +119,6 @@ func TokenSparkThresh() theme.SparkThresholds {
 	return theme.SparkThresholds{Warn: config.C.Sparklines.TokenWarn, Crit: config.C.Sparklines.TokenCrit}
 }
 
-// PrettySparkThresh shares the token scale — the chars÷4 estimate runs in
-// the same order of magnitude as real IO tokens, so reusing the thresholds
-// keeps the visual calibration consistent.
-func PrettySparkThresh() theme.SparkThresholds { return TokenSparkThresh() }
-
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
 // Allocate once via NewSparkBufs and pass to RenderSparkline.
 type SparkBufs struct {

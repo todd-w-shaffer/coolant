@@ -15,7 +15,6 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-
 // humanizeRate formats a per-second rate compactly: 47 → "47", 1234 → "1.2k",
 // 1_500_000 → "1.5M". Negative or NaN values render as "0".
 func humanizeRate(v float64) string {
