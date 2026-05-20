@@ -187,56 +187,56 @@ func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 	}
 }
 
-// TestIOPeakSnapsUpAndDecays drives Rates with a sequence of synthetic
-// snapshots and a fake clock to verify (1) the readout peak snaps up
-// immediately when a higher rate lands, (2) the peak decays toward zero
-// once the live rate drops, with a 2-second half-life.
+// newRatesForDecay sets up a Rates with width=126 so ioPeakHalfLife
+// resolves to 1s (sparkSeconds = (126-6)/30 = 4; half-life = 4/4 = 1).
+// Clean math for the decay tests below.
+func newRatesForDecay(t *testing.T, clock *fakeClock) *Rates {
+	t.Helper()
+	r := NewRates(testTheme, keys.Default())
+	r.now = clock.Now
+	r.SetSize(126, 1)
+	return r
+}
+
+// TestIOPeakSnapsUpAndDecays verifies snap-up on burst and exponential
+// fade between bursts with half-life derived from the sparkline window.
 func TestIOPeakSnapsUpAndDecays(t *testing.T) {
 	state := fixtureState()
 	t0 := mustTime("2026-05-19T12:00:00Z")
 	clock := &fakeClock{at: t0}
+	r := newRatesForDecay(t, clock)
 
-	r := NewRates(testTheme, keys.Default())
-	r.now = clock.Now
-
-	// Burst: live rate spikes to 1000.
 	state.Current.Tokens.IOTokensPerSec = 1000
 	r.Update(state)
 	if got := r.decayedIOPeak(); got != 1000 {
 		t.Fatalf("after snap-up, peak = %v, want 1000", got)
 	}
 
-	// 2 seconds later, live rate is back to 0. Peak should have halved.
-	clock.at = t0.Add(2 * time.Second)
+	clock.at = t0.Add(time.Second) // one half-life
 	state.Current.Tokens.IOTokensPerSec = 0
 	r.Update(state)
 	if got := r.decayedIOPeak(); got < 490 || got > 510 {
-		t.Errorf("after 2s decay, peak = %v, want ~500", got)
+		t.Errorf("after 1s (1 half-life), peak = %v, want ~500", got)
 	}
 
-	// 4 seconds total later, peak should be ~250 (two half-lives).
-	clock.at = t0.Add(4 * time.Second)
+	clock.at = t0.Add(2 * time.Second) // two half-lives
 	r.Update(state)
 	if got := r.decayedIOPeak(); got < 240 || got > 260 {
-		t.Errorf("after 4s decay, peak = %v, want ~250", got)
+		t.Errorf("after 2s (2 half-lives), peak = %v, want ~250", got)
 	}
 }
 
-// TestIOPeakResetsOnNewHighRate verifies that a fresh high rate during the
+// TestIOPeakResetsOnNewHighRate verifies a fresh high rate during the
 // decay tail snaps the peak back up and resets the decay clock.
 func TestIOPeakResetsOnNewHighRate(t *testing.T) {
 	state := fixtureState()
 	t0 := mustTime("2026-05-19T12:00:00Z")
 	clock := &fakeClock{at: t0}
-
-	r := NewRates(testTheme, keys.Default())
-	r.now = clock.Now
+	r := newRatesForDecay(t, clock)
 
 	state.Current.Tokens.IOTokensPerSec = 800
 	r.Update(state)
 
-	// 1 second later, peak has decayed to ~566. A new rate of 1500 should
-	// snap up and reset.
 	clock.at = t0.Add(time.Second)
 	state.Current.Tokens.IOTokensPerSec = 1500
 	r.Update(state)
@@ -245,31 +245,49 @@ func TestIOPeakResetsOnNewHighRate(t *testing.T) {
 	}
 }
 
-// TestIOPeakSuppressionWhenBelowOne pins the rendering rule: when the
-// decayed peak falls below 1, the "(peak ...)" parenthetical is dropped
-// from the rates line. Avoids "(peak 0)" noise during long idle stretches.
-func TestIOPeakSuppressionWhenBelowOne(t *testing.T) {
+// TestIOReadoutShowsDecayedPeak pins the render rule: the io value in
+// the rates line is the decayed peak (not the raw IOTokensPerSec).
+func TestIOReadoutShowsDecayedPeak(t *testing.T) {
 	state := fixtureState()
 	t0 := mustTime("2026-05-19T12:00:00Z")
 	clock := &fakeClock{at: t0}
+	r := newRatesForDecay(t, clock)
 
-	r := NewRates(testTheme, keys.Default())
-	r.now = clock.Now
-	r.SetSize(244, 1)
-
-	// Burst.
 	state.Current.Tokens.IOTokensPerSec = 1000
 	r.Update(state)
-	clock.at = t0.Add(20 * time.Second) // ten half-lives → peak ≈ 1
+	if got := r.View(); !strings.Contains(got, "io 1.0k/s") {
+		t.Errorf("at burst, View should contain 'io 1.0k/s'; got:\n%s", got)
+	}
+
+	// Live rate drops to 0; readout should still show the decaying peak,
+	// not 0.
+	clock.at = t0.Add(time.Second)
 	state.Current.Tokens.IOTokensPerSec = 0
 	r.Update(state)
-	rendered := r.View()
-	if peak := r.decayedIOPeak(); peak >= 1 {
-		t.Skipf("decayed peak still %v after 20s — half-life math drifted, can't assert suppression", peak)
+	if got := r.View(); !strings.Contains(got, "io 500/s") {
+		t.Errorf("during decay, View should contain 'io 500/s'; got:\n%s", got)
 	}
-	// "(peak" must not appear once decayed peak < 1.
-	if strings.Contains(rendered, "(peak") {
-		t.Errorf("rendered rates line contains '(peak ...)' when decayed peak should be < 1:\n%s", rendered)
+}
+
+// TestIOPeakHalfLifeScalesWithWidth verifies the derivation: a wider
+// terminal gets a longer half-life because its sparkline window holds
+// more time.
+func TestIOPeakHalfLifeScalesWithWidth(t *testing.T) {
+	r := NewRates(testTheme, keys.Default())
+
+	r.SetSize(126, 1) // sparkSeconds = 4 → half-life = 1
+	if got := r.ioPeakHalfLife(); got < 0.99 || got > 1.01 {
+		t.Errorf("width=126: half-life = %v, want ~1.0", got)
+	}
+
+	r.SetSize(246, 1) // sparkSeconds = 8 → half-life = 2
+	if got := r.ioPeakHalfLife(); got < 1.99 || got > 2.01 {
+		t.Errorf("width=246: half-life = %v, want ~2.0", got)
+	}
+
+	r.SetSize(30, 1) // sparkSeconds clamped → half-life = 0.25
+	if got := r.ioPeakHalfLife(); got < 0.24 || got > 0.26 {
+		t.Errorf("width=30: half-life = %v, want ~0.25", got)
 	}
 }
 

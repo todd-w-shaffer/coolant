@@ -15,12 +15,6 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
 
-// ioPeakHalfLife is how long it takes the io-rate readout's peak value to
-// halve when no new sample exceeds it. Sized so the eye has time to catch the
-// number after a burst — IO samples land at the collector tick rate (~1Hz)
-// and the raw IOTokensPerSec snaps back to 0 the next tick, so the readout
-// needed a slower-decaying display value to stay readable.
-const ioPeakHalfLife = 2.0 // seconds
 
 // humanizeRate formats a per-second rate compactly: 47 → "47", 1234 → "1.2k",
 // 1_500_000 → "1.5M". Negative or NaN values render as "0".
@@ -61,8 +55,22 @@ func (r *Rates) SetSize(w, h int) {
 	r.help.SetWidth(w)
 }
 
-// decayedIOPeak returns ioPeak after applying exponential decay since the
-// last snap-up. Half-life is ioPeakHalfLife.
+// ioPeakHalfLife derives the readout's decay rate from the sparkline's
+// visible window so the number fades roughly in step with the bar scrolling
+// off the left edge. sparkWidth = width - 7 (margin + value readout +
+// trailing space) and the visible window holds (sparkWidth + 1) / 30
+// seconds of samples. Half-life = window / 4 puts the tail at ~6% by the
+// time the bar has fully scrolled.
+func (r *Rates) ioPeakHalfLife() float64 {
+	sparkSeconds := float64(r.width-6) / 30.0
+	if sparkSeconds < 1 {
+		sparkSeconds = 1 // very narrow terminal floor
+	}
+	return sparkSeconds / 4
+}
+
+// decayedIOPeak returns ioPeak after exponential decay since the last
+// snap-up.
 func (r *Rates) decayedIOPeak() float64 {
 	if r.ioPeak <= 0 {
 		return 0
@@ -71,7 +79,7 @@ func (r *Rates) decayedIOPeak() float64 {
 	if elapsed <= 0 {
 		return r.ioPeak
 	}
-	return r.ioPeak * math.Exp2(-elapsed/ioPeakHalfLife)
+	return r.ioPeak * math.Exp2(-elapsed/r.ioPeakHalfLife())
 }
 
 func (r *Rates) Update(state *model.AppState) {
@@ -165,17 +173,13 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// The "(peak N)" companion exists because IOTokensPerSec snaps back
-	// to 0 the tick after a burst — too fast for the eye to read the
-	// number. Suppressed below 1 to avoid "(peak 0)" noise during idle.
+	// The displayed rate IS the decayed peak: snaps up on burst, eases
+	// out over the sparkline window. Raw IOTokensPerSec would snap back
+	// to 0 the tick after a burst — too fast for the eye to read.
 	tok := snap.Tokens
 	sb.WriteString("  ")
-	ioFragment := fmt.Sprintf("io %s/s", humanizeRate(tok.IOTokensPerSec))
-	if peak := r.decayedIOPeak(); peak >= 1 {
-		ioFragment += fmt.Sprintf(" (peak %s)", humanizeRate(peak))
-	}
-	ioFragment += fmt.Sprintf(" · cache %.1f%%", tok.CacheHitRatio*100)
-	sb.WriteString(ui.ColorText(r.theme.TokensColor, ioFragment))
+	sb.WriteString(ui.ColorText(r.theme.TokensColor,
+		fmt.Sprintf("io %s/s · cache %.1f%%", humanizeRate(r.decayedIOPeak()), tok.CacheHitRatio*100)))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {
