@@ -3,6 +3,7 @@
 package widgets
 
 import (
+	"math"
 	"strings"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
@@ -75,11 +76,25 @@ func levelSplit(level int) (bottom, top int) {
 	return 4, level - 4
 }
 
-// valueToLevel maps a value to a braille height level (0–8).
-// Values below 2% of peak render as 0 (invisible noise floor).
-// Values between 2–5% render as level 1 (faint dot, visible with dim color).
-func valueToLevel(v, peak float64) int {
-	if v <= 0 || v < peak*0.02 {
+// valueToLevel maps a value to a braille height level (0–8). peak is the
+// height-ratio denominator; when logScale=true, the CALLER must pass
+// math.Log1p(rawPeak) so the per-column loop doesn't redo the invariant
+// transform on every column. Raw v is always used for the noise floor:
+// v<=0 for both modes; v<1 for log (below that log1p approaches 0); and
+// v<peak*0.02 for linear (linear's peak is raw, so the 2% rule works).
+//
+// For TokenCrit=4000 with logScale=true, log1p(1)/log1p(4000) ≈ 8% —
+// the smallest visible burst still registers as a faint dot.
+func valueToLevel(v, peak float64, logScale bool) int {
+	if v <= 0 {
+		return 0
+	}
+	if logScale {
+		if v < 1 {
+			return 0
+		}
+		v = math.Log1p(v)
+	} else if v < peak*0.02 {
 		return 0
 	}
 	level := int((v / peak) * float64(maxLevels))
@@ -239,13 +254,26 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 // When dimmed is true, colors render via the theme's dim LUTs so the sparkline
 // recedes behind an overlay but stays visible as live motion.
 func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
-	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed)
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed, false)
+}
+
+// RenderSparklineLog renders with log1p height scaling — values spanning
+// multiple orders of magnitude stay distinguishable by height rather than
+// all clipping at the top. Color computation remains on raw values so
+// severity thresholds keep their absolute meaning (warn at warn, crit at
+// crit). Useful for signals like token throughput where a typical burst
+// (~500 io/s) and a heavy burst (~5000 io/s) both need to read as
+// "meaningful but distinguishable" rather than both pinning at full height.
+func RenderSparklineLog(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed, true)
 }
 
 // renderSparklineCore is the implementation for sparkline rendering.
 // When mask is nil, all samples are treated as online (no rainbow/offline logic).
 // buf must be non-nil — callers allocate once via NewSparkBufs and reuse.
-func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
+// logScale controls whether per-column heights use a log1p transform;
+// colorVal stays raw so severity thresholds fire at absolute values.
+func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed, logScale bool) SparkPair {
 	if width <= 0 {
 		return SparkPair{}
 	}
@@ -293,6 +321,14 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		peak = 1
 	}
 
+	// Hoist log1p(peak) out of the per-column loop — peak is invariant
+	// within a single render, no point recomputing it for every column.
+	// valueToLevel's contract under logScale=true expects this pre-transform.
+	peakForRatio := peak
+	if logScale {
+		peakForRatio = math.Log1p(peak)
+	}
+
 	var top, bot strings.Builder
 
 	for i := 0; i < len(visibleData); i += 2 {
@@ -334,7 +370,7 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 			if vL < 0 {
 				vL = 0
 			}
-			levL = valueToLevel(vL, peak)
+			levL = valueToLevel(vL, peakForRatio, logScale)
 			colorVal = vL
 		}
 
@@ -342,7 +378,7 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 			if vR < 0 {
 				vR = 0
 			}
-			levR = valueToLevel(vR, peak)
+			levR = valueToLevel(vR, peakForRatio, logScale)
 			if vR > colorVal {
 				colorVal = vR
 			}

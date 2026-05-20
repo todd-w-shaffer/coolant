@@ -269,13 +269,14 @@ func (g *Gauges) View() string {
 	}
 
 	type gauge struct {
-		slot    SparklineSlot
-		data    []float64
-		display float64 // spring-animated value (for numeric readout)
-		max     float64
-		thresh  theme.SparkThresholds
-		dotIdx  int // index into theme.GaugeDots (used for label color)
-		fmtVal  func(float64) string
+		slot     SparklineSlot
+		data     []float64
+		display  float64 // spring-animated value (for numeric readout)
+		max      float64
+		thresh   theme.SparkThresholds
+		dotIdx   int  // index into theme.GaugeDots (used for label color)
+		fmtVal   func(float64) string
+		logScale bool // log1p height transform — see Token/Pretty entries below
 	}
 
 	fmtPct := func(v float64) string { return fmt.Sprintf("%3d%%", int(v)) }
@@ -291,25 +292,28 @@ func (g *Gauges) View() string {
 		}
 	}
 
-	// Token/Pretty use the warn threshold as a fixed max. Autoscale via
-	// g.peaks would rescale small bursts to full height between turns,
-	// making the bar appear to "grow" while idle. Decomp keeps autoscale
-	// because its range spans many orders of magnitude.
+	// Token/Pretty render in log1p height mode anchored at crit (4000): a
+	// typical chat reply ~500 io/s reads as ~75% height, a heavy 2000 io/s
+	// burst as ~92%, and a parallel-multi-agent 8000+ io/s as full height
+	// with red color. Without log, anything ≥ warn (1000) pinned at 100%
+	// and color was the only differentiator above warn. Decomp keeps the
+	// autoscale path because its range spans many orders of magnitude
+	// already and there's no fixed "interesting ceiling" to anchor against.
 	tokThresh := TokenSparkThresh()
 
 	// Fixed-size array (not slice) so this stays on the stack — View runs
 	// every render frame.
 	allGauges := [NumSparklineSlots]gauge{
 		{SlotCPU, g.renderHistory[SlotCPU], g.springs[SlotCPU].pos, 100,
-			CPUSparkThresh(), int(SlotCPU), fmtPct},
+			CPUSparkThresh(), int(SlotCPU), fmtPct, false},
 		{SlotMEM, g.renderHistory[SlotMEM], g.springs[SlotMEM].pos, 100,
-			MemSparkThresh(), int(SlotMEM), fmtPct},
+			MemSparkThresh(), int(SlotMEM), fmtPct, false},
 		{SlotDecomp, g.renderHistory[SlotDecomp], g.springs[SlotDecomp].pos, g.peaks[SlotDecomp],
-			DecompSparkThresh(), int(SlotDecomp), fmtCount},
-		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Warn,
-			tokThresh, int(SlotToken) % len(g.theme.GaugeDots), fmtCount},
-		{SlotPretty, g.renderHistory[SlotPretty], g.springs[SlotPretty].pos, tokThresh.Warn,
-			tokThresh, int(SlotPretty) % len(g.theme.GaugeDots), fmtCount},
+			DecompSparkThresh(), int(SlotDecomp), fmtCount, false},
+		{SlotToken, g.renderHistory[SlotToken], g.springs[SlotToken].pos, tokThresh.Crit,
+			tokThresh, int(SlotToken) % len(g.theme.GaugeDots), fmtCount, true},
+		{SlotPretty, g.renderHistory[SlotPretty], g.springs[SlotPretty].pos, tokThresh.Crit,
+			tokThresh, int(SlotPretty) % len(g.theme.GaugeDots), fmtCount, true},
 	}
 
 	var lines []string
@@ -326,8 +330,14 @@ func (g *Gauges) View() string {
 			g.sparkBufs[ga.slot] = NewSparkBufs(sparkWidth)
 		}
 
-		// Render 2-row sparkline with online/offline mask (buffer-pooled)
-		pair := RenderSparkline(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+int(ga.slot)*2, g.sparkBufs[ga.slot], g.theme, g.dimmed)
+		// Render 2-row sparkline with online/offline mask (buffer-pooled).
+		// Per-slot scale strategy: log1p for Token/Pretty (wide dynamic
+		// range above warn), linear elsewhere.
+		render := RenderSparkline
+		if ga.logScale {
+			render = RenderSparklineLog
+		}
+		pair := render(ga.data, g.renderOnline, sparkWidth, ga.max, &ga.thresh, g.tick+int(ga.slot)*2, g.sparkBufs[ga.slot], g.theme, g.dimmed)
 
 		labelANSI := g.theme.GaugeDots[ga.dotIdx].ANSI
 		if g.dimmed {

@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -75,50 +76,99 @@ func TestSeverityColorZeroWarn(t *testing.T) {
 // ── valueToLevel ──────────────────────────────────────────────
 
 func TestValueToLevelZero(t *testing.T) {
-	if got := valueToLevel(0, 100); got != 0 {
-		t.Errorf("valueToLevel(0, 100) = %d, want 0", got)
+	if got := valueToLevel(0, 100, false); got != 0 {
+		t.Errorf("valueToLevel(0, 100, false) = %d, want 0", got)
 	}
 }
 
 func TestValueToLevelNegative(t *testing.T) {
-	if got := valueToLevel(-5, 100); got != 0 {
-		t.Errorf("valueToLevel(-5, 100) = %d, want 0", got)
+	if got := valueToLevel(-5, 100, false); got != 0 {
+		t.Errorf("valueToLevel(-5, 100, false) = %d, want 0", got)
 	}
 }
 
 func TestValueToLevelNoiseFloor(t *testing.T) {
 	// 1.9% of 100 = 1.9, below 2% threshold → 0
-	if got := valueToLevel(1.9, 100); got != 0 {
-		t.Errorf("valueToLevel(1.9, 100) = %d, want 0 (noise floor)", got)
+	if got := valueToLevel(1.9, 100, false); got != 0 {
+		t.Errorf("valueToLevel(1.9, 100, false) = %d, want 0 (noise floor)", got)
 	}
 }
 
 func TestValueToLevelAboveNoiseFloor(t *testing.T) {
 	// 2.5% of 100 = 2.5, above 2% threshold → at least 1
-	got := valueToLevel(2.5, 100)
+	got := valueToLevel(2.5, 100, false)
 	if got < 1 {
-		t.Errorf("valueToLevel(2.5, 100) = %d, want >= 1", got)
+		t.Errorf("valueToLevel(2.5, 100, false) = %d, want >= 1", got)
 	}
 }
 
 func TestValueToLevelFull(t *testing.T) {
 	// peak == value → maxLevels (8)
-	if got := valueToLevel(100, 100); got != maxLevels {
-		t.Errorf("valueToLevel(100, 100) = %d, want %d", got, maxLevels)
+	if got := valueToLevel(100, 100, false); got != maxLevels {
+		t.Errorf("valueToLevel(100, 100, false) = %d, want %d", got, maxLevels)
 	}
 }
 
 func TestValueToLevelClampAbovePeak(t *testing.T) {
 	// value > peak → still capped at maxLevels
-	if got := valueToLevel(200, 100); got != maxLevels {
-		t.Errorf("valueToLevel(200, 100) = %d, want %d (clamped)", got, maxLevels)
+	if got := valueToLevel(200, 100, false); got != maxLevels {
+		t.Errorf("valueToLevel(200, 100, false) = %d, want %d (clamped)", got, maxLevels)
 	}
 }
 
 func TestValueToLevelProportional(t *testing.T) {
 	// 50% of peak → level 4 (50% of 8)
-	if got := valueToLevel(50, 100); got != 4 {
-		t.Errorf("valueToLevel(50, 100) = %d, want 4", got)
+	if got := valueToLevel(50, 100, false); got != 4 {
+		t.Errorf("valueToLevel(50, 100, false) = %d, want 4", got)
+	}
+}
+
+// TestValueToLevelLogScale pins the log1p height curve at representative
+// inputs against a crit-anchored peak (4000). The whole point of log mode
+// is that bursts spanning orders of magnitude get distinguishable heights
+// instead of all clipping at the top — verify that 1, 100, 1000, 4000,
+// 10000 all map to different (and monotonically increasing) levels.
+//
+// valueToLevel under logScale=true expects the caller to pre-transform
+// peak via math.Log1p (per-render hoist optimization).
+func TestValueToLevelLogScale(t *testing.T) {
+	const rawPeak = 4000.0
+	peak := math.Log1p(rawPeak)
+	cases := []struct {
+		v       float64
+		wantMin int
+		wantMax int
+	}{
+		{0, 0, 0},     // floor: zero is zero
+		{0.5, 0, 0},   // below log floor of 1 → invisible
+		{1, 1, 1},     // log1p(1)/log1p(4000) ≈ 8% → clamped up to 1
+		{10, 2, 3},    // log1p(10)/log1p(4000) ≈ 29% → level 2
+		{100, 4, 5},   // log1p(100)/log1p(4000) ≈ 56% → level 4
+		{1000, 6, 7}, // log1p(1000)/log1p(4000) ≈ 83% → level 6
+		{4000, 8, 8},  // crit: full height
+		{10000, 8, 8}, // above crit: clamped
+	}
+	for _, tc := range cases {
+		got := valueToLevel(tc.v, peak, true)
+		if got < tc.wantMin || got > tc.wantMax {
+			t.Errorf("valueToLevel(%v, log1p(%v), true) = %d, want %d..%d", tc.v, rawPeak, got, tc.wantMin, tc.wantMax)
+		}
+	}
+}
+
+// TestValueToLevelLogMonotonic verifies that log mode preserves ordering:
+// for any v1 < v2 (both above the floor), level(v1) ≤ level(v2). Catches
+// any regression where the transform inverts the curve.
+func TestValueToLevelLogMonotonic(t *testing.T) {
+	peak := math.Log1p(4000.0)
+	values := []float64{1, 5, 25, 100, 500, 1500, 3000, 4000}
+	prev := 0
+	for _, v := range values {
+		got := valueToLevel(v, peak, true)
+		if got < prev {
+			t.Errorf("log scale not monotonic: v=%v → %d but prior value gave %d", v, got, prev)
+		}
+		prev = got
 	}
 }
 
