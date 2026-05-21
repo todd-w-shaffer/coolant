@@ -182,6 +182,113 @@ func TestOTELTokens_SumsAcrossQuerySources(t *testing.T) {
 	}
 }
 
+// Partial-cache-miss guard (Phase 0 of tok-readout-billable-total).
+//
+// CC's OTEL fan-in returns the canonical quadruple cumulatively. Old
+// behavior: if input/output land but cache `type` attributes never
+// arrive (rename, drop, version drift), the adapter silently returned
+// zeros for the cache fields with ok=true. With the new billable-total
+// readout (Input+Output+CacheCreate+CacheRead), that silence becomes a
+// visible 3-4× downward step on source flip. Guard:
+//  - track a sticky bit per cache type (cacheCreation, cacheRead) — set
+//    the first time the type is observed this process
+//  - if non-cache types are present this tick AND a previously-observed
+//    cache type returns nothing this tick → fire schema_drift for the
+//    missing field(s) and return ok=false (transcript stays
+//    authoritative)
+//
+// Cold start with no cache data ever is NOT drift — the sticky bit
+// gates against false positives on early ticks.
+func TestOTELTokens_PartialCacheMiss_FiresDriftAndFallsBack(t *testing.T) {
+	w, findingsPath := newTestWriter(t)
+	a := NewAdapter(AdapterConfig{Findings: w, CCVersion: "1.x.x"})
+	tailer := NewMetricsTailer(filepath.Join(t.TempDir(), "cc-otel.jsonl"))
+	a.SetTailer(tailer)
+
+	day1 := time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC)
+	day2 := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+
+	seedAt := func(ts time.Time, qs, typ string, val float64) {
+		tailer.absorbLine(mustMarshalLine(t, jsonlLine{
+			Schema: 1, TS: ts.Format(time.RFC3339Nano),
+			Metric: "claude_code.token.usage", Value: val,
+			Attrs: map[string]string{"query_source": qs, "type": typ},
+		}))
+	}
+
+	// Day 1: full quadruple emitted — sticky bit gets set for both cache types.
+	seedAt(day1, "main", "input", 100)
+	seedAt(day1, "main", "output", 50)
+	seedAt(day1, "main", "cacheCreation", 200)
+	seedAt(day1, "main", "cacheRead", 800)
+	if _, _, cC, cR, ok := a.OTELTokens(day1); !ok || cC != 200 || cR != 800 {
+		t.Fatalf("day1: want ok=true with cC=200 cR=800, got cC=%d cR=%d ok=%v", cC, cR, ok)
+	}
+
+	// Day 2: only input/output land. Cache types vanish (simulating a
+	// rename / attribute drop on a CC release).
+	seedAt(day2, "main", "input", 60)
+	seedAt(day2, "main", "output", 30)
+
+	in, out, cC, cR, ok := a.OTELTokens(day2)
+	if ok {
+		t.Errorf("partial-cache-miss with sticky bit set must return ok=false (fall back to transcript); got ok=true")
+	}
+	if in != 0 || out != 0 || cC != 0 || cR != 0 {
+		t.Errorf("partial-cache-miss must return zero quadruple (caller falls back); got in=%d out=%d cC=%d cR=%d", in, out, cC, cR)
+	}
+
+	// Adapter records drift per (field, ccVersion). Both fields fire here
+	// because both cache types vanished. Verifying via driftCount avoids
+	// coupling to a Writer-level dedup tuple that currently collapses
+	// same-day schema_drift findings (pre-existing, orthogonal).
+	if got := a.driftCount("cacheCreation", "1.x.x"); got != 1 {
+		t.Errorf("expected adapter drift for cacheCreation, got %d", got)
+	}
+	if got := a.driftCount("cacheRead", "1.x.x"); got != 1 {
+		t.Errorf("expected adapter drift for cacheRead, got %d", got)
+	}
+
+	// At least one schema_drift finding lands on disk (Writer dedup may
+	// collapse the second to the same tuple; that's expected here).
+	contents, err := readBytesFile(findingsPath)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(contents), `"finding_kind":"schema_drift"`) {
+		t.Errorf("expected at least one schema_drift finding on disk, got: %s", string(contents))
+	}
+}
+
+// Cold start — no cache ever observed — must NOT fire drift even when
+// only input/output land. The sticky bit gates this.
+func TestOTELTokens_ColdStartNoCacheData_NoDrift(t *testing.T) {
+	w, findingsPath := newTestWriter(t)
+	a := NewAdapter(AdapterConfig{Findings: w, CCVersion: "1.x.x"})
+	tailer := NewMetricsTailer(filepath.Join(t.TempDir(), "cc-otel.jsonl"))
+	a.SetTailer(tailer)
+
+	now := time.Now().UTC()
+	tailer.absorbLine(mustMarshalLine(t, jsonlLine{
+		Schema: 1, TS: now.Format(time.RFC3339Nano),
+		Metric: "claude_code.token.usage", Value: 100,
+		Attrs: map[string]string{"query_source": "main", "type": "input"},
+	}))
+
+	if _, _, _, _, ok := a.OTELTokens(now); !ok {
+		t.Errorf("cold start with input but no cache data should return ok=true (no drift); got ok=false")
+	}
+
+	contents, err := readBytesFile(findingsPath)
+	if err != nil {
+		// File may not exist if nothing was written — that's fine, treat as empty.
+		contents = nil
+	}
+	if strings.Contains(string(contents), `"finding_kind":"schema_drift"`) {
+		t.Errorf("cold start must NOT fire drift (sticky bit unset): %s", string(contents))
+	}
+}
+
 func TestOTELTokens_NilTailerReturnsNotOK(t *testing.T) {
 	a := NewAdapter(AdapterConfig{})
 	in, out, cC, cR, ok := a.OTELTokens(time.Now())

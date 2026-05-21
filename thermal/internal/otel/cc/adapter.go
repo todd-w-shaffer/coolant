@@ -70,6 +70,14 @@ type Adapter struct {
 	observedResourceKey map[string]bool
 	driftFired          map[string]bool // key: field_name|cc_version
 
+	// Sticky bits — set the first time each cache token type is
+	// observed by OTELTokens. Once set, the partial-cache-miss guard
+	// fires schema_drift if the type stops landing while non-cache
+	// types keep arriving. Per-type so a rename of one doesn't mask
+	// the other.
+	observedCacheCreation bool
+	observedCacheRead     bool
+
 	// Live-throughput fan-in surface. Wired post-construction via
 	// SetTailer / SetLastReceiverPostTS — nil means "OTEL token view
 	// not configured", and OTELTokens / IsOTELLive degrade to zero.
@@ -267,6 +275,15 @@ var otelTokenQuerySources = []string{"main", "subagent", "auxiliary"}
 // CamelCase ("cacheRead" / "cacheCreation"); the returned int64s are
 // the canonical quadruple the collector consumes regardless of source.
 // ok=true when at least one (type, query_source) bucket has data.
+//
+// Partial-cache-miss guard: if non-cache types are present this tick
+// AND a previously-observed cache type returns nothing, the adapter
+// fires schema_drift for the missing field(s) and returns ok=false so
+// TokenCollector falls back to the transcript baseline. Without this,
+// a CC release that renamed or dropped the `cacheRead` / `cacheCreation`
+// attributes would silently zero the cache fields — invisible under
+// the old Input+Output readout, but a visible 3-4× downward step on
+// the new billable-total readout.
 func (a *Adapter) OTELTokens(now time.Time) (input, output, cacheCreate, cacheRead int64, ok bool) {
 	a.mu.RLock()
 	tailer := a.tailer
@@ -275,8 +292,9 @@ func (a *Adapter) OTELTokens(now time.Time) (input, output, cacheCreate, cacheRe
 		return 0, 0, 0, 0, false
 	}
 	dayKey := now.UTC().Format("2006-01-02")
-	sum := func(typeVal string) int64 {
+	sumWithFound := func(typeVal string) (int64, bool) {
 		var total float64
+		typeFound := false
 		for _, qs := range otelTokenQuerySources {
 			v, _, found := tailer.LatestCumulative(
 				"claude_code.token.usage",
@@ -285,15 +303,51 @@ func (a *Adapter) OTELTokens(now time.Time) (input, output, cacheCreate, cacheRe
 			)
 			if found {
 				total += v
+				typeFound = true
 				ok = true
 			}
 		}
-		return int64(total)
+		return int64(total), typeFound
 	}
-	input = sum("input")
-	output = sum("output")
-	cacheCreate = sum("cacheCreation")
-	cacheRead = sum("cacheRead")
+	var inputFound, outputFound, cacheCreateFound, cacheReadFound bool
+	input, inputFound = sumWithFound("input")
+	output, outputFound = sumWithFound("output")
+	cacheCreate, cacheCreateFound = sumWithFound("cacheCreation")
+	cacheRead, cacheReadFound = sumWithFound("cacheRead")
+
+	// Snapshot sticky bits under RLock — steady state (both already set)
+	// stays on the read-lock path. Only newly-observed types upgrade to a
+	// write lock. The read-then-write window is intentionally non-atomic:
+	// two concurrent ticks may both observe was=false and both flip to
+	// true, which converges fine; the worst case is one extra drift fire
+	// on a once-per-process race, which ObserveSchemaDrift dedupes anyway.
+	a.mu.RLock()
+	wasObservedCacheCreate := a.observedCacheCreation
+	wasObservedCacheRead := a.observedCacheRead
+	a.mu.RUnlock()
+	if (cacheCreateFound && !wasObservedCacheCreate) || (cacheReadFound && !wasObservedCacheRead) {
+		a.mu.Lock()
+		if cacheCreateFound {
+			a.observedCacheCreation = true
+		}
+		if cacheReadFound {
+			a.observedCacheRead = true
+		}
+		a.mu.Unlock()
+	}
+
+	nonCachePresent := inputFound || outputFound
+	missingCacheCreate := wasObservedCacheCreate && !cacheCreateFound
+	missingCacheRead := wasObservedCacheRead && !cacheReadFound
+	if nonCachePresent && (missingCacheCreate || missingCacheRead) {
+		if missingCacheCreate {
+			a.ObserveTokenSchemaDrift("cacheCreation", "")
+		}
+		if missingCacheRead {
+			a.ObserveTokenSchemaDrift("cacheRead", "")
+		}
+		return 0, 0, 0, 0, false
+	}
 	return
 }
 
