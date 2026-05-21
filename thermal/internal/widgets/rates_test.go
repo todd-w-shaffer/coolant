@@ -187,19 +187,23 @@ func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 }
 
 // TestTokReadoutShowsCumulative pins the render rule: the token value
-// in the rates line is cumulative InputTotal + OutputTotal since launch,
-// formatted via format.FormatCount.
+// in the rates line is the billable cumulative — sum of Input + Output +
+// CacheCreate + CacheRead since launch, formatted via format.FormatCount.
+// This matches Claude Code's per-agent "X tokens" reports (cache reads
+// are billable input, not free).
 func TestTokReadoutShowsCumulative(t *testing.T) {
 	state := fixtureState()
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 600
-	state.Current.Tokens.OutputTotal = 400
+	state.Current.Tokens.InputTotal = 200
+	state.Current.Tokens.OutputTotal = 100
+	state.Current.Tokens.CacheCreateTotal = 300
+	state.Current.Tokens.CacheReadTotal = 400
 	r.Update(state)
 	got := r.View()
 	if !strings.Contains(got, "tok 1.0K") {
-		t.Errorf("View should contain 'tok 1.0K'; got:\n%s", got)
+		t.Errorf("View should contain 'tok 1.0K' (200+100+300+400); got:\n%s", got)
 	}
 	if strings.Contains(got, "tok 1.0K/s") {
 		t.Errorf("readout must not carry /s suffix (cumulative, not rate); got:\n%s", got)
@@ -214,21 +218,25 @@ func TestTokReadoutMonotonic(t *testing.T) {
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 500
-	state.Current.Tokens.OutputTotal = 500
+	state.Current.Tokens.InputTotal = 200
+	state.Current.Tokens.OutputTotal = 100
+	state.Current.Tokens.CacheCreateTotal = 300
+	state.Current.Tokens.CacheReadTotal = 400
 	r.Update(state)
 	first := r.View()
 
-	state.Current.Tokens.InputTotal = 1200
-	state.Current.Tokens.OutputTotal = 800
+	state.Current.Tokens.InputTotal = 400
+	state.Current.Tokens.OutputTotal = 200
+	state.Current.Tokens.CacheCreateTotal = 600
+	state.Current.Tokens.CacheReadTotal = 800
 	r.Update(state)
 	second := r.View()
 
 	if !strings.Contains(first, "tok 1.0K") {
-		t.Errorf("first snapshot: expected 'tok 1.0K'; got:\n%s", first)
+		t.Errorf("first snapshot: expected 'tok 1.0K' (1000 sum); got:\n%s", first)
 	}
 	if !strings.Contains(second, "tok 2.0K") {
-		t.Errorf("second snapshot: expected 'tok 2.0K'; got:\n%s", second)
+		t.Errorf("second snapshot: expected 'tok 2.0K' (2000 sum); got:\n%s", second)
 	}
 }
 
@@ -236,14 +244,17 @@ func TestTokReadoutMonotonic(t *testing.T) {
 // by having the collector's totals jump (as they would when OTEL takes
 // over the cumulative baseline). The widget only consumes the final
 // TokenStats, so this is a black-box assertion that no widget-side
-// bookkeeping snapshots a baseline that could go backward.
+// bookkeeping snapshots a baseline that could go backward — across all
+// four token fields, not just input/output.
 func TestTokReadoutAcrossOTELFlip(t *testing.T) {
 	state := fixtureState()
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 800
-	state.Current.Tokens.OutputTotal = 200
+	state.Current.Tokens.InputTotal = 200
+	state.Current.Tokens.OutputTotal = 100
+	state.Current.Tokens.CacheCreateTotal = 300
+	state.Current.Tokens.CacheReadTotal = 400
 	r.Update(state)
 	if got := r.View(); !strings.Contains(got, "tok 1.0K") {
 		t.Errorf("pre-flip: expected 'tok 1.0K'; got:\n%s", got)
@@ -252,11 +263,39 @@ func TestTokReadoutAcrossOTELFlip(t *testing.T) {
 	// OTEL takes over — totals replace transcript baseline. Cumulative
 	// stays non-decreasing because OTEL has already been ticking in
 	// the background; the collector merges them as the new authority.
-	state.Current.Tokens.InputTotal = 3000
-	state.Current.Tokens.OutputTotal = 2000
+	state.Current.Tokens.InputTotal = 1000
+	state.Current.Tokens.OutputTotal = 500
+	state.Current.Tokens.CacheCreateTotal = 1500
+	state.Current.Tokens.CacheReadTotal = 2000
 	r.Update(state)
 	if got := r.View(); !strings.Contains(got, "tok 5.0K") {
 		t.Errorf("post-flip: expected 'tok 5.0K'; got:\n%s", got)
+	}
+}
+
+// TestTokReadoutCacheHeavyWorkload locks in the new billable-total
+// semantic against future regression. On a cache-heavy workload
+// (CacheReadTotal ≫ Input+Output, which is the common case for agent
+// research bursts — ~70-90% of billable input lands as cache_read),
+// the readout must reflect the full billable total, not just the
+// fresh-model-traffic slice. Reverting to Input+Output would show 8K
+// here instead of 100K — caught by this test.
+func TestTokReadoutCacheHeavyWorkload(t *testing.T) {
+	state := fixtureState()
+	r := NewRates(testTheme, keys.Default())
+	r.SetSize(126, 1)
+
+	state.Current.Tokens.InputTotal = 5000
+	state.Current.Tokens.OutputTotal = 3000
+	state.Current.Tokens.CacheCreateTotal = 2000
+	state.Current.Tokens.CacheReadTotal = 90000
+	r.Update(state)
+	got := r.View()
+	if !strings.Contains(got, "tok 100K") {
+		t.Errorf("cache-heavy workload: expected 'tok 100K' (full billable total); got:\n%s", got)
+	}
+	if strings.Contains(got, "tok 8.0K") {
+		t.Errorf("readout regressed to Input+Output only (excludes cache); got:\n%s", got)
 	}
 }
 

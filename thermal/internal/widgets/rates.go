@@ -134,13 +134,20 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// Cumulative input+output tokens since thermo launched. Stays
-	// monotonic across the transcript↔OTEL source flip — collector
-	// merges OTEL totals onto out.{Input,Output}Total without zeroing.
+	// Cumulative billable tokens since thermo launched — sum of all four
+	// usage fields (Input + Output + CacheCreate + CacheRead). Matches
+	// what Claude Code reports as "X tokens" for an agent: cache reads
+	// are billable input (at 0.1× the base rate, not free) and cache
+	// creates are billable input (at 1.25–2× the base rate); summing
+	// them at equal weight is the right *token* total, with `cache X%`
+	// next to it disclosing the read mix. The TKNS sparkline next door
+	// stays as a rate excluding cache (fresh model traffic, drops to 0
+	// between bursts) — rate vs cumulative are different signals.
 	tok := snap.Tokens
+	totalBillable := tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal + tok.CacheReadTotal
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.TokensColor,
-		fmt.Sprintf("tok %s · cache %.1f%%", format.FormatCount(tok.InputTotal+tok.OutputTotal), tok.CacheHitRatio*100)))
+		fmt.Sprintf("tok %s · cache %.1f%%", format.FormatCount(totalBillable), tok.CacheHitRatio*100)))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {
