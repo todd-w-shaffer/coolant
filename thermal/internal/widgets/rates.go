@@ -134,20 +134,31 @@ func (r *Rates) View() string {
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
 
-	// Cumulative billable tokens since thermo launched — sum of all four
-	// usage fields (Input + Output + CacheCreate + CacheRead). Matches
-	// what Claude Code reports as "X tokens" for an agent: cache reads
-	// are billable input (at 0.1× the base rate, not free) and cache
-	// creates are billable input (at 1.25–2× the base rate); summing
-	// them at equal weight is the right *token* total, with `cache X%`
-	// next to it disclosing the read mix. The TKNS sparkline next door
-	// stays as a rate excluding cache (fresh model traffic, drops to 0
-	// between bursts) — rate vs cumulative are different signals.
+	// Two cumulative token readouts since thermo launched:
+	//
+	//   tok N   — Input + Output + CacheCreate. The "unique work" view:
+	//             tokens written or generated for the first time. Doesn't
+	//             multiply by turn count — CacheCreate is one-time per
+	//             prefix, Input is the fresh input slice not satisfied by
+	//             cache, Output is model generation.
+	//
+	//   bill N  — adds CacheReadTotal. The all-in billable since launch.
+	//             Cache reads are billed (at 0.1× the base rate, not
+	//             free), so this is the number that drives the API bill;
+	//             on a long cache-heavy session it can run 10-100× tok
+	//             because every turn re-reads the cached prefix and pays
+	//             again.
+	//
+	// Showing both lets `bill ≫ tok` itself disclose the cache mix —
+	// hence no separate `cache X%` readout. The TKNS sparkline next door
+	// stays as a rate of Input+Output only (fresh model traffic; drops
+	// to 0 between bursts).
 	tok := snap.Tokens
-	totalBillable := tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal + tok.CacheReadTotal
+	tokWork := tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal
+	tokBill := tokWork + tok.CacheReadTotal
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.TokensColor,
-		fmt.Sprintf("tok %s · cache %.1f%%", format.FormatCount(totalBillable), tok.CacheHitRatio*100)))
+		fmt.Sprintf("tok %s · bill %s", format.FormatCount(tokWork), format.FormatCount(tokBill))))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {

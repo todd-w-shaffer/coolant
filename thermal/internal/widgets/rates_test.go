@@ -186,12 +186,13 @@ func TestSessionPhaseAllRuntimesReturnYellow(t *testing.T) {
 	}
 }
 
-// TestTokReadoutShowsCumulative pins the render rule: the token value
-// in the rates line is the billable cumulative — sum of Input + Output +
-// CacheCreate + CacheRead since launch, formatted via format.FormatCount.
-// This matches Claude Code's per-agent "X tokens" reports (cache reads
-// are billable input, not free).
-func TestTokReadoutShowsCumulative(t *testing.T) {
+// TestTokReadoutShowsSplit pins the render rule: rates line carries two
+// cumulative readouts since launch — `tok N` is unique work
+// (Input+Output+CacheCreate, doesn't multiply by turn count) and
+// `bill N` is the all-in billable (adds CacheReadTotal). The
+// previous `cache X%` readout is gone — `bill ≫ tok` discloses the
+// cache mix on its own.
+func TestTokReadoutShowsSplit(t *testing.T) {
 	state := fixtureState()
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
@@ -202,17 +203,23 @@ func TestTokReadoutShowsCumulative(t *testing.T) {
 	state.Current.Tokens.CacheReadTotal = 400
 	r.Update(state)
 	got := r.View()
-	if !strings.Contains(got, "tok 1.0K") {
-		t.Errorf("View should contain 'tok 1.0K' (200+100+300+400); got:\n%s", got)
+	if !strings.Contains(got, "tok 600") {
+		t.Errorf("View should contain 'tok 600' (200+100+300); got:\n%s", got)
 	}
-	if strings.Contains(got, "tok 1.0K/s") {
-		t.Errorf("readout must not carry /s suffix (cumulative, not rate); got:\n%s", got)
+	if !strings.Contains(got, "bill 1.0K") {
+		t.Errorf("View should contain 'bill 1.0K' (200+100+300+400); got:\n%s", got)
+	}
+	if strings.Contains(got, "cache ") {
+		t.Errorf("cache %% readout should be gone (bill≫tok discloses mix); got:\n%s", got)
+	}
+	if strings.Contains(got, "tok 600/s") || strings.Contains(got, "bill 1.0K/s") {
+		t.Errorf("token readouts must not carry /s suffix (cumulative, not rate); got:\n%s", got)
 	}
 }
 
-// TestTokReadoutMonotonic verifies the cumulative readout never steps
-// backward across snapshots — the old decay-peak rule would have
-// emitted a fading number when the burst ended; cumulative climbs.
+// TestTokReadoutMonotonic verifies both readouts never step backward
+// across snapshots — the old decay-peak rule would have emitted a
+// fading number when the burst ended; cumulative climbs.
 func TestTokReadoutMonotonic(t *testing.T) {
 	state := fixtureState()
 	r := NewRates(testTheme, keys.Default())
@@ -232,11 +239,11 @@ func TestTokReadoutMonotonic(t *testing.T) {
 	r.Update(state)
 	second := r.View()
 
-	if !strings.Contains(first, "tok 1.0K") {
-		t.Errorf("first snapshot: expected 'tok 1.0K' (1000 sum); got:\n%s", first)
+	if !strings.Contains(first, "tok 600") || !strings.Contains(first, "bill 1.0K") {
+		t.Errorf("first snapshot: expected 'tok 600' and 'bill 1.0K'; got:\n%s", first)
 	}
-	if !strings.Contains(second, "tok 2.0K") {
-		t.Errorf("second snapshot: expected 'tok 2.0K' (2000 sum); got:\n%s", second)
+	if !strings.Contains(second, "tok 1.2K") || !strings.Contains(second, "bill 2.0K") {
+		t.Errorf("second snapshot: expected 'tok 1.2K' and 'bill 2.0K'; got:\n%s", second)
 	}
 }
 
@@ -256,8 +263,8 @@ func TestTokReadoutAcrossOTELFlip(t *testing.T) {
 	state.Current.Tokens.CacheCreateTotal = 300
 	state.Current.Tokens.CacheReadTotal = 400
 	r.Update(state)
-	if got := r.View(); !strings.Contains(got, "tok 1.0K") {
-		t.Errorf("pre-flip: expected 'tok 1.0K'; got:\n%s", got)
+	if got := r.View(); !strings.Contains(got, "tok 600") || !strings.Contains(got, "bill 1.0K") {
+		t.Errorf("pre-flip: expected 'tok 600' and 'bill 1.0K'; got:\n%s", got)
 	}
 
 	// OTEL takes over — totals replace transcript baseline. Cumulative
@@ -268,18 +275,19 @@ func TestTokReadoutAcrossOTELFlip(t *testing.T) {
 	state.Current.Tokens.CacheCreateTotal = 1500
 	state.Current.Tokens.CacheReadTotal = 2000
 	r.Update(state)
-	if got := r.View(); !strings.Contains(got, "tok 5.0K") {
-		t.Errorf("post-flip: expected 'tok 5.0K'; got:\n%s", got)
+	if got := r.View(); !strings.Contains(got, "tok 3.0K") || !strings.Contains(got, "bill 5.0K") {
+		t.Errorf("post-flip: expected 'tok 3.0K' and 'bill 5.0K'; got:\n%s", got)
 	}
 }
 
-// TestTokReadoutCacheHeavyWorkload locks in the new billable-total
-// semantic against future regression. On a cache-heavy workload
-// (CacheReadTotal ≫ Input+Output, which is the common case for agent
-// research bursts — ~70-90% of billable input lands as cache_read),
-// the readout must reflect the full billable total, not just the
-// fresh-model-traffic slice. Reverting to Input+Output would show 8K
-// here instead of 100K — caught by this test.
+// TestTokReadoutCacheHeavyWorkload locks in the split semantic against
+// future regression. On a cache-heavy workload (CacheReadTotal ≫
+// Input+Output+CacheCreate, the common shape for long sessions where
+// every turn re-reads a large cached prefix), `tok` reports the
+// unique-work slice and `bill` reports the all-in billable. Conflating
+// the two — folding CacheRead into `tok` — would inflate the
+// glance-readout by 10-100× on cache-heavy sessions and erase the
+// split's whole point.
 func TestTokReadoutCacheHeavyWorkload(t *testing.T) {
 	state := fixtureState()
 	r := NewRates(testTheme, keys.Default())
@@ -291,11 +299,14 @@ func TestTokReadoutCacheHeavyWorkload(t *testing.T) {
 	state.Current.Tokens.CacheReadTotal = 90000
 	r.Update(state)
 	got := r.View()
-	if !strings.Contains(got, "tok 100K") {
-		t.Errorf("cache-heavy workload: expected 'tok 100K' (full billable total); got:\n%s", got)
+	if !strings.Contains(got, "tok 10K") {
+		t.Errorf("cache-heavy workload: expected 'tok 10K' (5+3+2 unique work, no cache_read); got:\n%s", got)
 	}
-	if strings.Contains(got, "tok 8.0K") {
-		t.Errorf("readout regressed to Input+Output only (excludes cache); got:\n%s", got)
+	if !strings.Contains(got, "bill 100K") {
+		t.Errorf("cache-heavy workload: expected 'bill 100K' (full billable including cache_read); got:\n%s", got)
+	}
+	if strings.Contains(got, "tok 100K") {
+		t.Errorf("CacheRead leaked into tok (split collapsed); got:\n%s", got)
 	}
 }
 
