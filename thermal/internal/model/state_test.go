@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -374,53 +375,6 @@ func TestAgentStopCompletesRecord(t *testing.T) {
 	}
 	if s.CompletedAgentCount() != 1 {
 		t.Errorf("CompletedAgentCount = %d, want 1", s.CompletedAgentCount())
-	}
-}
-
-func TestPurgeStaleAgentsPushesRecords(t *testing.T) {
-	s := NewAppState()
-
-	// Two stale, one fresh
-	s.HandleEvent(collector.GateEvent{
-		Timestamp: time.Now().Add(-10 * time.Minute),
-		Event:     collector.EventAgentStart,
-		AgentID:   "stale-001", AgentType: "researcher",
-	})
-	s.HandleEvent(collector.GateEvent{
-		Timestamp: time.Now().Add(-10 * time.Minute),
-		Event:     collector.EventAgentStart,
-		AgentID:   "stale-002", AgentType: "reviewer",
-	})
-	s.HandleEvent(collector.GateEvent{
-		Timestamp: time.Now(),
-		Event:     collector.EventAgentStart,
-		AgentID:   "fresh-001", AgentType: "coder",
-	})
-
-	s.PurgeStaleAgents()
-
-	// Purged records should appear in completed with Purged: true
-	completed := s.CompletedRecords()
-	if len(completed) != 2 {
-		t.Fatalf("CompletedRecords len = %d, want 2 after purge", len(completed))
-	}
-	for _, rec := range completed {
-		if !rec.Purged {
-			t.Errorf("record %q should have Purged=true", rec.AgentID)
-		}
-		if rec.StopTime.IsZero() {
-			t.Errorf("record %q should have StopTime set to purge cutoff", rec.AgentID)
-		}
-	}
-
-	// Purge should NOT increment totalCompleted (avoids phantom KITT dots)
-	if s.CompletedAgentCount() != 0 {
-		t.Errorf("CompletedAgentCount = %d, want 0 (purge doesn't count)", s.CompletedAgentCount())
-	}
-
-	// Fresh agent still active
-	if s.AgentCount() != 1 {
-		t.Errorf("AgentCount = %d, want 1", s.AgentCount())
 	}
 }
 
@@ -967,43 +921,62 @@ func TestAgentStopClearsStaleAgent(t *testing.T) {
 	}
 }
 
-func TestPurgeStaleAgents(t *testing.T) {
+func TestClearCompletedRecords(t *testing.T) {
 	s := NewAppState()
+	now := time.Now()
 
-	// Two stale, one fresh
-	s.HandleEvent(collector.GateEvent{
-		Timestamp: time.Now().Add(-10 * time.Minute),
-		Event:     collector.EventAgentStart,
-		AgentID:   "stale-001",
-		AgentType: "researcher",
-	})
-	s.HandleEvent(collector.GateEvent{
-		Timestamp: time.Now().Add(-10 * time.Minute),
-		Event:     collector.EventAgentStart,
-		AgentID:   "stale-002",
-		AgentType: "reviewer",
-	})
-	s.HandleEvent(collector.GateEvent{
-		Timestamp: time.Now(),
-		Event:     collector.EventAgentStart,
-		AgentID:   "fresh-001",
-		AgentType: "coder",
-	})
-
-	if s.StaleAgentCount() != 2 {
-		t.Fatalf("StaleAgentCount = %d, want 2", s.StaleAgentCount())
+	// Push a few normal completions into the ring.
+	for i := 0; i < 3; i++ {
+		id := fmt.Sprintf("done-%03d", i)
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: now.Add(-30 * time.Second),
+			Event:     collector.EventAgentStart,
+			AgentID:   id, AgentType: "researcher",
+		})
+		s.HandleEvent(collector.GateEvent{
+			Timestamp: now,
+			Event:     collector.EventAgentStop,
+			AgentID:   id, AgentType: "researcher",
+		})
 	}
+	// Push one orphan so orphanStops is non-zero.
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: now,
+		Event:     collector.EventAgentStop,
+		AgentID:   "orphan-001", AgentType: "researcher",
+	})
+	// Active agent that must NOT be touched.
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: now,
+		Event:     collector.EventAgentStart,
+		AgentID:   "live", AgentType: "coder",
+	})
 
-	s.PurgeStaleAgents()
+	if s.CompletedAgentCount() == 0 {
+		t.Fatalf("setup: CompletedAgentCount = 0, want non-zero pre-clear")
+	}
+	if s.OrphanStopCount() != 1 {
+		t.Fatalf("setup: OrphanStopCount = %d, want 1 pre-clear", s.OrphanStopCount())
+	}
+	prePeak := s.PeakConcurrency()
 
+	s.ClearCompletedRecords()
+
+	if got := s.CompletedRecords(); len(got) != 0 {
+		t.Errorf("CompletedRecords len = %d, want 0 after clear", len(got))
+	}
+	if got := s.CompletedAgentCount(); got != 0 {
+		t.Errorf("CompletedAgentCount = %d, want 0 after clear", got)
+	}
+	if got := s.OrphanStopCount(); got != 0 {
+		t.Errorf("OrphanStopCount = %d, want 0 after clear", got)
+	}
+	// Active records and peak concurrency are session-live data, not scoreboard.
 	if s.AgentCount() != 1 {
-		t.Errorf("AgentCount after purge = %d, want 1", s.AgentCount())
+		t.Errorf("AgentCount = %d, want 1 (live agent untouched)", s.AgentCount())
 	}
-	if s.StaleAgentCount() != 0 {
-		t.Errorf("StaleAgentCount after purge = %d, want 0", s.StaleAgentCount())
-	}
-	if s.FreshAgentCount() != 1 {
-		t.Errorf("FreshAgentCount after purge = %d, want 1", s.FreshAgentCount())
+	if s.PeakConcurrency() != prePeak {
+		t.Errorf("PeakConcurrency = %d, want %d (untouched)", s.PeakConcurrency(), prePeak)
 	}
 }
 

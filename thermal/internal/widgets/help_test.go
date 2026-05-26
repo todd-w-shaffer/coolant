@@ -27,7 +27,7 @@ func newHelpAtWidth(t *testing.T, th *theme.Theme, w int) *HelpRenderer {
 func TestHelpShortContainsAllLabels(t *testing.T) {
 	th := mustTheme(t, "classic")
 	out := newHelpAtWidth(t, th, 200).Short(keys.Default())
-	for _, want := range []string{"help", "quit", "collapse sessions", "purge stale agents"} {
+	for _, want := range []string{"help", "quit", "collapse sessions", "clear completed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Short output missing %q\nfull output: %q", want, out)
 		}

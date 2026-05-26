@@ -494,12 +494,15 @@ func TestFocusedIntelNilGuardFallsBack(t *testing.T) {
 func TestFocusedIntelPurgedRecord(t *testing.T) {
 	h := newHorizontalForTest(t)
 	state := h.State()
-	// Start agent far enough in the past to exceed AgentStaleThreshold (3m).
-	t0 := time.Now().Add(-5 * time.Minute)
+	// Start an agent, then fire counter.reset — the active record gets
+	// flushed into completed with Purged: true.
+	t0 := time.Now()
 	state.HandleEvent(collector.GateEvent{
 		Event: collector.EventAgentStart, AgentID: "purge1", AgentType: "general-purpose", Timestamp: t0,
 	})
-	state.PurgeStaleAgents()
+	state.HandleEvent(collector.GateEvent{
+		Event: collector.EventCounterReset, Timestamp: t0,
+	})
 
 	h.FocusAgent("purge1")
 	lines := h.intelView()

@@ -275,7 +275,7 @@ func (h *Horizontal) helpView() []string {
 			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
 			dim("click a headline category to filter"),
 		" " + ct(d, "i session intel") + "  " +
-			dim("|") + " " + ct(d, "x purge stale") + "  " + ct(d, "c collapse"),
+			dim("|") + " " + ct(d, "x clear completed") + "  " + ct(d, "c collapse"),
 		" " + dim("press any key to dismiss"),
 	}
 }

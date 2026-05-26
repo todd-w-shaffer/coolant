@@ -242,8 +242,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.layout.ToggleHelp()
 		case key.Matches(msg, m.keys.Collapse):
 			m.layout.ToggleCollapse()
-		case key.Matches(msg, m.keys.PurgeStale):
-			m.layout.State().PurgeStaleAgents()
+		case key.Matches(msg, m.keys.ClearCompleted):
+			m.layout.State().ClearCompletedRecords()
 		case key.Matches(msg, m.keys.CategoryNext):
 			m.layout.State().CycleCategoryFilter(+1)
 		case key.Matches(msg, m.keys.CategoryPrev):

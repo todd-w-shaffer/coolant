@@ -34,7 +34,7 @@ type AgentRecord struct {
 	// Enrichments (Phase 2, zero-valued until populated)
 	TranscriptBytes int64 // Phase 2c: from os.Stat on stop
 	Orphan          bool  // Phase 2a: stop arrived with no matching start
-	Purged          bool  // set when PurgeStaleAgents evicts (never got a stop event)
+	Purged          bool  // set when counter.reset evicts an active agent (never got a stop event)
 }
 
 // AlertEntry is a single alert with timestamp and severity.
@@ -378,7 +378,8 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 		s.gateEvents.Push(ev)
 	case collector.EventCounterReset:
 		// New session — move all active records to completed as purged.
-		// Does NOT increment totalCompleted (same rationale as PurgeStaleAgents).
+		// Does NOT increment totalCompleted: purged records reflect an
+		// interrupted lifecycle (no clean stop event), not earned completions.
 		for id, rec := range s.activeRecords {
 			rec.Purged = true
 			rec.StopTime = ev.Timestamp
@@ -517,19 +518,15 @@ func (s *AppState) LookupAgent(id string) *AgentRecord {
 	return nil
 }
 
-// PurgeStaleAgents removes agents that have exceeded the staleness threshold.
-// Purged records are pushed to completedRecords with Purged: true but do NOT
-// increment totalCompleted — purge is cleanup, not confirmed completion.
-func (s *AppState) PurgeStaleAgents() {
-	cutoff := time.Now().Add(-config.AgentStaleThreshold)
-	for id, rec := range s.activeRecords {
-		if !rec.StartTime.After(cutoff) {
-			rec.Purged = true
-			rec.StopTime = cutoff
-			s.completedRecords.Push(*rec)
-			delete(s.activeRecords, id)
-		}
-	}
+// ClearCompletedRecords resets the agent scoreboard: empties the completed
+// ring buffer and zeroes the totalCompleted + orphanStops counters that feed
+// the KITT highscore display. Active records and session metadata
+// (peakConcurrency, sessionEarliestStart, burstCounter) are intentionally
+// untouched — those track live work, not scoreboard history.
+func (s *AppState) ClearCompletedRecords() {
+	s.completedRecords.Clear()
+	s.totalCompleted = 0
+	s.orphanStops = 0
 }
 
 // SetCategoryFilter sets the active category filter. Empty string clears.
