@@ -30,6 +30,10 @@ User-facing labels were relabeled (commit 9c751e3); JSONL event names and Go con
 
 The intel overlay uses "throttled"/"blocked" in the tools row. `docs/gate-system-report.md` still uses old "capped"/"suppressed" terminology — historical doc, left as-is.
 
+## Linting
+
+Run `shellcheck <file>` on any bash script you edit or create before reporting the task complete — `.sh`, `.bash`, `.bats`, and the extensionless hooks under `.githooks/` and `.claude/hooks/`. shellcheck catches quoting, globbing, and variable-scope bugs that grep+Edit misses; the highest-stakes bash (commit classifier, audit-review gates) lives extensionless so it won't be caught by any LSP — manual lint is the only safety net.
+
 ## Testing
 
 ```bash

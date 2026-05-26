@@ -51,24 +51,6 @@ build_thermo_bar() {
   printf '%b' "$bar"
 }
 
-# ── update check ─────────────────────────────────────
-COOLANT_INSTALLED_VERSION="0.24.0"
-_coolant_cache="${TMPDIR:-/tmp/}coolant-${USER}.latest-version"
-_coolant_ttl=${COOLANT_UPDATE_TTL:-1440}
-_coolant_upgrade_glyph=""
-
-if ! [ -f "$_coolant_cache" ] || \
-   [ -z "$(find "$_coolant_cache" -mmin -"$_coolant_ttl" 2>/dev/null)" ]; then
-  (curl -fsSL --max-time 3 \
-    "https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/VERSION" \
-    > "$_coolant_cache" 2>/dev/null &)
-fi
-_coolant_latest=$(cat "$_coolant_cache" 2>/dev/null)
-
-if [ -n "$_coolant_latest" ] && [ "$_coolant_latest" != "$COOLANT_INSTALLED_VERSION" ]; then
-  _coolant_upgrade_glyph=" \033[2;33m⬆\033[0m"
-fi
-
 input=$(cat)
 
 ctx_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0')
@@ -123,6 +105,6 @@ rst='\033[0m'
 cols=$(tput cols 2>/dev/null || echo 80)
 sep=$(printf '─%.0s' $(seq 1 "$cols"))
 
-printf 'context %s%b  sesh %s%b  week %s%b  %b%b↓%b %s │ %b↑%b %s │ ⟳  %s │  %s%b%b\n\033[2m%s\033[0m' \
+printf 'context %s%b  sesh %s%b  week %s%b  %b%b↓%b %s │ %b↑%b %s │ ⟳  %s │  %s%b\n\033[2m%s\033[0m' \
   "$ctx_bar" "$cap" "$sesh_bar" "$cap" "$week_bar" "$cap" \
-  "$dim" "$grn_bold" "$rst$dim" "$in_fmt" "$red_bold" "$rst$dim" "$out_fmt" "$countdown" " $branch" "$rst" "$_coolant_upgrade_glyph" "$sep"
+  "$dim" "$grn_bold" "$rst$dim" "$in_fmt" "$red_bold" "$rst$dim" "$out_fmt" "$countdown" " $branch" "$rst" "$sep"
