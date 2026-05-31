@@ -133,7 +133,7 @@ func bgPad(bg color.Color, n int) string {
 // painting each cell with the HeatBloom's BgAt contribution (falling
 // back to iconBg past the bloom's right-boundary or where alpha is zero).
 // Emits truecolor bg escapes directly and coalesces equal-color runs so
-// the 30fps left-zone repaint doesn't allocate a lipgloss.Style per cell.
+// the per-frame left-zone repaint doesn't allocate a lipgloss.Style per cell.
 func (h *Headline) bloomedBgPad(iconBg color.Color, startCol, n, row int) string {
 	if n <= 0 {
 		return ""
@@ -159,7 +159,7 @@ func (h *Headline) bloomedBgPad(iconBg color.Color, startCol, n, row int) string
 }
 
 // truecolorBg emits \033[48;2;R;G;Bm for any color.Color. Kept local to
-// the bloom hot path so the 30fps repaint skips lipgloss.NewStyle allocs.
+// the bloom hot path so the per-frame repaint skips lipgloss.NewStyle allocs.
 func truecolorBg(c color.Color) string {
 	r, g, b, _ := c.RGBA()
 	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r>>8, g>>8, b>>8)

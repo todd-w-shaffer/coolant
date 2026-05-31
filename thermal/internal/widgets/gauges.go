@@ -168,7 +168,7 @@ func (g *Gauges) Update(state *model.AppState) {
 	}
 }
 
-// AnimTick advances spring physics one frame (~30fps) and appends the
+// AnimTick advances spring physics one frame (config.AnimFPS) and appends the
 // spring-interpolated value to the render history so sparklines scroll
 // at animation rate, not collector rate.
 func (g *Gauges) AnimTick() {
@@ -199,8 +199,9 @@ func (g *Gauges) AnimTick() {
 		g.renderOnline = g.renderOnline[len(g.renderOnline)-config.MaxRenderHistory:]
 	}
 
-	// Peak smoothing: snap up on spikes, decay fast.
-	// Adjusted decay for 30fps (~1.3s half-life: 0.982^30 ≈ 0.58/s).
+	// Peak smoothing: snap up on spikes, decay fast. The decay rate is
+	// derived from a wall-clock half-life (config.peakDecayHalfLifeSec) so
+	// the feel is invariant to AnimFPS.
 	decayRate := g.anim.PeakDecayRate
 	visibleSamples := g.width
 	if visibleSamples < 1 {

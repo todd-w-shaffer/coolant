@@ -2,7 +2,10 @@
 // smoothing, animation parameters, and category heat levels.
 package config
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // ── Collector timing ───────────────────────────────────────
 
@@ -32,11 +35,33 @@ const AgentStaleThreshold = 3 * time.Minute
 // ── Animation ──────────────────────────────────────────────
 
 const (
-	AnimFPS          = 30                    // spring physics + sparkline scroll rate
-	AnimInterval     = time.Second / AnimFPS // ~33ms per frame
-	PeakDecayRate    = 0.982                 // per-frame decay (~1.3s half-life at 30fps)
-	MaxRenderHistory = 600                   // ~20s at 30fps
+	AnimFPS      = 15                    // spring physics + sparkline scroll rate
+	AnimInterval = time.Second / AnimFPS // ~67ms per frame
+
+	// sparkWindowSeconds is the wall-clock span shown by the sparkline
+	// scroll. MaxRenderHistory derives from it so the displayed time span
+	// and scroll speed stay invariant when AnimFPS changes.
+	sparkWindowSeconds = 20
+	MaxRenderHistory   = sparkWindowSeconds * AnimFPS // ~20s of frames
+
+	// peakDecayHalfLifeSec is the wall-clock half-life of the gauge peak
+	// marker decay; PeakDecayRate derives from it (see below) so the decay
+	// feel stays invariant to the frame rate.
+	peakDecayHalfLifeSec = 1.27
 )
+
+// PeakDecayForHalfLife returns the per-frame peak-decay multiplier that halves
+// a peak over halfLifeSec of wall-clock time at the current AnimFPS. Animation
+// profiles derive their decay from a half-life (not a raw per-frame constant)
+// so the feel — and the calm > default > intense decay ordering — stays
+// invariant to AnimFPS. A func because math.Pow can't be a const.
+func PeakDecayForHalfLife(halfLifeSec float64) float64 {
+	return math.Pow(0.5, 1.0/(halfLifeSec*float64(AnimFPS)))
+}
+
+// PeakDecayRate is the default profile's per-frame peak decay (~0.964 at 15fps,
+// matching the old hand-tuned 0.982-at-30fps feel).
+var PeakDecayRate = PeakDecayForHalfLife(peakDecayHalfLifeSec)
 
 // Spring physics parameters for gauge easing.
 const (
@@ -56,7 +81,11 @@ const (
 const (
 	BreatheMinBright = 0.25 // dimmest point of breathing cycle
 	BreatheMaxBright = 1.0  // brightest point
-	BreathePhaseStep = 0.14 // radians per AnimTick (~1.5s cycle at 30fps: 2π/45)
+	// BreathePhaseStep is radians/tick for a ~1.5s breathing cycle. Derived
+	// from AnimFPS so the wall-clock cycle stays 1.5s at any frame rate (a raw
+	// per-tick value would slow the breathing when AnimFPS drops).
+	breatheCycleSec  = 1.5
+	BreathePhaseStep = 2 * math.Pi / (breatheCycleSec * float64(AnimFPS))
 	BreatheFadeEps   = 0.01 // spring position below which a dying icon is removed
 	BreatheStaleRate = 0.3  // phase advance multiplier for stale (orphaned) dots
 	BreatheStaleDim  = 0.35 // brightness multiplier for stale dots
@@ -64,8 +93,12 @@ const (
 
 // KITT scanner (stale ghost dots / highscore completed dots).
 const (
-	KITTSweepRate    = 0.025 // sweep position advance per AnimTick
-	KITTAmbient      = 0.15  // floor brightness at sweep edges
+	// KITTSweepRate is sweep-position advance/tick. Derived from a per-second
+	// rate (÷AnimFPS) so the scanner sweeps at the same wall-clock speed at any
+	// frame rate. 0.75/s == the original 0.025/tick at 30fps.
+	kittSweepPerSec  = 0.75
+	KITTSweepRate    = kittSweepPerSec / float64(AnimFPS)
+	KITTAmbient      = 0.15 // floor brightness at sweep edges
 	KITTPeak         = 0.85  // peak contribution above ambient
 	KITTSigmaSq      = 0.8   // gaussian width (sigma²) — tighter = sharper spotlight
 	KITTSingleBright = 0.8   // brightness multiplier when only one dot (no sweep)
@@ -74,8 +107,11 @@ const (
 
 // Tidal wave (active agent dots).
 const (
-	TidalPhaseStep    = 0.015 // phase advance per AnimTick (~14s per full wave)
-	TidalWaveMix      = 0.85  // tidal wave weight in brightness blend
+	// TidalPhaseStep is radians/tick for a ~14s full wave. Derived from AnimFPS
+	// so the wave period stays ~14s at any frame rate.
+	tidalWaveSec      = 14.0
+	TidalPhaseStep    = 2 * math.Pi / (tidalWaveSec * float64(AnimFPS))
+	TidalWaveMix      = 0.85 // tidal wave weight in brightness blend
 	TidalBreathMix    = 0.15  // individual breath weight in brightness blend
 	TidalBrightFloor  = 0.5   // minimum brightness for active dots
 	TidalPhaseSpread  = 1.5   // radians between adjacent dots (wider = clearer wave direction)
@@ -207,7 +243,7 @@ const (
 	BatteryMeltdownBreathCeil  = 1.0  // brightness ceiling for meltdown pulse
 	BatteryWarnBreathFloor     = 0.85 // subtle brightness floor for 10-20% warning breath
 	BatteryWarnBreathCeil      = 1.0  // brightness ceiling for warning breath
-	BatteryWarnBreathRate      = 0.5  // 1 cycle per 2 seconds at AnimFPS=60
+	BatteryWarnBreathRate      = 0.5  // half the meltdown rate → 1 cycle per 2 seconds (AnimFPS-invariant)
 )
 
 // ── Headroom warnings ──────────────────────────────────────

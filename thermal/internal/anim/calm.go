@@ -30,7 +30,7 @@ func Calm() *Profile {
 		SpringFreq:    3.5, // slower spring settle
 		SpringDamping: 1.0, // still critically damped
 
-		PeakDecayRate: 0.990, // slower peak decay (~2.3s half-life at 30fps)
+		PeakDecayRate: config.PeakDecayForHalfLife(2.3), // slower peak decay (~2.3s half-life, AnimFPS-invariant)
 
 		BloomBreatheSecCool: config.BloomBreatheSecCool * 1.5, // 50% longer breath
 		BloomBreatheSecHot:  config.BloomBreatheSecHot * 1.5,

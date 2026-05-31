@@ -30,7 +30,7 @@ func Intense() *Profile {
 		SpringFreq:    7.0, // snappier spring
 		SpringDamping: 0.8, // slightly underdamped — subtle overshoot
 
-		PeakDecayRate: 0.970, // faster peak decay (~0.75s half-life at 30fps)
+		PeakDecayRate: config.PeakDecayForHalfLife(0.75), // faster peak decay (~0.75s half-life, AnimFPS-invariant)
 
 		BloomBreatheSecCool: config.BloomBreatheSecCool * 0.75, // shorter breath
 		BloomBreatheSecHot:  config.BloomBreatheSecHot * 0.6,
