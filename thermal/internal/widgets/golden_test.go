@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"regexp"
 	"testing"
 	"time"
 
@@ -332,6 +333,14 @@ func captureHeadlineRailsEmber() string {
 	return fmt.Sprintf("TOP:%s\nBOT:%s\n", rp.top, rp.bot)
 }
 
+// zoneMarkerRE matches bubblezone's marker escape (ESC [ <n> z). The numeric
+// ID comes from a process-global atomic counter (bubblezone manager.go
+// markerCounter), so its value depends on how many Mark calls ran before this
+// one — which differs between an isolated test run and the full suite. We
+// normalize it to a fixed token so the golden stays stable; the presence of
+// the zone wrapper itself is asserted separately in headline_test.go.
+var zoneMarkerRE = regexp.MustCompile("\x1b\\[\\d+z")
+
 // captureThermalLevels renders renderCatCell for "build" at counts 0, 1, 3, 5, 10.
 func captureThermalLevels() string {
 	th := testTheme
@@ -341,6 +350,7 @@ func captureThermalLevels() string {
 	for _, count := range counts {
 		smoothed := map[string]float64{"build": float64(count)}
 		cell := renderCatCell(cat, smoothed, fixedCellWidth, th, "")
+		cell = zoneMarkerRE.ReplaceAllString(cell, "\x1b[Zz")
 		sb.WriteString(fmt.Sprintf("count=%02d:%s\n", count, cell))
 	}
 	return sb.String()
