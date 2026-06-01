@@ -89,44 +89,25 @@ func CollectCPU() SystemStats {
 	return stats
 }
 
-// CollectSwapVM gathers swap (sysctl) + memory/decompressions (vm_stat) via two
-// concurrent subprocesses. These are the cheap, fixed-1s probes — vm_stat's
-// decompression counter is a per-tick delta, so its cadence must stay fixed.
+// CollectSwapVM gathers swap + memory/decompressions in-process via
+// host_statistics64(HOST_VM_INFO64) and sysctlbyname("vm.swapusage") — see
+// vmswap_darwin.go. These are the fixed-1s probes (vm's decompression counter
+// is a per-tick delta, so its cadence must stay fixed); reading them in-process
+// removes the two per-second subprocess forks the slow loop used to spawn. Each
+// reader is nil-safe: a failed read leaves its fields at zero rather than
+// faulting. ctx is retained for the SlowCollect signature; the in-process reads
+// don't block on it.
 func CollectSwapVM(ctx context.Context) SystemStats {
 	staticSysctl.once.Do(initStaticSysctl)
 
-	type result struct {
-		key string
-		val string
-	}
-	ch := make(chan result, 2)
-
-	go func() {
-		out, _ := execCmd(ctx, "sysctl", "-n", "vm.swapusage")
-		ch <- result{"swap", out}
-	}()
-	go func() {
-		out, _ := execCmd(ctx, "vm_stat")
-		ch <- result{"vmstat", out}
-	}()
-
 	var stats SystemStats
-	for i := 0; i < 2; i++ {
-		r := <-ch
-		switch r.key {
-		case "swap":
-			parseSwap(r.val, &stats)
-		case "vmstat":
-			if r.val != "" {
-				active := parseVMStatField(r.val, "Pages active")
-				wired := parseVMStatField(r.val, "Pages wired down")
-				compressed := parseVMStatField(r.val, "Pages occupied by compressor")
-				stats.MemUsedBytes = (active + wired + compressed) * staticSysctl.pageSize
-
-				cumDecomps := parseVMStatField(r.val, "Decompressions")
-				stats.Decompressions = sampleDecompressions(cumDecomps)
-			}
-		}
+	if total, used, ok := readSwapUsage(); ok {
+		stats.SwapTotalBytes = int64(total)
+		stats.SwapUsedBytes = int64(used)
+	}
+	if vc, ok := readVMStats64(); ok {
+		stats.MemUsedBytes = int64(vc.Active+vc.Wired+vc.Compressed) * staticSysctl.pageSize
+		stats.Decompressions = sampleDecompressions(int64(vc.Decompressions))
 	}
 	return stats
 }

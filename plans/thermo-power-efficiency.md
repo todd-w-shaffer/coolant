@@ -189,20 +189,34 @@ criterion met).** (`03` F1/F2/F5/F6)
 - `rates.go` — cache the four fixed-color ANSI prefixes instead of `ColorText`
   per call.
 
-**Phase 7 — cgo/mach/IOKit subprocess elimination (research-gated).** (`01` F6)
-- Begins with a cgo smoke-test confirming values match the subprocess output on
-  arm64+amd64, then migrates, matching the `cpu_darwin.go` idiom (cache
-  `mach_host_self()` once; `CFRelease` IOKit objects each sample):
-  - vm_stat → `host_statistics64(HOST_VM_INFO64)` → `vm_statistics64` (verified
-    `<mach/mach_host.h>`, `<mach/host_info.h>`, `<mach/vm_statistics.h>`).
-  - swap → `sysctlbyname("vm.swapusage")` → `struct xsw_usage` (`<sys/sysctl.h>`).
-  - battery → `IOPSCopyPowerSourcesInfo`/`IOPSGetPowerSourceDescription` with
-    `kIOPSCurrentCapacityKey`/`kIOPSMaxCapacityKey`/`kIOPSIsChargingKey`/
-    `kIOPSTimeToEmptyKey` (verified `<IOKit/ps/IOPowerSources.h>`,`IOPSKeys.h`).
-  - **GPU stays on the subprocess** (see Non-goals).
-  Removes ~3 forks/sec. Note: if Phase 3's battery cadence already cut battery
-  forks ~95%, the battery cgo migration's marginal value drops — reassess its
-  worth at this point rather than doing it reflexively.
+**Phase 7 — cgo subprocess elimination. SHIPPED (vm_stat + swap; battery
+deferred by operator decision).** (`01` F6)
+- **Done (the two fixed-1s forks, the real idle-fork cost).** `vmswap_darwin.go`,
+  matching the `cpu_darwin.go` idiom (reuses the cached process-lifetime
+  `hostPort`, so no mach send-right leak):
+  - vm_stat → `host_statistics64(HOST_VM_INFO64)` → `vm_statistics64`
+    (`active_count`+`wire_count`+`compressor_page_count` ×pageSize → MemUsedBytes;
+    `decompressions` → `sampleDecompressions` delta). Struct fields verified
+    against the live SDK `<mach/vm_statistics.h>`/`<mach/host_info.h>`.
+  - swap → `sysctlbyname("vm.swapusage")` → `struct xsw_usage` (`xsu_total`/
+    `xsu_used`, bytes; `<sys/sysctl.h>`). `CollectSwapVM` now does two in-process
+    reads instead of forking `sysctl` + `vm_stat` every second.
+  - Smoke-test gate (`TestVMSwapCgoMatchesSubprocess`) confirms the in-process
+    values match the subprocess output (same fields, same units) on arm64; both
+    arm64 and amd64 cross-compile with CGO (CI builds both). The derived
+    MemUsedBytes is unchanged by construction — identical counts × the same
+    `staticSysctl.pageSize` the subprocess path used.
+- **Battery deferred (operator decision 2026-06-01).** Phase 3 already backed
+  `pmset` off to a 20s cadence (~0.05 forks/sec), so the `IOPSCopyPowerSourcesInfo`
+  migration — the most involved cgo (Core Foundation object lifecycle, `CFRelease`
+  each sample) for the least remaining fork cost — is not worth the risk now.
+  Left on the `pmset` subprocess. (Verified API for whenever it's revisited:
+  `IOPSCopyPowerSourcesInfo`/`IOPSGetPowerSourceDescription` with
+  `kIOPSCurrentCapacityKey`/`kIOPSMaxCapacityKey`/`kIOPSIsChargingKey`/
+  `kIOPSTimeToEmptyKey`, `<IOKit/ps/IOPowerSources.h>`,`IOPSKeys.h`.)
+  - **GPU stays on the subprocess** (see Non-goals — no public API).
+  - `parseSwap`/`parseVMStatField` are retained as the smoke-test's subprocess
+    oracle, not dead code.
 
 ## Non-goals
 - **GPU is NOT migrated to cgo (Phase 7 excludes it while vm_stat/swap/battery
@@ -274,12 +288,11 @@ criterion met).** (`03` F1/F2/F5/F6)
   green where touched.
 
 ## Parking lot
-- `parseVMStatField` (`system.go:157`) still does `strings.Split(string(vmstat),…)`
-  and re-splits the blob 4×/tick (the pattern Phase 1 migrated procs.go away
-  from). **Covered by Phase 7** — the `host_statistics64` cgo migration deletes
-  vm_stat text parsing entirely, so optimizing the parser now is throwaway. Left
-  as-is deliberately; if Phase 7 is dropped, fold a `bytes.Lines` single-pass
-  rewrite here instead. (Surfaced by Phase 1 `/code-review`.)
+- ~~`parseVMStatField` re-splits the vm_stat blob 4×/tick~~ **RESOLVED by Phase
+  7.** The production path no longer parses `vm_stat` text — `CollectSwapVM` reads
+  `host_statistics64` in-process. `parseVMStatField`/`parseSwap` remain only as
+  the smoke-test's subprocess oracle (`TestVMSwapCgoMatchesSubprocess`), off the
+  per-tick hot path entirely.
 - Token scan stat-before-open guard — skip open+seek when a file didn't grow
   (`04` F5). Easy, small.
 - Calm-aware snapshot back-off below the post-Phase-4 6.6 Hz idle floor (`05` F5
