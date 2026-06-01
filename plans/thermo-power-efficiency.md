@@ -9,11 +9,18 @@
 - The whole **collector tier (1-3) is done** and on branch `token-counter-on-main`
   (not pushed). All green: 18/18 Go packages, 286/286 bats.
 - **Phase 4+5 shipped** — `a6f9c37` (settle-gated tick-stop on composed-frame
-  byte-stability + spring rest; frame-hash zone.Scan memo). All green: 19/19 Go
-  packages, 286/286 bats. `/code-review` + `/simplify` + observations ran;
-  findings applied (incl. the structural spring-AtRest wake fix that replaced a
-  first-draft calmSignals enumeration).
-- **Phases 6-7 in progress (2026-06-01 session).** Implementing 6 → 7 next.
+  byte-stability + spring rest; frame-hash zone.Scan memo). `/code-review` +
+  `/simplify` + observations ran; findings applied (incl. the structural
+  spring-AtRest wake fix that replaced a first-draft calmSignals enumeration).
+- **Phase 6 shipped** — `1770000` (bloom pad: per-cell `fmt.Sprintf` → manual
+  format; headline allocs −40%, ViewActive −32%). lipgloss-v2 Style caching
+  found moot. Remaining manual-ANSI cuts deferred (parking lot).
+- **Phase 7 shipped** — `eef8c78` (vm_stat + swap → in-process cgo
+  host_statistics64 / sysctlbyname; the two 1s forks gone). Battery deferred by
+  operator decision (phase 3 handled it); GPU excluded (no public API).
+- **Roadmap complete for this session.** All green: 19/19 Go packages, 286/286
+  bats; both arm64 + amd64 cross-compile with CGO. Branch
+  `token-counter-on-main`, not pushed. Deferred items in the Parking lot.
 
 ## Goal
 Cut the idle CPU/power the always-on thermal strip burns. It currently holds
