@@ -7,13 +7,23 @@ import (
 	"time"
 )
 
-// fakeFast returns a fixed snapshot with the given CPU%.
+// fakeFast returns a CPU-only snapshot with the given CPU%.
 func fakeFast(cpu float64) FastCollector {
-	return func(pc *ProcCollector) Snapshot {
+	return func() Snapshot {
 		return Snapshot{
 			Timestamp: time.Now(),
 			System:    SystemStats{CPUPercent: cpu},
 		}
+	}
+}
+
+// fakeProc returns a ProcSampler that records its call count and yields a
+// recognizable marker (DesktopRunning + one session) so a test can confirm the
+// proc data reached a snapshot.
+func fakeProc(calls *atomic.Int32) ProcSampler {
+	return func(ctx context.Context) ProcSample {
+		calls.Add(1)
+		return ProcSample{DesktopRunning: true, Sessions: []SessionTree{{RootPID: 1}}}
 	}
 }
 
@@ -98,7 +108,7 @@ func TestRunWith_CollectErrsFlowThrough(t *testing.T) {
 	done := make(chan struct{})
 
 	cfg := RunConfig{
-		FastCollect: func(pc *ProcCollector) Snapshot {
+		FastCollect: func() Snapshot {
 			return Snapshot{Timestamp: time.Now(), CollectErrs: []string{"procs: timeout"}}
 		},
 		SlowCollect: fakeSlow(0),
@@ -224,6 +234,58 @@ func TestRunWith_SlowLoopRunsConcurrently(t *testing.T) {
 		case <-timeout:
 			t.Fatal("timed out waiting for merged slow stats")
 		}
+	}
+}
+
+// TestRunWith_ProcsCollectedOnSlowCadence proves the process-tree scan is
+// decoupled from the fast CPU cadence: proc data still reaches every snapshot
+// (merged from the slow-loop cache, like the other slow stats), but the proc
+// collector runs on the slow cadence (~1s) while the fast CPU collector runs
+// on the injected fast interval — so proc forks happen far less often.
+func TestRunWith_ProcsCollectedOnSlowCadence(t *testing.T) {
+	snapCh := make(chan Snapshot, 64)
+	done := make(chan struct{})
+	defer close(done)
+
+	var fastCalls, procCalls atomic.Int32
+	cfg := RunConfig{
+		FastCollect: func() Snapshot {
+			fastCalls.Add(1)
+			return Snapshot{Timestamp: time.Now(), System: SystemStats{CPUPercent: 5}}
+		},
+		SlowCollect: fakeSlow(0),
+		NetCheck:    fakeNet(true),
+		ProcCollect: fakeProc(&procCalls),
+	}
+
+	go RunWith(snapCh, 10*time.Millisecond, done, cfg)
+
+	// Wait until a snapshot carries the merged proc marker — proves proc data
+	// reaches snapshots though collected on the slow loop.
+	timeout := time.After(3 * time.Second)
+	var merged bool
+	for !merged {
+		select {
+		case s, ok := <-snapCh:
+			if !ok {
+				t.Fatal("snapCh closed before proc data merged")
+			}
+			if s.DesktopRunning && len(s.Sessions) == 1 {
+				merged = true
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for proc data to merge into snapshot")
+		}
+	}
+
+	// By the time the 1s slow loop fired once, the 10ms fast loop fired ~100×.
+	// Assert the cadence is genuinely decoupled (fast >> proc).
+	fc, pc := fastCalls.Load(), procCalls.Load()
+	if pc == 0 {
+		t.Fatal("proc collector never ran")
+	}
+	if fc < pc*5 {
+		t.Errorf("procs not decoupled from fast cadence: fastCalls=%d procCalls=%d (want fast >> proc)", fc, pc)
 	}
 }
 

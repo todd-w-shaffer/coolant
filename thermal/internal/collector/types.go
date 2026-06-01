@@ -83,6 +83,7 @@ type Snapshot struct {
 	ChromeHostRunning bool          // chrome-native-host (browser extension bridge) detected
 	Timestamp         time.Time
 	SlowAge           time.Duration // time since last successful slow-loop collection
+	ProcSeq           uint64        // bumps each time a fresh process scan lands; lets the model tell a new sample from the stale re-deliveries that ride every fast snapshot between 1s scans
 	CollectErrs       []string      // non-nil when collection partially failed
 }
 

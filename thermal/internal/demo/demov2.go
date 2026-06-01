@@ -343,6 +343,10 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			Tokens:    tokens,
 			Online:    online,
 			Timestamp: time.Now(),
+			// Each demo tick recomputes a fresh proc set, so it's a fresh proc
+			// sample — bump ProcSeq so the model's spawn/death gate (which skips
+			// stale re-deliveries from the live 1s scan) counts demo spawns.
+			ProcSeq: uint64(tick) + 1,
 		}
 
 		select {

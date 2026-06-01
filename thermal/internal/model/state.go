@@ -73,6 +73,7 @@ type AppState struct {
 	// Rate tracking
 	recentSpawns *RingBuffer[int]
 	recentDeaths *RingBuffer[int]
+	lastProcSeq  uint64 // ProcSeq of the last sample we computed deltas for; skips stale re-deliveries
 
 	// Pre-allocated scratch maps (cleared and reused each tick)
 	scratchPIDs map[int]bool
@@ -373,7 +374,20 @@ func (s *AppState) updateIdleTicker() {
 }
 
 // computePIDDeltas calculates spawn/death counts using pre-allocated maps.
+//
+// The process scan rides the 1s slow loop, so the same sample is re-delivered
+// on ~6 of every 7 150ms fast snapshots. Spawn/death are *deltas*, so a stale
+// re-delivery would push a forced zero into the rate ring (flickering warm/cool
+// to 0 between scans). Gate on ProcSeq: compute only when a fresh sample lands,
+// making each push a genuine per-second delta — which is what the "/s" label on
+// the readout always claimed. (Level-based EMAs like type counts are unaffected
+// and intentionally keep ticking every Update.)
 func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
+	if snap.ProcSeq == s.lastProcSeq {
+		return // stale re-delivery of an already-counted proc sample
+	}
+	s.lastProcSeq = snap.ProcSeq
+
 	clear(s.scratchPIDs)
 	for _, p := range snap.AllProcs {
 		s.scratchPIDs[p.PID] = true

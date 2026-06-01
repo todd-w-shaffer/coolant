@@ -65,6 +65,41 @@ func TestSpawnDeathDeltasAcrossTwoUpdates(t *testing.T) {
 	}
 }
 
+// TestSpawnRateGatedOnFreshProcSample proves the spawn/death rate updates only
+// when a NEW proc sample arrives (distinct ProcSeq). Now that the process scan
+// rides the 1s slow loop, the same sample is re-delivered on ~6 of every 7
+// 150ms fast snapshots; a re-delivery must NOT push a forced zero into the rate
+// ring (which would make warm/cool flicker to 0 between proc scans).
+func TestSpawnRateGatedOnFreshProcSample(t *testing.T) {
+	s := NewAppState()
+	now := time.Now()
+
+	base := []collector.ProcessInfo{{PID: 100, TypeCode: "N"}}
+	s.Update(testSnap(t, withTime(now), withProcs(base)))
+
+	grown := []collector.ProcessInfo{
+		{PID: 100, TypeCode: "N"},
+		{PID: 101, TypeCode: "S"},
+		{PID: 102, TypeCode: "G"},
+	}
+	fresh := testSnap(t, withTime(now.Add(time.Second)), withProcs(grown))
+	s.Update(fresh)
+	if s.LastSpawns() != 2 {
+		t.Fatalf("LastSpawns after fresh sample = %d, want 2 (PIDs 101, 102)", s.LastSpawns())
+	}
+
+	// Re-deliver the same proc sample (same ProcSeq) on the next fast tick.
+	staleRepeat := testSnap(t,
+		withTime(now.Add(time.Second+150*time.Millisecond)),
+		withProcs(grown),
+		withProcSeq(fresh.ProcSeq),
+	)
+	s.Update(staleRepeat)
+	if s.LastSpawns() != 2 {
+		t.Errorf("LastSpawns after stale re-delivery = %d, want 2 (must not push a forced zero)", s.LastSpawns())
+	}
+}
+
 func TestTypeCountsPopulated(t *testing.T) {
 	s := NewAppState()
 	procs := []collector.ProcessInfo{
@@ -181,7 +216,10 @@ func TestAlertOnSpawnBurst(t *testing.T) {
 	s := NewAppState()
 	now := time.Now()
 
-	s.Update(testSnap(t, withTime(now)))
+	// Establish an empty baseline proc sample (a fresh ProcSeq) so the burst on
+	// the next sample is measured against it — mirrors production, where the
+	// first slow-loop scan sets the baseline before spawns are counted.
+	s.Update(testSnap(t, withTime(now), withProcs(nil)))
 
 	procs := make([]collector.ProcessInfo, config.C.Spawn.BurstThreshold)
 	for i := range procs {
