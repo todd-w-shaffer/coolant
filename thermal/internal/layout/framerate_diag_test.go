@@ -90,16 +90,15 @@ func calmSteadySnap() collector.Snapshot {
 	}
 }
 
-// driveCalmGatedSecond mirrors main's gated tick: it advances AnimTick ONLY
-// while the state is not calm, for one simulated second, and returns the
-// number of frames whose View() differed from the prior frame.
-func driveCalmGatedSecond(h *Horizontal) int {
+// driveSecond advances AnimTick+View for one simulated second and returns the
+// count of frames whose View() differed from the prior. The v2 approach never
+// stops the tick — idle quiescence comes from freezing the breath + bubbletea's
+// identical-frame suppression (Phase 2), not from halting the loop.
+func driveSecond(h *Horizontal) int {
 	prev := h.View()
 	distinct := 0
 	for i := 0; i < config.AnimFPS; i++ {
-		if !h.State().IsCalm() {
-			h.AnimTick()
-		}
+		h.AnimTick()
 		cur := h.View()
 		if cur != prev {
 			distinct++
@@ -109,60 +108,44 @@ func driveCalmGatedSecond(h *Horizontal) int {
 	return distinct
 }
 
-// TestIdleFreezeStopsFrameProduction is the Phase-1 falsifiable load-test:
-// once the dashboard is calm (no agents, flat metrics), gating AnimTick on
-// !IsCalm() produces ZERO distinct frames — animation is frozen, so
-// bubbletea's identical-frame suppression drives terminal writes to zero.
-func TestIdleFreezeStopsFrameProduction(t *testing.T) {
+// TestStartupRevealAnimatesAtIdle guards the v1 regression: the sparkline must
+// keep filling in at idle (the startup reveal), NOT freeze half-drawn. A fresh
+// widget has an empty renderHistory, so each AnimTick that appends a sample
+// changes the rendered sparkline — frames churn even with no agents and flat
+// metrics, because the tick is never stopped.
+func TestStartupRevealAnimatesAtIdle(t *testing.T) {
 	h := NewHorizontal(testTheme, testAnim, keys.Default())
 	h.SetSize(120, 10)
+	h.State().Update(calmSteadySnap())
+	h.Update(h.State())
 
-	// Wind down to calm: identical agent-free snapshots, letting springs ease
-	// (AnimTick) while still not-calm, exactly as production does.
-	for i := 0; i < config.CalmStableSnapshots+1; i++ {
-		h.State().Update(calmSteadySnap())
-		h.Update(h.State())
-		h.AnimTick()
-	}
-	if !h.State().IsCalm() {
-		t.Fatalf("expected calm after priming %d steady snapshots", config.CalmStableSnapshots+1)
-	}
-
-	distinct := driveCalmGatedSecond(h)
-	t.Logf("calm steady state: %d/%d distinct frames (gated)", distinct, config.AnimFPS)
-	if distinct != 0 {
-		t.Errorf("calm: %d/%d distinct frames, want 0 (animation should be frozen)", distinct, config.AnimFPS)
+	distinct := driveSecond(h)
+	t.Logf("startup reveal at idle: %d/%d distinct frames", distinct, config.AnimFPS)
+	if distinct < config.AnimFPS/2 {
+		t.Errorf("startup reveal: %d/%d distinct frames, want > half (sparkline must fill, not freeze)", distinct, config.AnimFPS)
 	}
 }
 
-// TestActivityWakesFrameProduction proves the wake path: after calm, a CPU
-// spike resets the stability window, IsCalm() goes false, and the gated loop
-// resumes producing frames.
-func TestActivityWakesFrameProduction(t *testing.T) {
+// TestTokenActivityAnimatesAtIdle guards the other v1 regression: a streaming
+// token sparkline must keep scrolling, not freeze mid-scroll during a lull.
+func TestTokenActivityAnimatesAtIdle(t *testing.T) {
 	h := NewHorizontal(testTheme, testAnim, keys.Default())
 	h.SetSize(120, 10)
-
-	for i := 0; i < config.CalmStableSnapshots+1; i++ {
+	// Establish a filled, settled window first.
+	for i := 0; i < config.AnimFPS; i++ {
 		h.State().Update(calmSteadySnap())
 		h.Update(h.State())
 		h.AnimTick()
 	}
-	if !h.State().IsCalm() {
-		t.Fatalf("expected calm after priming")
-	}
-
-	// Inject activity: a CPU spike.
-	busy := calmSteadySnap()
-	busy.System.CPUPercent = 85
-	h.State().Update(busy)
+	// Now stream tokens.
+	burst := calmSteadySnap()
+	burst.Tokens.IOTokensPerSec = 1500
+	h.State().Update(burst)
 	h.Update(h.State())
-	if h.State().IsCalm() {
-		t.Fatal("expected NOT calm immediately after a CPU spike")
-	}
 
-	distinct := driveCalmGatedSecond(h)
-	t.Logf("after activity: %d/%d distinct frames (gated)", distinct, config.AnimFPS)
-	if distinct < config.AnimFPS/2 {
-		t.Errorf("after activity: %d/%d distinct frames, want > half (animation should resume)", distinct, config.AnimFPS)
+	distinct := driveSecond(h)
+	t.Logf("token activity at idle: %d/%d distinct frames", distinct, config.AnimFPS)
+	if distinct == 0 {
+		t.Errorf("token activity: 0 distinct frames, want > 0 (token sparkline must scroll)")
 	}
 }

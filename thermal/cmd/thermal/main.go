@@ -67,14 +67,6 @@ type model struct {
 	// Mirrors checkpointDone so process exit can't race a midflight
 	// reconcile tick or receiver shutdown.
 	ccOtelDone chan struct{}
-
-	// animating tracks whether an animation tick is currently armed. It
-	// gates the idle freeze: the tick handler stops re-arming when the
-	// dashboard goes calm, and the snapshot/event handlers re-arm exactly
-	// once on the calm→active transition. The flag makes re-arm idempotent
-	// across both wake sources so they can't double-arm and double the frame
-	// rate.
-	animating bool
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
@@ -92,9 +84,6 @@ func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 		aggregator:     agg,
 		checkpointDone: make(chan struct{}),
 		ccOtelDone:     make(chan struct{}),
-		// Init's command batch arms the first animation tick, so the model
-		// starts in the animating state.
-		animating: true,
 	}
 	m.layout.State().AttachAggregator(agg)
 	// Self-check the wire-up so a future refactor that drops the
@@ -168,26 +157,6 @@ func animTick() tea.Cmd {
 	return tea.Tick(config.AnimInterval, func(t time.Time) tea.Msg {
 		return animTickMsg(t)
 	})
-}
-
-// wakeCmd arms one animation tick if the dashboard just transitioned from
-// frozen (calm) to active, and returns nil otherwise. The m.animating guard
-// makes it idempotent: the snapshot and event handlers both call it every
-// message, but only the calm→active edge arms a tick — so the two wake
-// sources can't spawn two concurrent timers and double the frame rate. It
-// mutates the receiver, so callers must use the returned model.
-//
-// Liveness note: the wake depends on the collector pushing snapshots every
-// ~FastInterval regardless of calm (see Init's collector.Run / demo.RunV2) so
-// this runs continuously to catch the wake edge. If a future change ever
-// gates snapshot delivery on activity, the freeze would have no wake source
-// and could latch permanently — re-arm from an unconditional source then.
-func (m *model) wakeCmd() tea.Cmd {
-	if !m.animating && !m.layout.State().IsCalm() {
-		m.animating = true
-		return animTick()
-	}
-	return nil
 }
 
 func waitForSnapshot(ch <-chan collector.Snapshot) tea.Cmd {
@@ -340,7 +309,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Level:   appmodel.ThreatCool,
 			})
 		}
-		return m, tea.Batch(waitForSnapshot(m.snapChan), m.wakeCmd())
+		return m, waitForSnapshot(m.snapChan)
 
 	case gateEventMsg:
 		ev := collector.GateEvent(msg)
@@ -348,7 +317,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Event == collector.EventCounterReset {
 			m.layout.DismissIntel() // session stats become incoherent
 		}
-		return m, tea.Batch(waitForEvent(m.eventChan), m.wakeCmd())
+		return m, waitForEvent(m.eventChan)
 
 	case updateAvailableMsg:
 		m.layout.State().UpdateAvailable = true
@@ -384,12 +353,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case animTickMsg:
 		m.layout.AnimTick()
-		// Stop re-arming once the dashboard goes calm — this is the freeze.
-		// The snapshot/event handlers re-arm via wakeCmd when activity returns.
-		if m.layout.State().IsCalm() {
-			m.animating = false
-			return m, nil
-		}
 		return m, animTick()
 	}
 
