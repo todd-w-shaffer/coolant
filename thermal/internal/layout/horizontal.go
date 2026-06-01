@@ -556,9 +556,9 @@ func (h *Horizontal) idleView() string {
 		snap := h.state.Current
 		memGB := snap.System.MemUsedBytes / model.GB
 		totalGB := snap.System.MemTotalBytes / model.GB
-		// Deadbanded CPU% (not raw) so this idle-screen readout doesn't flicker
-		// on sub-band jitter and repaint ~6.7×/sec while the tick is frozen.
-		stats := ui.DimText(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(h.state.DisplayCPUPercent()), memGB, totalGB))
+		// Rate-limited readout CPU% (not raw) so this idle-screen readout
+		// doesn't flicker on sub-band jitter or update more than once/sec.
+		stats := ui.DimText(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(h.state.ReadoutCPUPercent()), memGB, totalGB))
 		lines = append(lines, stats)
 	}
 

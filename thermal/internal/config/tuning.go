@@ -59,11 +59,18 @@ const (
 
 	// DisplayDeadbandPct is the minimum change (percentage points) from the
 	// last *displayed* CPU% before the readout commits a new value. Sub-band
-	// jitter is held, so the number doesn't flicker on ±1-2% wiggle and the
+	// jitter is held, so the number doesn't flicker on small wiggle and the
 	// dashboard can reach calm. Comparing against the displayed value (not the
 	// last raw sample) means accumulated drift still crosses the band and
-	// commits, so there's no indefinite stall — no max-staleness timer needed.
-	DisplayDeadbandPct = 3.0
+	// commits, so there's no indefinite stall.
+	DisplayDeadbandPct = 5.0
+
+	// DisplayMinUpdateInterval rate-limits the CPU% readout: even when a move
+	// clears DisplayDeadbandPct, the displayed value commits at most once per
+	// this interval (measured against snapshot wall-clock). A first move after
+	// a quiet stretch commits immediately (last commit is already older than
+	// the interval); only rapid back-to-back swings are throttled.
+	DisplayMinUpdateInterval = 1 * time.Second
 )
 
 // PeakDecayForHalfLife returns the per-frame peak-decay multiplier that halves

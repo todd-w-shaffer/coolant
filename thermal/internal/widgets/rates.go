@@ -79,9 +79,9 @@ func (r *Rates) View() string {
 	netVal := int(s.NetRate)
 	netStr := fmt.Sprintf("net:%+04d/s", netVal)
 
-	// System stats — fixed width. CPU uses the deadbanded display value so a
-	// ±1-2% wiggle doesn't reflicker the readout (and doesn't wake idle freeze).
-	cpuPct := int(s.DisplayCPUPercent())
+	// System stats — fixed width. CPU uses the rate-limited readout value:
+	// deadbanded (no sub-band flicker) AND updated at most once/sec.
+	cpuPct := int(s.ReadoutCPUPercent())
 	memUsedGB := float64(snap.System.MemUsedBytes) / float64(model.GB)
 	memTotalGB := snap.System.MemTotalBytes / model.GB
 	memPct := snap.System.MemPercent()
@@ -96,7 +96,7 @@ func (r *Rates) View() string {
 	sb.WriteString(r.theme.GaugeDots[0].Formatted)
 	sb.WriteString("CPU:")
 	cpuTh := CPUSparkThresh()
-	sb.WriteString(r.theme.SeverityColor(s.DisplayCPUPercent(), &cpuTh))
+	sb.WriteString(r.theme.SeverityColor(s.ReadoutCPUPercent(), &cpuTh))
 	sb.WriteString(fmt.Sprintf("%03d%%", cpuPct))
 	sb.WriteString(sparkReset)
 

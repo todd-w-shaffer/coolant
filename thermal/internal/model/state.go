@@ -119,8 +119,16 @@ type AppState struct {
 	// jitter (see updateDisplayCPU / config.DisplayDeadbandPct) so the number
 	// doesn't flicker and the dashboard can settle into calm. cpuSeeded forces
 	// the first sample to commit so cold start shows the real value, not 0.
-	displayCPU float64
-	cpuSeeded  bool
+	// displayCPU (deadband only) feeds the gauge spring, calm tracking, and the
+	// LCD temp — all need it responsive within the band. readoutCPU follows
+	// displayCPU but commits at most once per DisplayMinUpdateInterval, so the
+	// CPU% *text* doesn't change more than once a second; the gauge stays
+	// responsive (a rate-limited gauge would hide transient spikes).
+	displayCPU        float64
+	cpuSeeded         bool
+	readoutCPU        float64
+	readoutSeeded     bool
+	lastReadoutCommit time.Time
 }
 
 // NewAppState creates an initialized AppState.
@@ -156,6 +164,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.updateThreatAndAlerts(&snap)
 	s.updateIdleTicker()
 	s.updateDisplayCPU()
+	s.updateReadoutCPU()
 	s.updateCalmTracking()
 }
 
@@ -174,8 +183,35 @@ func (s *AppState) updateDisplayCPU() {
 	}
 }
 
-// DisplayCPUPercent is the deadbanded CPU% for the rates readout and CPU gauge.
+// updateReadoutCPU tracks the deadbanded displayCPU for the text readout, but
+// commits a new shown value at most once per DisplayMinUpdateInterval (snapshot
+// wall-clock). So the CPU% number changes no more than once a second even when
+// CPU swings past the deadband repeatedly. A change after a quiet stretch
+// commits immediately (the last commit is already older than the interval).
+func (s *AppState) updateReadoutCPU() {
+	if !s.readoutSeeded {
+		s.readoutCPU = s.displayCPU
+		s.readoutSeeded = true
+		s.lastReadoutCommit = s.Current.Timestamp
+		return
+	}
+	if s.readoutCPU == s.displayCPU {
+		return
+	}
+	if s.Current.Timestamp.Sub(s.lastReadoutCommit) < config.DisplayMinUpdateInterval {
+		return
+	}
+	s.readoutCPU = s.displayCPU
+	s.lastReadoutCommit = s.Current.Timestamp
+}
+
+// DisplayCPUPercent is the deadbanded CPU% for the CPU gauge, calm tracking,
+// and the LCD temperature — responsive within the deadband.
 func (s *AppState) DisplayCPUPercent() float64 { return s.displayCPU }
+
+// ReadoutCPUPercent is the rate-limited CPU% for the text readout — the
+// deadbanded value, but updated at most once per DisplayMinUpdateInterval.
+func (s *AppState) ReadoutCPUPercent() float64 { return s.readoutCPU }
 
 // calmSignals returns the per-frame-animated signals at display granularity:
 // the five sparkline sources (widgets/gauges.go feeds CPU%, MEM%, decompression

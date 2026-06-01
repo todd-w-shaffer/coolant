@@ -100,6 +100,16 @@ breath-freeze signal (it already means "no agents + the per-frame sparkline
 sources are flat + not battery-alerting", which is exactly "freezing the breath
 will make the frame static").
 
+**Phase 3 — deadband tuning (operator follow-up):** `DisplayDeadbandPct` 3 → 5,
+and the CPU% *text* readout is rate-limited to at most once per second. The
+rate limit lives on a separate `readoutCPU` value (`model/state.go`
+`updateReadoutCPU` / `ReadoutCPUPercent`, `config.DisplayMinUpdateInterval`);
+the `rates.go` + idle-view text read it, while the gauge spring, calm tracking,
+and LCD temp keep reading the responsive deadband-only `displayCPU`. The split
+is deliberate: rate-limiting the gauge would lag the sparkline and hide
+transient spikes from the peak marker (a regression the peak-decay tests
+caught), so only the text is throttled.
+
 ## Failure modes to anticipate
 - **Missed oscillator → idle not byte-stable → no GPU win.** The load-test
   (distinct == 0 at idle under jitter) is the safety net; if it fails, something
