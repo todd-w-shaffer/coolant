@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -203,21 +204,25 @@ func coolantTmpPath(suffix string) string {
 	return tmpDir + "coolant-" + currentUser() + "." + suffix
 }
 
-// redirectLog points the standard logger at path (created if absent,
-// appended otherwise) and returns the open file so the caller can close
-// it on exit. The bubbletea TUI owns the same stdout/stderr the default
-// logger writes to, so any log.Printf from the collector, stats
-// aggregator, or checkpoint path would paint raw text over the render —
-// e.g. the by_project drift guard bleeding "stats: by_project drift
-// detected" into the dashboard. Routing diagnostics to a file keeps them
-// for debugging without corrupting the screen. Only the TUI path calls
-// this; subcommands (stats / statsdump / cc-findings) keep stderr.
+// redirectLog routes the standard logger to path (created if absent,
+// appended otherwise, owner-only 0o600) via bubbletea's own LogToFile
+// helper and returns the open file so the caller can close it on exit.
+// The TUI owns the same stdout/stderr the default logger writes to, so
+// any log.Printf from the collector, stats aggregator, or checkpoint
+// path would paint raw text over the render — e.g. the by_project drift
+// guard bleeding "stats: by_project drift detected" into the dashboard.
+//
+// On open failure the logger is pointed at io.Discard rather than left
+// on stderr: stderr IS the surface the TUI occupies, so a half-working
+// redirect that fell back to stderr would reintroduce the very
+// corruption this exists to prevent. Only the TUI path calls this;
+// subcommands (stats / statsdump / cc-findings) keep stderr.
 func redirectLog(path string) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := tea.LogToFile(path, "")
 	if err != nil {
+		log.SetOutput(io.Discard)
 		return nil, err
 	}
-	log.SetOutput(f)
 	return f, nil
 }
 
@@ -588,9 +593,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Keep diagnostics off the TUI's stdout/stderr — see redirectLog.
-	// A failure here is non-fatal: the dashboard is more valuable than
-	// the log file, so fall through to the default (stderr) logger.
+	// Keep diagnostics off the TUI's stdout/stderr — see redirectLog. A
+	// failure here is non-fatal: redirectLog has already pointed the
+	// logger at io.Discard, so the dashboard renders cleanly regardless.
 	if logFile, err := redirectLog(coolantTmpPath("thermo.log")); err == nil {
 		defer logFile.Close()
 	}

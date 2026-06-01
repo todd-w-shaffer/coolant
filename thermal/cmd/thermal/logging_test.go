@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -63,5 +64,33 @@ func TestRedirectLogAppends(t *testing.T) {
 	got := string(data)
 	if !strings.Contains(got, "first line") || !strings.Contains(got, "second line") {
 		t.Errorf("expected both lines retained; got %q", got)
+	}
+}
+
+// When the log file can't be opened, redirectLog must point the logger at
+// io.Discard — NOT leave it on the default stderr. stderr is the surface
+// the TUI occupies, so a half-working redirect that falls back to stderr
+// would reintroduce the exact screen corruption the redirect exists to
+// prevent (the by_project drift guard bleeding into the render).
+func TestRedirectLogFailureFallsBackToDiscard(t *testing.T) {
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	// Parent is a regular file, so creating a child path under it fails
+	// with ENOTDIR — a deterministic open error without touching perms.
+	notDir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notDir, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	badPath := filepath.Join(notDir, "thermo.log")
+
+	f, err := redirectLog(badPath)
+	if err == nil {
+		t.Fatalf("expected error opening %q", badPath)
+	}
+	if f != nil {
+		t.Errorf("expected nil file on error, got %v", f)
+	}
+	if log.Writer() != io.Discard {
+		t.Errorf("on redirect failure the logger must point at io.Discard, not stderr")
 	}
 }
