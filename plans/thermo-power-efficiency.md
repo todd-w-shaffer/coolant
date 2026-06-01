@@ -8,9 +8,12 @@
   15s flat/1s active, network 12s/3s; vm_stat+swap fixed 1s).
 - The whole **collector tier (1-3) is done** and on branch `token-counter-on-main`
   (not pushed). All green: 18/18 Go packages, 286/286 bats.
-- **Phases 4-7 in progress (2026-06-01 session).** Phases 4+5 re-planned and
-  MERGED into one settle-gated tick-stop + frame-hash memoization phase — see the
-  merged section below. Implementing 4+5 → 6 → 7 this session.
+- **Phase 4+5 shipped** — `a6f9c37` (settle-gated tick-stop on composed-frame
+  byte-stability + spring rest; frame-hash zone.Scan memo). All green: 19/19 Go
+  packages, 286/286 bats. `/code-review` + `/simplify` + observations ran;
+  findings applied (incl. the structural spring-AtRest wake fix that replaced a
+  first-draft calmSignals enumeration).
+- **Phases 6-7 in progress (2026-06-01 session).** Implementing 6 → 7 next.
 
 ## Goal
 Cut the idle CPU/power the always-on thermal strip burns. It currently holds
@@ -159,11 +162,29 @@ The two phases share one mechanism — a hash of the **composed frame string**
   static) and at active-calm with no decorative motion. `--kitt-highscore=false`
   widens the win for users who don't want the scan. This is deliberate, not a gap.
 
-**Phase 6 — active-frame allocation cleanup (helps when busy).** (`03` F1/F2/F5/F6)
-- `headline.go` — cache invariant `lipgloss.Style` structs (bgPad, cat-cell per
-  gradient level, rail text/pad) instead of per-cell `NewStyle().Render()`
-  (~40–60% of active allocs); `bloomedBgPad`/`truecolorBg` (`:142-171`) →
-  manual base-10 int format instead of `fmt.Sprintf`.
+**Phase 6 — active-frame allocation cleanup (helps when busy). SHIPPED (partial,
+criterion met).** (`03` F1/F2/F5/F6)
+- **Done:** `bloomedBgPad`/`truecolorBg` (`headline.go`) → manual base-10 int
+  format (`strconv.AppendUint` into a reused scratch, run-coalesced on the RGB
+  ints) instead of per-cell `fmt.Sprintf`. Measured: `BenchmarkHeadlineViewLines`
+  1033 → 621 allocs (−40%), 79µs → 55µs; `BenchmarkViewActive` 1279 → 867 allocs
+  (−32%). Meets the done-criterion (headline allocs down ~40–60%). Golden tests
+  prove byte-identical output.
+- **Finding — "cache invariant `lipgloss.Style` structs" is obsolete.** lipgloss
+  v2's `Style` is a value type, so `NewStyle().Foreground().Background()` doesn't
+  allocate; the per-cell cost is entirely in `Render()`'s output string.
+  Precomputing the cat-cell styles per gradient level measured **zero** alloc
+  reduction (621 → 621), so it was reverted. The remaining headline allocs are
+  one `Render()` per styled fragment — irreducible without bypassing lipgloss
+  and emitting manual ANSI (the `truecolorBg` approach) per cell.
+- **Deferred (parking lot, not worth the byte-risk for the lowest-priority
+  phase):** rewriting cat-cell / rates / sparkline rendering to emit manual ANSI
+  instead of `lipgloss.Render` would cut more allocs but must stay byte-identical
+  to the golden files; revisit only if profiling shows the headline hot under
+  real load. `sparkline.go` builder pooling needs a `[]byte` rewrite
+  (`strings.Builder.Reset` doesn't retain capacity), also deferred.
+
+  Original (pre-lipgloss-v2) plan, kept for reference:
 - `sparkline.go` — pooled braille builders via the existing `SparkBufs`.
 - `rates.go` — cache the four fixed-color ANSI prefixes instead of `ColorText`
   per call.
