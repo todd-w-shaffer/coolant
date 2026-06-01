@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"os/user"
@@ -200,6 +201,24 @@ func coolantTmpPath(suffix string) string {
 		tmpDir = "/tmp/"
 	}
 	return tmpDir + "coolant-" + currentUser() + "." + suffix
+}
+
+// redirectLog points the standard logger at path (created if absent,
+// appended otherwise) and returns the open file so the caller can close
+// it on exit. The bubbletea TUI owns the same stdout/stderr the default
+// logger writes to, so any log.Printf from the collector, stats
+// aggregator, or checkpoint path would paint raw text over the render —
+// e.g. the by_project drift guard bleeding "stats: by_project drift
+// detected" into the dashboard. Routing diagnostics to a file keeps them
+// for debugging without corrupting the screen. Only the TUI path calls
+// this; subcommands (stats / statsdump / cc-findings) keep stderr.
+func redirectLog(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	log.SetOutput(f)
+	return f, nil
 }
 
 // agentUnderCursor returns the agent ID whose zone contains the mouse
@@ -567,6 +586,13 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Keep diagnostics off the TUI's stdout/stderr — see redirectLog.
+	// A failure here is non-fatal: the dashboard is more valuable than
+	// the log file, so fall through to the default (stderr) logger.
+	if logFile, err := redirectLog(coolantTmpPath("thermo.log")); err == nil {
+		defer logFile.Close()
 	}
 
 	zone.NewGlobal()
