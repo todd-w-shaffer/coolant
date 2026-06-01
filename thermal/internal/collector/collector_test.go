@@ -289,6 +289,68 @@ func TestRunWith_ProcsCollectedOnSlowCadence(t *testing.T) {
 	}
 }
 
+// TestRunWith_AdaptiveSourcesCachedBetweenRuns proves the per-field cache
+// retains GPU/battery values on the base ticks where those adaptive sources are
+// NOT due (they ran once at startup, then their long cadence skips them), while
+// swap/vm_stat refresh every tick. Guards against a future `slow = x` whole-
+// struct assignment that would zero the skipped sources each tick.
+func TestRunWith_AdaptiveSourcesCachedBetweenRuns(t *testing.T) {
+	snapCh := make(chan Snapshot, 256)
+	done := make(chan struct{})
+	defer close(done)
+
+	var gpuCalls, battCalls atomic.Int32
+	cfg := RunConfig{
+		FastCollect: fakeFast(1),
+		SlowCollect: fakeSlow(7777), // swap/mem — refreshes every base tick
+		GPUCollect: func(context.Context) (float64, bool) {
+			gpuCalls.Add(1)
+			return 5, true // flat (< GPUFlatThreshold) → backs off to GPUIdleInterval
+		},
+		BatteryCollect: func(context.Context) SystemStats {
+			battCalls.Add(1)
+			return SystemStats{BatteryPresent: true, BatteryPercent: 88}
+		},
+		NetCheck: fakeNet(true),
+	}
+
+	go RunWith(snapCh, 10*time.Millisecond, done, cfg)
+
+	// The slow loop ticks at SlowInterval (1s). GPU (15s) and battery (20s) are
+	// due only on the first slow tick (~1s); the second base tick (~2s) skips
+	// them while swap still runs. Collect past the 2nd tick.
+	deadline := time.After(2300 * time.Millisecond)
+	var last Snapshot
+	var got bool
+	for done := false; !done; {
+		select {
+		case s := <-snapCh:
+			last, got = s, true
+		case <-deadline:
+			done = true
+		}
+	}
+
+	if !got {
+		t.Fatal("no snapshots received")
+	}
+	if g := gpuCalls.Load(); g != 1 {
+		t.Errorf("GPU collector ran %d times, want 1 (due only on the first slow tick)", g)
+	}
+	if b := battCalls.Load(); b != 1 {
+		t.Errorf("battery collector ran %d times, want 1 (due only on the first slow tick)", b)
+	}
+	if last.System.GPUPercent != 5 {
+		t.Errorf("GPU value not retained across a skipped tick: got %v, want 5", last.System.GPUPercent)
+	}
+	if !last.System.BatteryPresent || last.System.BatteryPercent != 88 {
+		t.Errorf("battery value not retained across a skipped tick: %+v", last.System)
+	}
+	if last.System.MemUsedBytes != 7777 {
+		t.Errorf("swap/mem should refresh every tick: got %v, want 7777", last.System.MemUsedBytes)
+	}
+}
+
 func TestRunWith_ClosesChannelOnDone(t *testing.T) {
 	snapCh := make(chan Snapshot, 16)
 	done := make(chan struct{})

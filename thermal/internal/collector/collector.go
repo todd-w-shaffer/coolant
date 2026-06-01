@@ -15,8 +15,14 @@ import (
 // FastCollector samples CPU via cgo (no subprocess). Runs on the fast loop.
 type FastCollector func() Snapshot
 
-// SlowCollector gathers swap/vm_stat/GPU via subprocesses.
+// SlowCollector gathers a slow-changing stat group via subprocesses. Used for
+// the fixed-1s swap+vm_stat group and the slow-cadence battery group.
 type SlowCollector func(ctx context.Context) SystemStats
+
+// GPUCollector reads GPU utilization %. Runs on the adaptive GPU cadence.
+// ok is false on a read/parse failure, so the scheduler keeps the last value
+// and retries instead of treating the flake as a genuine idle reading.
+type GPUCollector func(ctx context.Context) (pct float64, ok bool)
 
 // NetChecker probes API reachability.
 type NetChecker func(ctx context.Context) bool
@@ -40,10 +46,12 @@ type ProcSampler func(ctx context.Context) ProcSample
 // ProcCollect may be nil — the loop then delivers snapshots with no
 // process-tree data (used by tests that only exercise the CPU/slow paths).
 type RunConfig struct {
-	FastCollect FastCollector
-	SlowCollect SlowCollector
-	ProcCollect ProcSampler
-	NetCheck    NetChecker
+	FastCollect    FastCollector
+	SlowCollect    SlowCollector // swap + vm_stat, every base tick (fixed 1s)
+	GPUCollect     GPUCollector  // GPU %, adaptive cadence (backs off when flat)
+	BatteryCollect SlowCollector // battery fields, slow cadence (BatteryInterval)
+	ProcCollect    ProcSampler
+	NetCheck       NetChecker
 }
 
 // DefaultRunConfig returns production dependencies.
@@ -55,17 +63,20 @@ func DefaultRunConfig() RunConfig {
 		byPID:    make(map[int]rawProc, 512),
 	}
 	return RunConfig{
-		FastCollect: collectFast,
-		SlowCollect: CollectSlowStats,
-		ProcCollect: collectProcs(pc),
-		NetCheck:    CheckOnline,
+		FastCollect:    collectFast,
+		SlowCollect:    CollectSwapVM,
+		GPUCollect:     CollectGPU,
+		BatteryCollect: CollectBattery,
+		ProcCollect:    collectProcs(pc),
+		NetCheck:       CheckOnline,
 	}
 }
 
 // Run starts two decoupled collector loops:
-//   - Fast loop (interval): CPU (cgo, no subprocess) + procs — drives sparklines.
-//   - Slow loop (1s): network reachability + swap/vm_stat/GPU (subprocess-heavy
-//     stats that change slowly). Cached results merge into each fast-loop Snapshot.
+//   - Fast loop (interval): CPU (cgo, no subprocess) — drives the CPU sparkline.
+//   - Slow loop (1s base tick): swap/vm_stat + token tail + process-tree scan
+//     every tick; network, GPU, and battery on their own longer adaptive
+//     cadence (see slowSchedule). Cached results merge into each fast Snapshot.
 //
 // Both loops send Snapshots to ch. The fast loop carries last-known slow stats
 // and online state so every snapshot is complete.
@@ -88,64 +99,137 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 	)
 	tokenCollector := NewTokenCollector()
 
-	// A nil ProcCollect (tests that exercise only the CPU/slow paths) becomes a
-	// no-op sampler, so the slow loop's fan-out stays unconditional instead of
-	// re-deriving nil-ness across the WaitGroup count, the goroutine, and the merge.
+	// Nil sub-collectors (tests exercising only a subset) become no-ops, so the
+	// always-run base group (swap/vm_stat + token tail + procs) stays
+	// unconditional. The adaptive sources (net/GPU/battery) are run-when-due, so
+	// a nil one is simply never due.
+	slowCollect := cfg.SlowCollect
+	if slowCollect == nil {
+		slowCollect = func(context.Context) SystemStats { return SystemStats{} }
+	}
 	procCollect := cfg.ProcCollect
 	if procCollect == nil {
 		procCollect = func(context.Context) ProcSample { return ProcSample{} }
 	}
 
-	// Slow loop: network + swap/vm_stat/GPU + process-tree scan at 1s
+	// Slow loop: ticks at SlowInterval (1s). The base group (swap/vm_stat,
+	// tokens, procs) runs every tick; network, GPU, and battery poll on their
+	// own longer adaptive cadence (see slowSchedule) so an idle laptop forks
+	// ioreg/pmset/net far less often. Per-field cache merge: each source
+	// refreshes only its own fields, so sources skipped this tick keep their
+	// last value.
 	go func() {
-		netTicker := time.NewTicker(config.SlowInterval)
-		defer netTicker.Stop()
+		ticker := time.NewTicker(config.SlowInterval)
+		defer ticker.Stop()
+		sched := newSlowSchedule()
+		localOnline := false // goroutine-local mirror that drives the net cadence
 		for {
 			select {
 			case <-done:
 				return
-			case <-netTicker.C:
+			case <-ticker.C:
+				now := time.Now()
+				netDue, gpuDue, battDue := sched.due(now, localOnline)
+				runNet := netDue && cfg.NetCheck != nil
+				runGPU := gpuDue && cfg.GPUCollect != nil
+				runBatt := battDue && cfg.BatteryCollect != nil
+
 				ctx, cancel := context.WithTimeout(context.Background(), config.CollectTimeout)
 
-				// Run network check, slow stats, token tail, and the process-tree
-				// scan concurrently. Procs ride the slow loop now (was the fast
-				// loop) — the tree changes too slowly to justify a 150ms `ps` fork.
-				var netResult bool
-				var statsResult SystemStats
-				var tokensResult TokenStats
-				var procResult ProcSample
+				var (
+					netResult    bool
+					swapVM       SystemStats
+					gpuResult    float64
+					gpuOK        bool
+					battResult   SystemStats
+					tokensResult TokenStats
+					procResult   ProcSample
+				)
 				var wg sync.WaitGroup
 
-				wg.Add(4)
+				// wg.Add(1) immediately before each go — the count can't desync
+				// from the goroutines the way a precomputed total would.
+				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					netCtx, netCancel := context.WithTimeout(ctx, config.NetCheckTimeout)
-					netResult = cfg.NetCheck(netCtx)
-					netCancel()
+					swapVM = slowCollect(ctx)
 				}()
-				go func() {
-					defer wg.Done()
-					statsResult = cfg.SlowCollect(ctx)
-				}()
+				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					tokensResult = tokenCollector.Tick(time.Now())
 				}()
+				wg.Add(1)
 				go func() {
 					defer wg.Done()
 					procResult = procCollect(ctx)
 				}()
+				if runNet {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						netCtx, netCancel := context.WithTimeout(ctx, config.NetCheckTimeout)
+						netResult = cfg.NetCheck(netCtx)
+						netCancel()
+					}()
+				}
+				if runGPU {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						gpuResult, gpuOK = cfg.GPUCollect(ctx)
+					}()
+				}
+				if runBatt {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						battResult = cfg.BatteryCollect(ctx)
+					}()
+				}
 				wg.Wait()
 				cancel()
 
 				mu.Lock()
-				online = netResult
-				slow = statsResult
+				// swap/vm_stat refresh every tick (fixed cadence — the
+				// decompression counter is a per-tick delta).
+				slow.SwapUsedBytes = swapVM.SwapUsedBytes
+				slow.SwapTotalBytes = swapVM.SwapTotalBytes
+				slow.MemUsedBytes = swapVM.MemUsedBytes
+				slow.Decompressions = swapVM.Decompressions
+				if runNet {
+					online = netResult
+					localOnline = netResult
+				}
+				if runGPU && gpuOK {
+					slow.GPUPercent = gpuResult
+				}
+				if runBatt {
+					slow.BatteryPresent = battResult.BatteryPresent
+					slow.BatteryPercent = battResult.BatteryPercent
+					slow.BatteryState = battResult.BatteryState
+					slow.BatteryTimeRemaining = battResult.BatteryTimeRemaining
+				}
 				tokens = tokensResult
 				procs = procResult
 				procSeq++
-				lastSlowSuccess = time.Now()
+				lastSlowSuccess = now
 				mu.Unlock()
+
+				// Record runs and re-derive the GPU cadence from its reading.
+				// (slowSchedule is goroutine-local, so no lock needed.)
+				if runNet {
+					sched.markNet(now)
+				}
+				if runGPU && gpuOK {
+					// Only a successful read advances the GPU cadence. A failed
+					// read leaves lastGPU unmoved, so GPU stays due and retries on
+					// the next base tick instead of backing off on a flake.
+					sched.markGPU(now, gpuResult)
+				}
+				if runBatt {
+					sched.markBattery(now)
+				}
 			}
 		}
 	}()

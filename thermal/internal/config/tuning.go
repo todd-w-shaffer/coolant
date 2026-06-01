@@ -21,6 +21,32 @@ const (
 	EventInterval   = 500 * time.Millisecond // JSONL event log poll rate
 )
 
+// ── Adaptive slow-source cadence ───────────────────────────
+//
+// The slow loop ticks at SlowInterval (1s) — its floor, kept for swap/vm_stat
+// (the decompression delta needs a fixed cadence), tokens, and procs. The
+// subprocess-heavy, slow-changing sources poll on their own longer cadence
+// checked each base tick, so an idle laptop forks ioreg/pmset/net far less
+// often. "Balanced" profile: meaningful power saving, readings lag ≤~20s idle.
+const (
+	// Battery % changes once per minute at most, and pmset is the highest-latency
+	// probe (~6ms, IOKit-bound) — poll it every 20s, not every second.
+	BatteryInterval = 20 * time.Second
+
+	// GPU adapts: while utilization is flat/idle (below GPUFlatThreshold) the
+	// ioreg fork backs off to GPUIdleInterval; once a read shows real load it
+	// polls every base tick (GPUActiveInterval) to track it. A flat GPU is the
+	// common idle case, where ioreg is the heaviest probe.
+	GPUActiveInterval = 1 * time.Second
+	GPUIdleInterval   = 15 * time.Second
+	GPUFlatThreshold  = 10.0 // % Device Utilization below which GPU counts as idle
+
+	// Connectivity rarely flips. Poll every NetOnlineInterval while reachable;
+	// drop to NetFailInterval after a failure so an outage still surfaces fast.
+	NetOnlineInterval = 12 * time.Second
+	NetFailInterval   = 3 * time.Second
+)
+
 // DefaultPageSize is the fallback macOS page size when hw.pagesize is unavailable.
 const DefaultPageSize int64 = 16384
 

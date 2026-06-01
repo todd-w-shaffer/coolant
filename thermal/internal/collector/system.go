@@ -89,17 +89,17 @@ func CollectCPU() SystemStats {
 	return stats
 }
 
-// CollectSlowStats gathers swap, memory (vm_stat), and GPU via subprocesses.
-// Returns a partially populated SystemStats (only slow-changing fields).
-// Called from the slow loop (1s) to avoid spawning 3 processes every 150ms.
-func CollectSlowStats(ctx context.Context) SystemStats {
+// CollectSwapVM gathers swap (sysctl) + memory/decompressions (vm_stat) via two
+// concurrent subprocesses. These are the cheap, fixed-1s probes — vm_stat's
+// decompression counter is a per-tick delta, so its cadence must stay fixed.
+func CollectSwapVM(ctx context.Context) SystemStats {
 	staticSysctl.once.Do(initStaticSysctl)
 
 	type result struct {
 		key string
 		val string
 	}
-	ch := make(chan result, 4)
+	ch := make(chan result, 2)
 
 	go func() {
 		out, _ := execCmd(ctx, "sysctl", "-n", "vm.swapusage")
@@ -109,21 +109,9 @@ func CollectSlowStats(ctx context.Context) SystemStats {
 		out, _ := execCmd(ctx, "vm_stat")
 		ch <- result{"vmstat", out}
 	}()
-	go func() {
-		// Call ioreg directly — parseGPU regex-matches the value from the full
-		// output, so the old `| grep 'Device Utilization'` shell wrapper (which
-		// forked an extra bash + grep per tick) is redundant.
-		out, _ := execCmd(ctx, "ioreg", "-r", "-d", "1", "-c", "AGXAccelerator")
-		ch <- result{"gpu", out}
-	}()
-	go func() {
-		out, _ := execCmd(ctx, "pmset", "-g", "batt")
-		ch <- result{"battery", out}
-	}()
 
 	var stats SystemStats
-
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 2; i++ {
 		r := <-ch
 		switch r.key {
 		case "swap":
@@ -138,14 +126,57 @@ func CollectSlowStats(ctx context.Context) SystemStats {
 				cumDecomps := parseVMStatField(r.val, "Decompressions")
 				stats.Decompressions = sampleDecompressions(cumDecomps)
 			}
-		case "gpu":
-			parseGPU(r.val, &stats)
-		case "battery":
-			parseBattery(r.val, &stats)
 		}
 	}
-
 	return stats
+}
+
+// CollectGPU reads GPU Device Utilization % via ioreg. Called on the adaptive
+// GPU cadence (backs off when idle). ioreg is the heaviest probe, so polling it
+// only when GPU load is present is the largest slow-loop power win. parseGPU
+// regex-matches the value from the full output — no `| grep` shell wrapper.
+//
+// Returns ok=false on a read/parse failure so the scheduler can tell a flake
+// apart from a genuine idle reading: a failed read must NOT drive the cadence
+// to back off (which would mask real load for a full idle interval) and must
+// NOT clobber the last-good cached value with a spurious 0%.
+func CollectGPU(ctx context.Context) (pct float64, ok bool) {
+	out, err := execCmd(ctx, "ioreg", "-r", "-d", "1", "-c", "AGXAccelerator")
+	if err != nil {
+		return 0, false
+	}
+	var stats SystemStats
+	if !parseGPU(out, &stats) {
+		return 0, false
+	}
+	return stats.GPUPercent, true
+}
+
+// CollectBattery reads battery state via pmset. Called on the slow battery
+// cadence — pmset is the highest-latency probe for a once-per-minute value.
+func CollectBattery(ctx context.Context) SystemStats {
+	out, _ := execCmd(ctx, "pmset", "-g", "batt")
+	var stats SystemStats
+	parseBattery(out, &stats)
+	return stats
+}
+
+// gpuCadence returns the wait before the next GPU read: a flat (idle) GPU backs
+// off to GPUIdleInterval; an active GPU polls every base tick so load is tracked.
+func gpuCadence(lastReading float64) time.Duration {
+	if lastReading < config.GPUFlatThreshold {
+		return config.GPUIdleInterval
+	}
+	return config.GPUActiveInterval
+}
+
+// netCadence returns the wait before the next connectivity check: slow while
+// reachable, fast after a failure so an outage surfaces promptly.
+func netCadence(online bool) time.Duration {
+	if online {
+		return config.NetOnlineInterval
+	}
+	return config.NetFailInterval
 }
 
 func execCmd(ctx context.Context, name string, args ...string) (string, error) {
@@ -182,17 +213,20 @@ var swapRe = regexp.MustCompile(`total\s*=\s*([\d.]+)M.*used\s*=\s*([\d.]+)M`)
 var gpuRe = regexp.MustCompile(`"Device Utilization %"=(\d+)`)
 
 // parseGPU extracts Device Utilization % from ioreg AGXAccelerator output.
-func parseGPU(s string, stats *SystemStats) {
+// Returns false when no utilization value was found, so callers can tell a
+// failed/empty read apart from a genuine 0% reading.
+func parseGPU(s string, stats *SystemStats) bool {
 	matches := gpuRe.FindStringSubmatch(s)
 	if len(matches) < 2 {
-		return
+		return false
 	}
 	v, err := strconv.Atoi(matches[1])
 	if err != nil {
 		log.Printf("coolant: parse GPU utilization %q: %v", matches[1], err)
-		return
+		return false
 	}
 	stats.GPUPercent = float64(v)
+	return true
 }
 
 // parseSwap extracts swap total/used from sysctl vm.swapusage output.
