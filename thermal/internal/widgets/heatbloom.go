@@ -18,6 +18,13 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
+// bloomRestEps is the heat-spring rest threshold for AtRest (applied to both
+// the position gap and the velocity). It's a heuristic, not a precise
+// render-resolution bound: the byte-stability settle gate backstops it, so it
+// only has to read false on a genuine target move (a large position gap) and
+// true once the spring has effectively converged.
+const bloomRestEps = 0.005
+
 // HeatBloom is a background-only widget with the standard coolant
 // lifecycle (SetSize, Update, AnimTick, View/BgAt). It holds no text,
 // renders nothing by itself, and does not advance state on Update alone —
@@ -73,6 +80,17 @@ func (b *HeatBloom) Update(s *model.AppState) {
 		return
 	}
 	b.setTarget(s.CompositeHeat())
+}
+
+// AtRest reports whether the heat spring has settled at its target — position
+// and velocity both within bloomRestEps. The model's tick-stop consults this:
+// once the bloom is at rest (and the breathe oscillator is frozen by calm) the
+// bloom contributes no per-tick motion, and a later Update that moves the
+// target drives AtRest false so the frozen tick wakes to ease the new heat.
+// The byte-stability gate backstops the settle side, so this only has to read
+// false on a genuine target move (a large position-vs-target gap).
+func (b *HeatBloom) AtRest() bool {
+	return math.Abs(b.heat-b.heatTarget) < bloomRestEps && math.Abs(b.heatVel) < bloomRestEps
 }
 
 // setTarget assigns the spring target, snapping heat to it on the very

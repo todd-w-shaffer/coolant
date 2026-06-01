@@ -161,6 +161,27 @@ func TestHeatBloomAnimTickClampsHeat(t *testing.T) {
 	}
 }
 
+func TestHeatBloomAtRest(t *testing.T) {
+	b := newTestBloom(t)
+	b.SetSize(40, 2)
+	// Primed at a target → at rest immediately (heat snapped to target, vel 0).
+	b.setTarget(0.3)
+	if !b.AtRest() {
+		t.Fatalf("expected at rest right after priming: heat=%v target=%v vel=%v", b.heat, b.heatTarget, b.heatVel)
+	}
+	// A target move must read NOT at rest until the spring eases there.
+	b.setTarget(0.9)
+	if b.AtRest() {
+		t.Errorf("expected NOT at rest immediately after a target move (heat=%v target=%v)", b.heat, b.heatTarget)
+	}
+	for i := 0; i < 240 && !b.AtRest(); i++ {
+		b.AnimTick(true) // calm: only the heat spring advances
+	}
+	if !b.AtRest() {
+		t.Errorf("expected the spring to settle at rest after easing: heat=%v target=%v vel=%v", b.heat, b.heatTarget, b.heatVel)
+	}
+}
+
 func TestHeatBloomFirstUpdatePrimes(t *testing.T) {
 	b := newTestBloom(t)
 	b.SetSize(40, 2)

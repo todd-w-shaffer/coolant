@@ -118,6 +118,14 @@ func (h *Headline) AnimTick() {
 	h.battery.AnimTick(calm)
 }
 
+// EasingSpringsAtRest reports whether the headline's data-target springs — the
+// heat bloom and the LCD temperature — have both settled. The model folds this
+// into its tick-stop; see the model's settled() for why these springs need a
+// rest signal the calm-signal set can't provide.
+func (h *Headline) EasingSpringsAtRest() bool {
+	return h.bloom.AtRest() && h.temp.AtRest()
+}
+
 // rowPair is a 2-row rendered fragment at a fixed visible width. visWidth
 // counts cells (post-ANSI), so layers can pad/align deterministically.
 type rowPair struct {

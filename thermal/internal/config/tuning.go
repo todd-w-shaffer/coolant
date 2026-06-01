@@ -83,6 +83,21 @@ const (
 	// stops — no gauge freezes mid-ease. See AppState.IsCalm.
 	CalmStableSnapshots = 4
 
+	// SettleStableFrames is how many consecutive byte-identical renders
+	// (counted by layout.RenderContent, which runs once per bubbletea render —
+	// animation ticks AND snapshot/event repaints alike) must pass — on top of
+	// IsCalm — before the model stops re-arming the animation tick. IsCalm gates
+	// on the data settling; this gates on the rendered *output* actually holding
+	// still, so motion IsCalm can't see (KITT scan over completed dots, residual
+	// spring/peak-decay motion) keeps the tick alive instead of freezing
+	// mid-animation. The unit is renders, not wall-clock: at 15fps active it's
+	// ≲1s, but snapshot repaints interleave so it can settle sooner. Sized to
+	// ride out short peak-decay quantization plateaus; a peak marker frozen one
+	// level high in a rare long plateau is cosmetic and self-heals on the next
+	// activity wake (e.g. CPU crossing the display deadband). See model.IsCalm +
+	// Horizontal.FrameStableCount.
+	SettleStableFrames = AnimFPS
+
 	// DisplayDeadbandPct is the minimum change (percentage points) from the
 	// last *displayed* CPU% before the readout commits a new value. Sub-band
 	// jitter is held, so the number doesn't flicker on small wiggle and the

@@ -8,8 +8,9 @@
   15s flat/1s active, network 12s/3s; vm_stat+swap fixed 1s).
 - The whole **collector tier (1-3) is done** and on branch `token-counter-on-main`
   (not pushed). All green: 18/18 Go packages, 286/286 bats.
-- **Phases 4-7 deferred** to a later session. Phase 4 needs a re-plan first —
-  see the ⚠ note on Phase 4 below.
+- **Phases 4-7 in progress (2026-06-01 session).** Phases 4+5 re-planned and
+  MERGED into one settle-gated tick-stop + frame-hash memoization phase — see the
+  merged section below. Implementing 4+5 → 6 → 7 this session.
 
 ## Goal
 Cut the idle CPU/power the always-on thermal strip burns. It currently holds
@@ -72,45 +73,91 @@ Findings backing every claim: `docs/_drafts/efficiency/` — `00-roadmap.md`
     already in-snapshot, `types.go:30`). (`02` F4)
   - **vm_stat + swap stay fixed at 1 s** (see Non-goals).
 
-**Phase 4 — event-driven anim tick-stop (the idle battery prize). ⚠ NEEDS RE-PLAN
-before implementing.** (`05` F4)
-- **Why re-plan (found 2026-06-01 while scoping P4):** the planned
-  `AllSparklinesFlat()` predicate is INSUFFICIENT — idle byte-stability has motion
-  sources beyond sparklines, so gating the tick-stop on `IsCalm() &&
-  AllSparklinesFlat()` would freeze them mid-animation (same class as the v1
-  revert):
-  - **KITT highscore scanner.** `breathedots.go:98` advances `staleSweep +=
-    KITTSweepRate` on EVERY AnimTick, unconditionally. Completed agents
-    (`CompletedAgentCount`) are NOT in `IsCalm`'s `AgentCount()` check
-    (`state.go:262` vs `:580`), so with completed dots on screen + flat metrics,
-    `IsCalm()` is true while the KITT scan animates every frame. Tick-stop →
-    frozen KITT sweep.
-  - **Peak-marker decay.** `gauges.go:224` decays `peaks[i] *= decayRate` each
-    tick after a spike, moving the rendered marker until it settles.
-  - A hand-enumerated "everything flat" predicate must catch every source
-    (springs, reveal, scroll, peak decay, KITT scan, breath, LCD temp, battery
-    pulse). Miss one → freeze. This is the trap the `05` findings warned about.
-- **The fix: merge P4 with P5.** The robust settle signal is ACTUAL byte-stability
-  of the composed frame — the render signature P5 builds. Build the signature
-  first, gate the tick-stop on `IsCalm() && signature unchanged for K frames`,
-  and reuse the same signature for memoization. Then the v1 machinery applies
-  cleanly (verified intact at revert `11cde8c`):
-- Re-introduce the reverted machinery, gated on the *settle* signal (render
-  signature stable), NOT the weaker `IsCalm()` alone:
-  - `main.go:336` `animTickMsg`: when settled, return `m, nil` (stop re-arming);
-    else `m, animTick()`.
-  - `wakeCmd` re-arm from `snapshotMsg`/`gateEventMsg` (`main.go:282,296`), with
-    the `animating bool` idempotency guard (bubbletea ticks don't dedupe, #436).
-  - The 150 ms snapshot stream stays the unconditional wake source → can't latch.
-  - Breath freeze already shipped (precondition).
+**Phase 4+5 — settle-gated anim tick-stop + frame-hash scan memoization
+(MERGED; re-planned 2026-06-01).** (`05` F4, `03` F3/F4)
 
-**Phase 5 — compositor frame memoization + fold in `zone.Scan`.** (`03` F3/F4)
-- `layout/horizontal.go:200` / `main.go:353` — hash the display-granularity
-  inputs (the set `calmSignals` already computes, `state.go:223-232`) + anim
-  phase counters + ALL mode/overlay/hover/filter/agent-spring/KITT/LCD-ghost/
-  notification flags; on a hit, return the cached *scanned* string and skip both
-  the rebuild and `zone.Scan`. Do it at the layout boundary, not per-widget.
-  (lipgloss `Style` reuse + rendered-string caching verified sound.)
+The two phases share one mechanism — a hash of the **composed frame string**
+(the output, NOT an enumerated input key) — so they ship together.
+
+- **Why the output hash, not an input key (the re-plan correction).** The
+  original P5 proposed hashing "all display-granularity inputs + phase counters
+  + every mode/overlay/hover/filter/KITT/LCD/notification flag" and skipping the
+  rebuild on a hit. That is the enumeration trap the `05` findings and the memory
+  entry warn about: any missed input → a frame that should have changed returns
+  stale → freeze. Two verified calm-time animators are NOT in `calmSignals`
+  (`state.go:224-233`) and would have to be hand-added to such a key:
+  - **KITT highscore scanner** — `breathedots.go:98` advances `staleSweep +=
+    KITTSweepRate` every AnimTick whenever completed/stale dots are on screen.
+    Completed agents aren't in `IsCalm`'s `AgentCount()` (`state.go:262`), so
+    `IsCalm()` is true while the scan animates.
+  - **Peak-marker decay** — `gauges.go:224` decays `peaks[i] *= PeakDecayRate`
+    (half-life 1.27s, `tuning.go:76`) for seconds after a spike.
+  Hashing the *composed string* catches every motion source by construction —
+  springs, reveal, scroll, peak decay, KITT, breath, LCD, battery pulse — with
+  zero enumeration. That is the structural fix; the input-key memo is dropped.
+
+- **Precondition already shipped:** the breath (the only every-frame-regardless-
+  of-data animator) is frozen at calm — `framerate_diag_test.go:141`
+  `TestIdleByteStableUnderJitter` already asserts the composed View is
+  byte-identical frame-to-frame at calm. So at calm *without* decorative motion
+  the frame is genuinely stable; with KITT/peak motion it is not (correctly).
+
+- **The cache (Phase 5 half), at the layout boundary (`horizontal.go`).** A
+  dirty-flag cache was rejected — `main.go` mutates `AppState` directly (e.g.
+  category filter) without a `layout.Update`, so a dirty flag would miss
+  invalidations (the cache-side enumeration trap). Instead `RenderContent(mouse
+  bool)` always recomposes via `View()` (so it can never go stale) and keys the
+  cache purely on the composed bytes: `rawSig` (`maphash` over the pre-scan
+  frame) gates the `zone.Scan` memo — identical raw bytes ⇒ identical scan, so
+  the scan is reused; `dispSig` (over the displayed bytes — post-scan in mouse
+  mode, raw otherwise) drives `FrameStableCount`, the byte-stability settle
+  signal. The second hash is computed only on the mouse-mode scan-miss branch;
+  `!mouse` and memo-hit reuse `rawSig`/the cached `dispSig`. `main.View()` (value
+  receiver — cannot cache in `m`) delegates to the pointer-held layout. Single
+  compose per render; bubbletea's `View()` is the only caller per render and the
+  tick handler reads the resulting `FrameStableCount` one render later.
+
+- **The tick-stop (Phase 4 half), in the model (`main.go`).** Re-introduce the
+  reverted machinery (intact at `11cde8c`), driven by one unified `settled()`
+  predicate so freeze and wake are symmetric (no asymmetric edge to latch):
+  - `settled() = IsCalm() && FrameStableCount() >= SettleStableFrames &&
+    EasingSpringsAtRest()`. `RenderContent` drives `FrameStableCount` from the
+    displayed bytes (one render behind the just-advanced tick).
+  - `animTickMsg`: after `m.layout.AnimTick()`, if `settled()` → `animating =
+    false; return m, nil`; else `return m, animTick()`.
+  - `wakeCmd` on `snapshotMsg`/`gateEventMsg` re-arms on the `!animating &&
+    !settled()` edge, with the `animating bool` idempotency guard (bubbletea
+    ticks don't dedupe, #436). `forceWake` (unconditional while frozen) is a
+    distinct, smaller helper for UI edges — a keypress toggling a sparkline or a
+    resize changes what should animate without moving any data/spring input, so
+    `settled()` can't see it and `wakeCmd` wouldn't fire.
+  - **Spring-latch fix (`EasingSpringsAtRest`), structural not enumerated.** The
+    heat-bloom and LCD-temperature springs ease over many ticks toward
+    composite-heat-derived targets whose inputs (swap, spawn) are NOT sparkline
+    calm signals. A swap spike moves those targets without breaking `IsCalm`, so a
+    naive freeze would latch them mid-ease. The fix asks the springs whether they
+    are at rest (position≈target, velocity≈0) — `HeatBloom.AtRest()` /
+    `SegmentReadout.AtRest()` → `Headline.EasingSpringsAtRest()` →
+    `Horizontal.EasingSpringsAtRest()` — rather than re-deriving the heat formula
+    into the calm-signal set (the same input-enumeration the render signature was
+    built to avoid). A target move drives a spring off-rest → `settled()` false →
+    `wakeCmd` re-arms → it eases → re-rests → re-freezes. (Found via `/simplify`
+    altitude review of the first-draft `calmSignals`-enumeration approach.)
+  - **Liveness:** even when the anim tick is stopped, the unconditional 150ms
+    snapshot stream runs `Update`→`View` every snapshot, so any data change
+    repaints within one snapshot regardless of the freeze — the tick is only for
+    *sub-snapshot* animation. Can't latch.
+  - `SettleStableFrames` is a new `config/tuning.go` constant (`AnimFPS`), counted
+    in renders (RenderContent runs per bubbletea render — ticks AND snapshot
+    repaints), sized to ride out short peak-decay quantization plateaus; a rare
+    one-level-high frozen peak marker is cosmetic and self-heals on the next
+    activity wake. Tunable; the settle tests are the guard.
+
+- **Expected (correct) non-win:** a session with completed-agent KITT dots
+  on screen animates forever by design, so it never settles — the battery prize
+  lands at true idle (`SessionCount==0` → `idleView`, no headline/KITT/sparklines,
+  static) and at active-calm with no decorative motion. `--kitt-highscore=false`
+  widens the win for users who don't want the scan. This is deliberate, not a gap.
 
 **Phase 6 — active-frame allocation cleanup (helps when busy).** (`03` F1/F2/F5/F6)
 - `headline.go` — cache invariant `lipgloss.Style` structs (bgPad, cat-cell per

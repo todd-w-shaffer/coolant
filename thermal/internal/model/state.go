@@ -221,6 +221,14 @@ func (s *AppState) ReadoutCPUPercent() float64 { return s.readoutCPU }
 // frozen mid-stream, so the freeze must not engage while any of them is moving.
 // GPU and swap are deliberately excluded: they render as static text with no
 // per-frame scroll, so the snapshot path repaints them fine even while frozen.
+//
+// Note this set does NOT chase every spring's input. The heat-bloom and
+// LCD-temperature springs ease toward composite-heat-derived targets (which
+// include swap/spawn), but enumerating those inputs here would be the same
+// input-guessing the render-signature settle was designed to avoid. Instead the
+// model gates the tick-stop on whether those springs are actually at rest (see
+// the model's settled() / layout.EasingSpringsAtRest), which detects a target
+// move directly without re-deriving its formula.
 func (s *AppState) calmSignals() [5]int64 {
 	sys := s.Current.System
 	return [5]int64{

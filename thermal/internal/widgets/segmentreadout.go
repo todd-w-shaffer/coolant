@@ -13,6 +13,10 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
+// lcdRestVelEps is the temperature-spring velocity threshold for AtRest
+// (units/tick). Below it the eased digit won't move another integer step.
+const lcdRestVelEps = 0.25
+
 // SegmentReadout renders the 7-segment-style temperature number for the
 // headline. It owns value + level, with spring-smoothed easing between
 // numeric positions to eliminate boundary flicker on EMA jitter.
@@ -86,6 +90,20 @@ func (s *SegmentReadout) AnimTick() {
 			s.value--
 		}
 	}
+}
+
+// AtRest reports whether the temperature spring has settled at its target —
+// the eased position is within half a unit of the raw target (so the displayed
+// integer matches and won't tick further) and velocity is negligible. The
+// model's tick-stop consults this: an Update that moves rawTarget drives the
+// gap large and AtRest false, so the frozen tick wakes to ease the LCD to the
+// new reading instead of latching at the stale one. Unseeded reads at rest
+// (nothing displayed yet).
+func (s *SegmentReadout) AtRest() bool {
+	if !s.seeded {
+		return true
+	}
+	return math.Abs(s.tempPos-s.rawTarget) < 0.5 && math.Abs(s.tempVel) < lcdRestVelEps
 }
 
 // Render paints both braille rows as three per-digit styled spans.
