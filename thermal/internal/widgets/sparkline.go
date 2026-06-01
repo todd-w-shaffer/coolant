@@ -76,26 +76,26 @@ func levelSplit(level int) (bottom, top int) {
 	return 4, level - 4
 }
 
-// valueToLevel maps a value to a braille height level (0–8). peak is the
-// height-ratio denominator; when logScale=true, the CALLER must pass
-// math.Log1p(rawPeak) so the per-column loop doesn't redo the invariant
-// transform on every column. Raw v is always used for the noise floor:
-// v<=0 for both modes; v<1 for log (below that log1p approaches 0); and
-// v<peak*0.02 for linear (linear's peak is raw, so the 2% rule works).
+// valueToLevel maps a value to a braille height level (1–8) for any present
+// sample, or 0 (blank) for an absent one. peak is the height-ratio denominator;
+// when logScale=true, the CALLER must pass math.Log1p(rawPeak) so the per-column
+// loop doesn't redo the invariant transform on every column.
 //
-// For TokenCrit=4000 with logScale=true, log1p(1)/log1p(4000) ≈ 8% —
-// the smallest visible burst still registers as a faint dot.
+// Level 0 — a blank cell — is reserved for an ABSENT sample, signalled by NaN
+// (the padding sentinel for a not-yet-full buffer). A present sample, even a
+// genuine 0 or a tiny fraction of peak, floors to level 1 (the baseline dot):
+// it's real data, not a hole. This is what stopped the "gaps flowing through"
+// the CPU sparkline — a genuinely-idle 0% reading is the baseline, not a missing
+// cell. See plans/cpu-sparkline-gaps.md.
 func valueToLevel(v, peak float64, logScale bool) int {
-	if v <= 0 {
-		return 0
+	if math.IsNaN(v) {
+		return 0 // absent sample → blank cell
+	}
+	if v < 0 {
+		v = 0 // spring undershoot etc. → baseline, not blank
 	}
 	if logScale {
-		if v < 1 {
-			return 0
-		}
 		v = math.Log1p(v)
-	} else if v < peak*0.02 {
-		return 0
 	}
 	level := int((v / peak) * float64(maxLevels))
 	if level > maxLevels {
@@ -180,7 +180,7 @@ func prepareSparkDataBuf(data []float64, width int, buf *SparkBufs) []float64 {
 		padded := buf.padData[:minRaw]
 		gap := minRaw - len(data)
 		for i := 0; i < gap; i++ {
-			padded[i] = 0
+			padded[i] = math.NaN() // absent sentinel — renders blank, never baseline
 		}
 		copy(padded[gap:], data)
 		src = padded
@@ -366,7 +366,11 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		colorVal := 0.0
 		var levL, levR int
 
-		if onL {
+		// NaN = absent sample (padding). valueToLevel already maps NaN→0, so the
+		// skipped block leaves levL/levR at 0 (blank) regardless; the guard here
+		// earns its keep by keeping NaN out of colorVal and the severity LUT.
+		// Don't remove either NaN check thinking it duplicates the other.
+		if onL && !math.IsNaN(vL) {
 			if vL < 0 {
 				vL = 0
 			}
@@ -374,7 +378,7 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 			colorVal = vL
 		}
 
-		if hasRight && onR {
+		if hasRight && onR && !math.IsNaN(vR) {
 			if vR < 0 {
 				vR = 0
 			}
