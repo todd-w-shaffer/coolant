@@ -3,6 +3,7 @@
 package model
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -112,6 +113,14 @@ type AppState struct {
 	// re-arming the animation tick.
 	metricStableCount int
 	prevCalm          [5]int64
+
+	// displayCPU is the deadbanded CPU% shown by the rates readout and fed to
+	// the CPU gauge spring + calm tracking. It holds steady through sub-band
+	// jitter (see updateDisplayCPU / config.DisplayDeadbandPct) so the number
+	// doesn't flicker and the dashboard can settle into calm. cpuSeeded forces
+	// the first sample to commit so cold start shows the real value, not 0.
+	displayCPU float64
+	cpuSeeded  bool
 }
 
 // NewAppState creates an initialized AppState.
@@ -146,8 +155,27 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.Headroom = EstimateHeadroom(s.TypeCounts, snap.System.MemUsedBytes, snap.System.MemTotalBytes)
 	s.updateThreatAndAlerts(&snap)
 	s.updateIdleTicker()
+	s.updateDisplayCPU()
 	s.updateCalmTracking()
 }
+
+// updateDisplayCPU applies the CPU% display deadband: the shown value only
+// moves when the raw sample is ≥ DisplayDeadbandPct from the currently displayed
+// value. Comparing against the displayed (not the previous raw) value means a
+// slow monotonic drift still accumulates past the band and commits, so the
+// readout can't stall indefinitely — and a value bouncing within the band stays
+// put, which is the flicker suppression we want. Runs before updateCalmTracking
+// so the deadbanded value feeds the calm signal set.
+func (s *AppState) updateDisplayCPU() {
+	raw := s.Current.System.CPUPercent
+	if !s.cpuSeeded || math.Abs(raw-s.displayCPU) >= config.DisplayDeadbandPct {
+		s.displayCPU = raw
+		s.cpuSeeded = true
+	}
+}
+
+// DisplayCPUPercent is the deadbanded CPU% for the rates readout and CPU gauge.
+func (s *AppState) DisplayCPUPercent() float64 { return s.displayCPU }
 
 // calmSignals returns the per-frame-animated signals at display granularity:
 // the five sparkline sources (widgets/gauges.go feeds CPU%, MEM%, decompression
@@ -159,7 +187,7 @@ func (s *AppState) Update(snap collector.Snapshot) {
 func (s *AppState) calmSignals() [5]int64 {
 	sys := s.Current.System
 	return [5]int64{
-		int64(sys.CPUPercent),
+		int64(s.displayCPU), // deadbanded — sub-band CPU jitter doesn't reset calm
 		int64(sys.MemPercent()),
 		sys.Decompressions,
 		int64(s.Current.Tokens.IOTokensPerSec),

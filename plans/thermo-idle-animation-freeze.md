@@ -92,8 +92,19 @@ deferred adaptive-burst Phase 2 — slow DOWN when quiet, not burst up.
   the committed CPU% so a sub-deadband wiggle doesn't perturb its spring (keeps
   it at rest → keeps calm reachable; bar/text stay consistent). Other gauge
   targets unchanged.
-- `thermal/internal/config/tuning.go` — add `DisplayDeadbandPct` (3) and
-  `DisplayMaxStaleSec` (~2) constants.
+- `thermal/internal/config/tuning.go` — add `DisplayDeadbandPct` (3). (No
+  `DisplayMaxStaleSec` — comparing against the last *displayed* value already
+  defeats slow drift, and a forced periodic refresh would re-introduce the
+  flicker the deadband removes.)
+- `thermal/internal/layout/horizontal.go` — `idleView` renders a second CPU%
+  readout (`:559`); switch it to the deadbanded value too, else the idle screen
+  flickers and repaints ~6.7×/sec while the tick is frozen. (Added during the
+  review pass — it's a missed CPU display path, not new scope.)
+- *Deliberately NOT deadbanded:* the LCD temperature pressure term
+  (`model/temperature.go:22`) keeps using raw CPU. It's a spring-eased focal
+  readout that freezes with the tick when calm (no flicker, no repaint), it
+  doesn't gate calm, and dampening the headline temperature is outside the
+  CPU%-readout scope.
 
 ## Failure modes to anticipate
 - **Double-armed tick → doubled/tripled frame rate.** Two wake sources

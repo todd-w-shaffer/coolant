@@ -409,6 +409,75 @@ func TestNotCalmWhenBatteryAlerting(t *testing.T) {
 	}
 }
 
+// ── CPU% display deadband (Phase 2) ──────────────────────────
+
+func TestDisplayCPUDeadbandHoldsJitter(t *testing.T) {
+	s := NewAppState()
+	s.Update(testSnap(t, withCPU(50)))
+	if got := s.DisplayCPUPercent(); got != 50 {
+		t.Fatalf("first commit: DisplayCPUPercent=%v, want 50", got)
+	}
+	// Sub-threshold jitter (±<3%) must not move the displayed value.
+	for _, j := range []float64{51, 49, 52, 48} {
+		s.Update(testSnap(t, withCPU(j)))
+		if got := s.DisplayCPUPercent(); got != 50 {
+			t.Errorf("jitter to %v: DisplayCPUPercent=%v, want held at 50", j, got)
+		}
+	}
+}
+
+func TestDisplayCPUSeedsFirstSampleBelowDeadband(t *testing.T) {
+	s := NewAppState()
+	s.Update(testSnap(t, withCPU(2))) // below the 3% band, but the first sample must commit
+	if got := s.DisplayCPUPercent(); got != 2 {
+		t.Errorf("cold start: DisplayCPUPercent=%v, want 2 (first sample seeds, not held at 0)", got)
+	}
+}
+
+func TestDisplayCPUDeadbandCommitsRealMove(t *testing.T) {
+	s := NewAppState()
+	s.Update(testSnap(t, withCPU(50)))
+	s.Update(testSnap(t, withCPU(54))) // ≥3 from displayed → commit
+	if got := s.DisplayCPUPercent(); got != 54 {
+		t.Errorf("real move: DisplayCPUPercent=%v, want 54", got)
+	}
+}
+
+func TestDisplayCPUDeadbandCommitsAccumulatedDrift(t *testing.T) {
+	s := NewAppState()
+	s.Update(testSnap(t, withCPU(50)))
+	// Slow monotonic drift: each step <3% from the displayed value → held.
+	for _, v := range []float64{51, 52, 52.5} {
+		s.Update(testSnap(t, withCPU(v)))
+		if s.DisplayCPUPercent() != 50 {
+			t.Fatalf("drift to %v should still hold 50, got %v", v, s.DisplayCPUPercent())
+		}
+	}
+	// Cumulative drift crosses the band → commit (no indefinite stall).
+	s.Update(testSnap(t, withCPU(53.5)))
+	if got := s.DisplayCPUPercent(); got != 53.5 {
+		t.Errorf("accumulated drift: DisplayCPUPercent=%v, want 53.5", got)
+	}
+}
+
+func TestCalmHoldsUnderSubThresholdCPUJitter(t *testing.T) {
+	s := NewAppState()
+	for i := 0; i < config.CalmStableSnapshots+1; i++ {
+		s.Update(testSnap(t, withCPU(50), withMem(8*GB, 16*GB)))
+	}
+	if !s.IsCalm() {
+		t.Fatalf("expected calm after stable snapshots")
+	}
+	// CPU jitter within the deadband must NOT break calm — the deadband exists
+	// precisely so sub-3% wiggle doesn't wake the dashboard.
+	for _, j := range []float64{51, 49, 52, 48} {
+		s.Update(testSnap(t, withCPU(j), withMem(8*GB, 16*GB)))
+		if !s.IsCalm() {
+			t.Errorf("CPU jitter to %v broke calm — deadband should absorb it", j)
+		}
+	}
+}
+
 func TestAgentStartCreatesRecord(t *testing.T) {
 	s := NewAppState()
 	ev := collector.GateEvent{

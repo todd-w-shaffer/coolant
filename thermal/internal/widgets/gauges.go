@@ -27,7 +27,7 @@ const (
 	SlotMEM
 	SlotDecomp // labeled SWAP on-screen — actually compressor decompressions/tick, not swap bytes
 	SlotToken
-	SlotPretty // chars÷4 estimate from transcript byte growth — mimics CC's UI counter
+	SlotPretty        // chars÷4 estimate from transcript byte growth — mimics CC's UI counter
 	NumSparklineSlots = 5
 )
 
@@ -152,7 +152,7 @@ func (g *Gauges) Update(state *model.AppState) {
 		return
 	}
 
-	g.targets[SlotCPU] = state.Current.System.CPUPercent
+	g.targets[SlotCPU] = state.DisplayCPUPercent() // deadbanded — see updateDisplayCPU
 	g.targets[SlotMEM] = state.Current.System.MemPercent()
 	g.targets[SlotDecomp] = float64(state.Current.System.Decompressions)
 	g.targets[SlotToken] = state.Current.Tokens.IOTokensPerSec
@@ -275,7 +275,7 @@ func (g *Gauges) View() string {
 		display  float64 // spring-animated value (for numeric readout)
 		max      float64
 		thresh   theme.SparkThresholds
-		dotIdx   int  // index into theme.GaugeDots (used for label color)
+		dotIdx   int // index into theme.GaugeDots (used for label color)
 		fmtVal   func(float64) string
 		logScale bool // log1p height transform — see Token/Pretty entries below
 	}

@@ -56,6 +56,14 @@ const (
 	// ~0.4s gauge spring settle, so springs are at rest by the time animation
 	// stops — no gauge freezes mid-ease. See AppState.IsCalm.
 	CalmStableSnapshots = 4
+
+	// DisplayDeadbandPct is the minimum change (percentage points) from the
+	// last *displayed* CPU% before the readout commits a new value. Sub-band
+	// jitter is held, so the number doesn't flicker on ±1-2% wiggle and the
+	// dashboard can reach calm. Comparing against the displayed value (not the
+	// last raw sample) means accumulated drift still crosses the band and
+	// commits, so there's no indefinite stall — no max-staleness timer needed.
+	DisplayDeadbandPct = 3.0
 )
 
 // PeakDecayForHalfLife returns the per-frame peak-decay multiplier that halves
