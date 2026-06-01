@@ -1,5 +1,16 @@
 # thermo power-efficiency roadmap (cool to the touch on a laptop)
 
+## Status (2026-06-01)
+- **Phase 1 shipped** — `4eb8a79` (GPU shell wrapper dropped; `ps` parse in place).
+- **Phase 2 shipped** — `dc79b99` (`ps` scan moved 150ms → 1s slow loop; spawn/death
+  rate gated on `ProcSeq` freshness).
+- **Phase 3 shipped** — `90cec59` (per-source adaptive cadence: battery 20s, GPU
+  15s flat/1s active, network 12s/3s; vm_stat+swap fixed 1s).
+- The whole **collector tier (1-3) is done** and on branch `token-counter-on-main`
+  (not pushed). All green: 18/18 Go packages, 286/286 bats.
+- **Phases 4-7 deferred** to a later session. Phase 4 needs a re-plan first —
+  see the ⚠ note on Phase 4 below.
+
 ## Goal
 Cut the idle CPU/power the always-on thermal strip burns. It currently holds
 ~5–7% of a core steadily even when the machine is 95% idle (measured below),
@@ -61,20 +72,37 @@ Findings backing every claim: `docs/_drafts/efficiency/` — `00-roadmap.md`
     already in-snapshot, `types.go:30`). (`02` F4)
   - **vm_stat + swap stay fixed at 1 s** (see Non-goals).
 
-**Phase 4 — event-driven anim tick-stop (the idle battery prize).** (`05` F4)
-- New `Gauges.AllSparklinesFlat() bool` (or `HasPendingMotion()`): every visible
-  slot's window filled AND samples equal across the visible span (catches both
-  the startup reveal and the post-burst token scroll the v1 revert froze).
-- `main.go:336` — when `IsCalm()` AND `AllSparklinesFlat()`, return `m, nil`
-  (stop re-arming) instead of `m, animTick()`.
-- Re-arm exactly once on the un-settle edge from the `snapshotMsg`/`gateEventMsg`
-  handlers (`main.go:282,296`) — the `wakeCmd` machinery the revert deleted, now
-  gated on the settle predicate, not the weaker `IsCalm()`.
-- Re-introduce the `animating bool` idempotency guard (revert deleted it) — two
-  wake sources must not double-arm (verified hazard: bubbletea ticks don't
-  dedupe, #436).
-- The 150 ms snapshot stream (`collector.go:130-159`) stays the unconditional
-  wake source → the freeze can't latch. Keep the breath freeze (already shipped).
+**Phase 4 — event-driven anim tick-stop (the idle battery prize). ⚠ NEEDS RE-PLAN
+before implementing.** (`05` F4)
+- **Why re-plan (found 2026-06-01 while scoping P4):** the planned
+  `AllSparklinesFlat()` predicate is INSUFFICIENT — idle byte-stability has motion
+  sources beyond sparklines, so gating the tick-stop on `IsCalm() &&
+  AllSparklinesFlat()` would freeze them mid-animation (same class as the v1
+  revert):
+  - **KITT highscore scanner.** `breathedots.go:98` advances `staleSweep +=
+    KITTSweepRate` on EVERY AnimTick, unconditionally. Completed agents
+    (`CompletedAgentCount`) are NOT in `IsCalm`'s `AgentCount()` check
+    (`state.go:262` vs `:580`), so with completed dots on screen + flat metrics,
+    `IsCalm()` is true while the KITT scan animates every frame. Tick-stop →
+    frozen KITT sweep.
+  - **Peak-marker decay.** `gauges.go:224` decays `peaks[i] *= decayRate` each
+    tick after a spike, moving the rendered marker until it settles.
+  - A hand-enumerated "everything flat" predicate must catch every source
+    (springs, reveal, scroll, peak decay, KITT scan, breath, LCD temp, battery
+    pulse). Miss one → freeze. This is the trap the `05` findings warned about.
+- **The fix: merge P4 with P5.** The robust settle signal is ACTUAL byte-stability
+  of the composed frame — the render signature P5 builds. Build the signature
+  first, gate the tick-stop on `IsCalm() && signature unchanged for K frames`,
+  and reuse the same signature for memoization. Then the v1 machinery applies
+  cleanly (verified intact at revert `11cde8c`):
+- Re-introduce the reverted machinery, gated on the *settle* signal (render
+  signature stable), NOT the weaker `IsCalm()` alone:
+  - `main.go:336` `animTickMsg`: when settled, return `m, nil` (stop re-arming);
+    else `m, animTick()`.
+  - `wakeCmd` re-arm from `snapshotMsg`/`gateEventMsg` (`main.go:282,296`), with
+    the `animating bool` idempotency guard (bubbletea ticks don't dedupe, #436).
+  - The 150 ms snapshot stream stays the unconditional wake source → can't latch.
+  - Breath freeze already shipped (precondition).
 
 **Phase 5 — compositor frame memoization + fold in `zone.Scan`.** (`03` F3/F4)
 - `layout/horizontal.go:200` / `main.go:353` — hash the display-granularity
