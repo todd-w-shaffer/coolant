@@ -48,6 +48,14 @@ const (
 	// marker decay; PeakDecayRate derives from it (see below) so the decay
 	// feel stays invariant to the frame rate.
 	peakDecayHalfLifeSec = 1.27
+
+	// CalmStableSnapshots is how many consecutive matching snapshots (after the
+	// baseline) must pass before the dashboard is judged "calm" and the
+	// animation tick freezes. At FastInterval ≈ 150ms that's ~5 snapshots of
+	// wall clock (baseline + 4 matches ≈ 750ms), comfortably longer than the
+	// ~0.4s gauge spring settle, so springs are at rest by the time animation
+	// stops — no gauge freezes mid-ease. See AppState.IsCalm.
+	CalmStableSnapshots = 4
 )
 
 // PeakDecayForHalfLife returns the per-frame peak-decay multiplier that halves
@@ -99,10 +107,10 @@ const (
 	kittSweepPerSec  = 0.75
 	KITTSweepRate    = kittSweepPerSec / float64(AnimFPS)
 	KITTAmbient      = 0.15 // floor brightness at sweep edges
-	KITTPeak         = 0.85  // peak contribution above ambient
-	KITTSigmaSq      = 0.8   // gaussian width (sigma²) — tighter = sharper spotlight
-	KITTSingleBright = 0.8   // brightness multiplier when only one dot (no sweep)
-	KITTMaxDots      = 12    // cap rendered completed/ghost dots to prevent overflow
+	KITTPeak         = 0.85 // peak contribution above ambient
+	KITTSigmaSq      = 0.8  // gaussian width (sigma²) — tighter = sharper spotlight
+	KITTSingleBright = 0.8  // brightness multiplier when only one dot (no sweep)
+	KITTMaxDots      = 12   // cap rendered completed/ghost dots to prevent overflow
 )
 
 // Tidal wave (active agent dots).
@@ -112,11 +120,11 @@ const (
 	tidalWaveSec      = 14.0
 	TidalPhaseStep    = 2 * math.Pi / (tidalWaveSec * float64(AnimFPS))
 	TidalWaveMix      = 0.85 // tidal wave weight in brightness blend
-	TidalBreathMix    = 0.15  // individual breath weight in brightness blend
-	TidalBrightFloor  = 0.5   // minimum brightness for active dots
-	TidalPhaseSpread  = 1.5   // radians between adjacent dots (wider = clearer wave direction)
-	GlyphFilledThresh = 0.66  // wave value above which glyph shows ⬢ (filled)
-	GlyphMidThresh    = 0.33  // wave value above which glyph shows ⏣ (benzene)
+	TidalBreathMix    = 0.15 // individual breath weight in brightness blend
+	TidalBrightFloor  = 0.5  // minimum brightness for active dots
+	TidalPhaseSpread  = 1.5  // radians between adjacent dots (wider = clearer wave direction)
+	GlyphFilledThresh = 0.66 // wave value above which glyph shows ⬢ (filled)
+	GlyphMidThresh    = 0.33 // wave value above which glyph shows ⏣ (benzene)
 )
 
 // ── History / buffer sizes ─────────────────────────────────

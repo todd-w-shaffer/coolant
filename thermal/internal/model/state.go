@@ -103,6 +103,15 @@ type AppState struct {
 	// nil-safe — HandleEvent skips Fold when unset (test paths and
 	// degraded init both run without it).
 	aggregator *stats.Aggregator
+
+	// Calm tracking — drives the idle animation freeze (see IsCalm). prevCalm
+	// holds the previous snapshot's per-frame-animated signals (the five
+	// sparkline sources) at display granularity; when they hold steady across
+	// CalmStableSnapshots consecutive snapshots — and no agents are active and
+	// the battery isn't alerting — the dashboard is "calm" and the caller stops
+	// re-arming the animation tick.
+	metricStableCount int
+	prevCalm          [5]int64
 }
 
 // NewAppState creates an initialized AppState.
@@ -137,6 +146,71 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.Headroom = EstimateHeadroom(s.TypeCounts, snap.System.MemUsedBytes, snap.System.MemTotalBytes)
 	s.updateThreatAndAlerts(&snap)
 	s.updateIdleTicker()
+	s.updateCalmTracking()
+}
+
+// calmSignals returns the per-frame-animated signals at display granularity:
+// the five sparkline sources (widgets/gauges.go feeds CPU%, MEM%, decompression
+// delta, and the two token-per-sec rates into the spring history that scrolls
+// on every AnimTick). These are exactly the values whose sparklines lie if
+// frozen mid-stream, so the freeze must not engage while any of them is moving.
+// GPU and swap are deliberately excluded: they render as static text with no
+// per-frame scroll, so the snapshot path repaints them fine even while frozen.
+func (s *AppState) calmSignals() [5]int64 {
+	sys := s.Current.System
+	return [5]int64{
+		int64(sys.CPUPercent),
+		int64(sys.MemPercent()),
+		sys.Decompressions,
+		int64(s.Current.Tokens.IOTokensPerSec),
+		int64(s.Current.Tokens.PrettyTokensPerSec),
+	}
+}
+
+// updateCalmTracking advances the consecutive-stable-snapshot counter that
+// IsCalm reads. Signals are compared at display granularity, so sub-unit jitter
+// that never changes the rendered output doesn't reset calm.
+func (s *AppState) updateCalmTracking() {
+	cur := s.calmSignals()
+	if cur == s.prevCalm {
+		s.metricStableCount++
+	} else {
+		s.metricStableCount = 0
+	}
+	s.prevCalm = cur
+}
+
+// IsCalm reports whether the dashboard is fully quiescent: no active agents,
+// the five sparkline sources flat for CalmStableSnapshots consecutive
+// snapshots, and the battery not in a low-charge alert pulse. When calm, the
+// caller stops re-arming the animation tick, so breathing/sparkline motion
+// freezes (still rendered) and terminal repaints drop toward zero. Any change
+// wakes it.
+func (s *AppState) IsCalm() bool {
+	if s.Current == nil {
+		return false
+	}
+	// Any active agent keeps a breathing/scanning dot on screen, so it can't be
+	// calm. Stale agents are a subset of activeRecords, so AgentCount already
+	// covers them — no separate StaleAgentCount walk (time.Now + map scan) on
+	// this hot path, which runs every animation tick.
+	if s.AgentCount() > 0 {
+		return false
+	}
+	if s.batteryAlerting() {
+		return false
+	}
+	return s.metricStableCount >= config.CalmStableSnapshots
+}
+
+// batteryAlerting is true while the battery is discharging below the critical
+// threshold — the meltdown/warn pulse (widgets/battery.go) is an alert, not
+// decoration, so calm must exclude it to keep that pulse animating.
+func (s *AppState) batteryAlerting() bool {
+	sys := s.Current.System
+	return sys.BatteryPresent &&
+		sys.BatteryState == collector.BatteryDischarging &&
+		sys.BatteryPercent < config.BatteryCritPct
 }
 
 // updateTypeCounts clears and repopulates type counts from the snapshot,

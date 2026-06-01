@@ -294,6 +294,121 @@ func TestOnlineLogTracksPerTick(t *testing.T) {
 	}
 }
 
+// ── IsCalm (idle animation freeze) ───────────────────────────
+
+// steadyCalmSnap is a fixed, agent-free snapshot. Pushed repeatedly it
+// drives the stability counter up so IsCalm can assert.
+func steadyCalmSnap(t *testing.T) collector.Snapshot {
+	t.Helper()
+	return testSnap(t, withCPU(5), withMem(8*GB, 16*GB), withSwap(0))
+}
+
+// primeCalm feeds enough identical agent-free snapshots to satisfy the
+// calm stability window.
+func primeCalm(t *testing.T, s *AppState) {
+	t.Helper()
+	for i := 0; i < config.CalmStableSnapshots+1; i++ {
+		s.Update(steadyCalmSnap(t))
+	}
+}
+
+func TestIsCalmAfterStableMetricsNoAgents(t *testing.T) {
+	s := NewAppState()
+	primeCalm(t, s)
+	if !s.IsCalm() {
+		t.Fatalf("expected calm after %d stable agent-free snapshots", config.CalmStableSnapshots+1)
+	}
+}
+
+func TestNotCalmBeforeStabilityWindow(t *testing.T) {
+	s := NewAppState()
+	// One update can't match the zero-value baseline; a second matches but
+	// the window isn't satisfied yet.
+	s.Update(steadyCalmSnap(t))
+	s.Update(steadyCalmSnap(t))
+	if s.IsCalm() {
+		t.Error("expected NOT calm before the stability window is satisfied")
+	}
+}
+
+func TestNotCalmWithActiveAgent(t *testing.T) {
+	s := NewAppState()
+	primeCalm(t, s)
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventAgentStart,
+		AgentID:   "a1",
+		AgentType: "researcher",
+	})
+	if s.IsCalm() {
+		t.Error("expected NOT calm while an agent is active")
+	}
+}
+
+func TestNotCalmUntilMetricsRestabilize(t *testing.T) {
+	s := NewAppState()
+	primeCalm(t, s)
+	// A CPU jump resets the stability window.
+	jump := func(snap *collector.Snapshot) { snap.System.CPUPercent = 80 }
+	s.Update(testSnap(t, withMem(8*GB, 16*GB), withSwap(0), jump))
+	if s.IsCalm() {
+		t.Error("expected NOT calm immediately after a metric jump")
+	}
+	for i := 0; i < config.CalmStableSnapshots+1; i++ {
+		s.Update(testSnap(t, withMem(8*GB, 16*GB), withSwap(0), jump))
+	}
+	if !s.IsCalm() {
+		t.Error("expected calm after metrics restabilize at the new value")
+	}
+}
+
+func TestNotCalmWhileTokensStreaming(t *testing.T) {
+	s := NewAppState()
+	primeCalm(t, s)
+	// Tokens flowing (no subagents, flat CPU/MEM) must NOT read as calm: the
+	// token sparkline scrolls per frame and would freeze mid-stream otherwise.
+	tokens := func(snap *collector.Snapshot) {
+		snap.System.CPUPercent = 5
+		snap.System.MemUsedBytes = 8 * GB
+		snap.System.MemTotalBytes = 16 * GB
+		snap.Tokens.IOTokensPerSec = 1200
+	}
+	s.Update(testSnap(t, tokens))
+	if s.IsCalm() {
+		t.Error("expected NOT calm while tokens are streaming")
+	}
+}
+
+func TestNotCalmWhileDecompressionsActive(t *testing.T) {
+	s := NewAppState()
+	primeCalm(t, s)
+	decomp := func(snap *collector.Snapshot) {
+		snap.System.CPUPercent = 5
+		snap.System.MemUsedBytes = 8 * GB
+		snap.System.MemTotalBytes = 16 * GB
+		snap.System.Decompressions = 5000
+	}
+	s.Update(testSnap(t, decomp))
+	if s.IsCalm() {
+		t.Error("expected NOT calm while decompressions are active (decomp sparkline scrolls)")
+	}
+}
+
+func TestNotCalmWhenBatteryAlerting(t *testing.T) {
+	s := NewAppState()
+	lowBatt := func(snap *collector.Snapshot) {
+		snap.System.BatteryPresent = true
+		snap.System.BatteryState = collector.BatteryDischarging
+		snap.System.BatteryPercent = 3 // below crit → meltdown/warn pulse
+	}
+	for i := 0; i < config.CalmStableSnapshots+1; i++ {
+		s.Update(testSnap(t, withCPU(5), withMem(8*GB, 16*GB), lowBatt))
+	}
+	if s.IsCalm() {
+		t.Error("expected NOT calm while battery is discharging below crit — the alert pulse must keep animating")
+	}
+}
+
 func TestAgentStartCreatesRecord(t *testing.T) {
 	s := NewAppState()
 	ev := collector.GateEvent{
