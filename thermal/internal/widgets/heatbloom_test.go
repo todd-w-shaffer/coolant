@@ -151,7 +151,7 @@ func TestHeatBloomAnimTickClampsHeat(t *testing.T) {
 	b.heatTarget = 1.0
 	maxHeat := 0.0
 	for i := 0; i < 240; i++ {
-		b.AnimTick()
+		b.AnimTick(false)
 		if b.heat > maxHeat {
 			maxHeat = b.heat
 		}
@@ -215,5 +215,19 @@ func TestHeatBloomNoRightBleed(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestHeatBloomBreathFreezesWhenCalm(t *testing.T) {
+	b := NewHeatBloom(testTheme, testAnim)
+	b.setTarget(0.5) // some heat so the breath oscillates
+	b.AnimTick(false)
+	p1 := b.breathePhase
+	if p1 == 0 {
+		t.Fatal("breath should advance when not calm")
+	}
+	b.AnimTick(true)
+	if b.breathePhase != p1 {
+		t.Errorf("breath advanced while calm: %v -> %v", p1, b.breathePhase)
 	}
 }

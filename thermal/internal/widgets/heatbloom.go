@@ -87,8 +87,10 @@ func (b *HeatBloom) setTarget(t float64) {
 }
 
 // AnimTick advances the spring toward heatTarget and steps the breathe
-// oscillator at a heat-dependent rate.
-func (b *HeatBloom) AnimTick() {
+// oscillator at a heat-dependent rate. When calm, the breathe oscillator
+// freezes in place (the heat spring still settles) — the bloom becomes static
+// decoration so the composed frame goes byte-stable and bubbletea suppresses it.
+func (b *HeatBloom) AnimTick(calm bool) {
 	b.heat, b.heatVel = b.spring.Update(b.heat, b.heatVel, b.heatTarget)
 	// Underdamped spring (BloomSpringDamping=0.9) intentionally overshoots
 	// for "alive" feel, but heat > 1 saturates bloomLUTIndex to the
@@ -99,6 +101,10 @@ func (b *HeatBloom) AnimTick() {
 		b.heat = 0
 	} else if b.heat > 1 {
 		b.heat = 1
+	}
+
+	if calm {
+		return // freeze the breathe oscillator at its current phase
 	}
 
 	periodSec := b.profile.BloomBreatheSecCool +

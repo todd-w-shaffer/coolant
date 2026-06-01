@@ -107,10 +107,15 @@ func (h *Headline) SetHighScoreMode(on bool) {
 // AnimTick advances agent icon springs, the readout's ghost/flash
 // countdowns, bloom heat, and battery breath.
 func (h *Headline) AnimTick() {
+	// When calm, freeze the decorative breath oscillators (heat blooms +
+	// battery charging breath) so the composed frame goes byte-stable and
+	// bubbletea suppresses idle repaints. Sparklines/springs are untouched —
+	// they self-quiesce. Agent dots render nothing at zero agents.
+	calm := h.state != nil && h.state.IsCalm()
 	h.agents.AnimTick()
-	h.temp.AnimTick()
-	h.bloom.AnimTick()
-	h.battery.AnimTick()
+	h.temp.AnimTick() // LCD: self-quiesces (hysteresis + deadbanded temp input)
+	h.bloom.AnimTick(calm)
+	h.battery.AnimTick(calm)
 }
 
 // rowPair is a 2-row rendered fragment at a fixed visible width. visWidth

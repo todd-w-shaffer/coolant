@@ -83,6 +83,12 @@ func calmSteadySnap() collector.Snapshot {
 			MemTotalBytes: 16 << 30,
 			GPUPercent:    0,
 			NCPUs:         8,
+			// A charging battery so the battery cell renders — this puts the
+			// charging-breath oscillator in-frame, so the byte-stable load-test
+			// actually exercises its freeze (not just the battery unit test).
+			BatteryPresent: true,
+			BatteryState:   collector.BatteryCharging,
+			BatteryPercent: 80,
 		},
 		Sessions:  []collector.SessionTree{{RootPID: 1, RootComm: "claude"}},
 		Online:    true,
@@ -123,6 +129,49 @@ func TestStartupRevealAnimatesAtIdle(t *testing.T) {
 	t.Logf("startup reveal at idle: %d/%d distinct frames", distinct, config.AnimFPS)
 	if distinct < config.AnimFPS/2 {
 		t.Errorf("startup reveal: %d/%d distinct frames, want > half (sparkline must fill, not freeze)", distinct, config.AnimFPS)
+	}
+}
+
+// TestIdleByteStableUnderJitter is the v2 Phase-2 load-test. Once the dashboard
+// is filled, settled, and calm with the breath frozen, the entire composed
+// View must be byte-identical frame-to-frame EVEN as CPU jitters within the
+// display deadband — so bubbletea suppresses the frame and idle terminal
+// repaints fall to zero. If ANY widget still animates at idle (breath not
+// frozen, LCD temp flipping on raw-CPU jitter, …), distinct > 0 and this fails.
+func TestIdleByteStableUnderJitter(t *testing.T) {
+	h := NewHorizontal(testTheme, testAnim, keys.Default())
+	h.SetSize(120, 10)
+
+	// Fill the sparklines and let springs settle while flat metrics latch calm.
+	for i := 0; i < config.MaxRenderHistory+config.CalmStableSnapshots+5; i++ {
+		h.State().Update(calmSteadySnap())
+		h.Update(h.State())
+		h.AnimTick()
+	}
+	if !h.State().IsCalm() {
+		t.Fatalf("expected calm after fill+settle")
+	}
+
+	// Drive a second of frames with sub-deadband CPU jitter (all within
+	// DisplayDeadbandPct of the baseline 5), updating each frame.
+	jitter := []float64{4, 6, 5, 7, 4, 6}
+	prev := h.View()
+	distinct := 0
+	for i := 0; i < config.AnimFPS; i++ {
+		snap := calmSteadySnap()
+		snap.System.CPUPercent = jitter[i%len(jitter)]
+		h.State().Update(snap)
+		h.Update(h.State())
+		h.AnimTick()
+		cur := h.View()
+		if cur != prev {
+			distinct++
+		}
+		prev = cur
+	}
+	t.Logf("idle under jitter: %d/%d distinct frames", distinct, config.AnimFPS)
+	if distinct != 0 {
+		t.Errorf("idle under jitter: %d/%d distinct frames, want 0 (breath frozen + deadband → byte-stable)", distinct, config.AnimFPS)
 	}
 }
 
