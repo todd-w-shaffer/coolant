@@ -110,7 +110,10 @@ func CollectSlowStats(ctx context.Context) SystemStats {
 		ch <- result{"vmstat", out}
 	}()
 	go func() {
-		out, _ := execCmd(ctx, "bash", "-c", `ioreg -r -d 1 -c AGXAccelerator | grep 'Device Utilization'`)
+		// Call ioreg directly — parseGPU regex-matches the value from the full
+		// output, so the old `| grep 'Device Utilization'` shell wrapper (which
+		// forked an extra bash + grep per tick) is redundant.
+		out, _ := execCmd(ctx, "ioreg", "-r", "-d", "1", "-c", "AGXAccelerator")
 		ch <- result{"gpu", out}
 	}()
 	go func() {

@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 	"strconv"
@@ -144,10 +145,12 @@ func (pc *ProcCollector) Collect(ctx context.Context) ([]SessionTree, []ProcessI
 func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessInfo, error) {
 	pc.clearMaps()
 
-	// Parse into raw process list and build parent→children map
-	for _, line := range strings.Split(string(psOutput), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	// Parse into raw process list and build parent→children map. Iterate the
+	// raw bytes in place (bytes.Lines, no full-output string copy, no line
+	// slice) — this is the hottest allocation on the 150ms loop.
+	for line := range bytes.Lines(psOutput) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
 			continue
 		}
 		p := parseProcessLine(line)
@@ -234,17 +237,27 @@ func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessIn
 }
 
 // parseProcessLine parses one line of "ps -Ao pid=,ppid=,pcpu=,rss=,comm=" output.
-func parseProcessLine(line string) rawProc {
-	fields := strings.Fields(line)
+// Takes []byte so the caller can scan ps output in place — the win is dropping
+// the per-tick full-output string copy and line-slice array in buildTrees (the
+// per-line bytes.Fields slice and strconv string casts here still allocate).
+func parseProcessLine(line []byte) rawProc {
+	fields := bytes.Fields(line)
 	if len(fields) < 5 {
 		return rawProc{}
 	}
-	pid, _ := strconv.Atoi(fields[0])
-	ppid, _ := strconv.Atoi(fields[1])
-	cpu, _ := strconv.ParseFloat(fields[2], 64)
-	rss, _ := strconv.ParseInt(fields[3], 10, 64)
-	// comm may contain spaces if it's a path; take everything after field 4
-	comm := strings.Join(fields[4:], " ")
+	pid, _ := strconv.Atoi(string(fields[0]))
+	ppid, _ := strconv.Atoi(string(fields[1]))
+	cpu, _ := strconv.ParseFloat(string(fields[2]), 64)
+	rss, _ := strconv.ParseInt(string(fields[3]), 10, 64)
+	// comm may contain spaces if it's a path. The overwhelmingly common case is a
+	// single field (no spaces) — convert it directly to avoid the throwaway
+	// bytes.Join allocation; only rejoin when the path actually had spaces.
+	var comm string
+	if len(fields) == 5 {
+		comm = string(fields[4])
+	} else {
+		comm = string(bytes.Join(fields[4:], []byte{' '}))
+	}
 	return rawProc{pid: pid, ppid: ppid, cpu: cpu, rss: rss, comm: comm}
 }
 

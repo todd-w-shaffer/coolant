@@ -52,7 +52,7 @@ func TestParseProcessLine(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseProcessLine(tt.line)
+			got := parseProcessLine([]byte(tt.line))
 			if got.pid != tt.wantPID {
 				t.Errorf("pid = %d, want %d", got.pid, tt.wantPID)
 			}
@@ -85,7 +85,7 @@ func TestParseProcessLineShortInput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseProcessLine(tt.line)
+			got := parseProcessLine([]byte(tt.line))
 			if got.pid != 0 {
 				t.Errorf("pid = %d, want 0 for short input", got.pid)
 			}
