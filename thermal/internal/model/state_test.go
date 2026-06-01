@@ -862,6 +862,33 @@ func TestHandleEventAgentStart(t *testing.T) {
 	}
 }
 
+// PluginActive means "the coolant plugin is wired up and emitting
+// events," not "a subagent has run." Any event flowing through
+// HandleEvent comes off the plugin's JSONL bus, so seeing one proves
+// the plugin is installed — otherwise sessions that never spawn a
+// subagent show "install coolant plugin" forever despite the plugin
+// being live.
+func TestPluginActiveFlipsOnAnyPluginEvent(t *testing.T) {
+	cases := []string{
+		collector.EventSessionStart,
+		collector.EventCounterReset,
+		collector.EventPreflightWarn,
+		collector.EventGateCap,
+	}
+	for _, ev := range cases {
+		t.Run(ev, func(t *testing.T) {
+			s := NewAppState()
+			s.HandleEvent(collector.GateEvent{
+				Timestamp: time.Now(),
+				Event:     ev,
+			})
+			if !s.PluginActive {
+				t.Errorf("PluginActive = false after %q event; want true (any plugin-emitted event proves install)", ev)
+			}
+		})
+	}
+}
+
 func TestAgentCountSplitsFreshAndStale(t *testing.T) {
 	s := NewAppState()
 

@@ -312,6 +312,12 @@ func (s *AppState) Aggregator() *stats.Aggregator {
 // HandleEvent processes an external event from the JSONL event log
 // and generates appropriate alerts.
 func (s *AppState) HandleEvent(ev collector.GateEvent) {
+	// Any event that reaches HandleEvent arrived via the plugin's
+	// JSONL bus, so its existence proves the plugin is installed.
+	// Previously only agent.start flipped this, which made the
+	// "install plugin" banner show in subagent-free sessions.
+	s.PluginActive = true
+
 	if s.aggregator != nil {
 		s.aggregator.Fold(ev, 0)
 	}
@@ -321,7 +327,6 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 
 	switch ev.Event {
 	case collector.EventAgentStart:
-		s.PluginActive = true
 		if s.sessionEarliestStart.IsZero() {
 			s.sessionEarliestStart = ev.Timestamp
 		}
