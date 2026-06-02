@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -454,58 +455,63 @@ func TestTokenCollector_FanIn_DateRollDoesNotBurnDriftGate(t *testing.T) {
 }
 
 // BUG 2: the cumulative tok/bill readout must never step backward when the
-// authoritative source flips (OTEL↔transcript) and their absolute totals
-// differ. The rate/sparkline path is already flip-clamped; the readout was
-// not, so at midnight and on every flip it stepped to the other source's
-// (lower) total. Fix carries the last-good cumulative (max-hold) so WorkTotal
-// and BillTotal are monotonic across an OTEL→transcript→OTEL flip.
-func TestTokenCollector_FanIn_ReadoutMonotonicAcrossSourceFlip(t *testing.T) {
+// rate source flips OTEL↔transcript (and must not freeze across a UTC midnight
+// when OTEL's per-day bucket rolls). The fix decouples the readout from the
+// authoritative rate source: WorkTotal/BillTotal are the since-launch
+// TRANSCRIPT totals (the accumulator only grows), so they track transcript
+// activity monotonically regardless of what drives the rate. OTEL's large
+// absolutes here would, under a naive readout, jump the displayed total around
+// on every flip; the readout must ignore them and follow the transcript.
+func TestTokenCollector_FanIn_ReadoutTracksTranscriptAcrossFlip(t *testing.T) {
 	dir, path := seedTranscriptProject(t)
-	view := &fakeOTELView{
-		live: true, ok: true,
-		input: 10000, output: 0, cacheCreate: 0, cacheRead: 5000, // work=10000 bill=15000
-	}
+	// OTEL absolutes are deliberately huge — if the readout tracked the rate
+	// source it would show these, not the transcript.
+	view := &fakeOTELView{live: true, ok: true, input: 99999, output: 99999}
 	tc := NewTokenCollector(WithOTELView(view))
 	tc.projects = dir
 
 	t0 := time.Now()
+	tc.Tick(t0) // cold-start: seeds the transcript offset (pre-existing history skipped)
 
-	// A small transcript turn — far below the OTEL absolute, so a naive
-	// readout would step DOWN when OTEL goes offline and transcript takes over.
-	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":20}}}` + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
+	appendMsg := func(id string, in, out, cc, cr int) {
+		line := fmt.Sprintf(`{"type":"assistant","message":{"id":%q,"usage":{"input_tokens":%d,"output_tokens":%d,"cache_creation_input_tokens":%d,"cache_read_input_tokens":%d}}}`+"\n", id, in, out, cc, cr)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(line); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	var lastWork, lastBill int64
 	check := func(label string, s TokenStats) {
-		if s.WorkTotal < lastWork {
-			t.Errorf("%s: WorkTotal stepped backward: %d → %d", label, lastWork, s.WorkTotal)
+		if s.WorkTotal < lastWork || s.BillTotal < lastBill {
+			t.Errorf("%s: readout regressed: work %d→%d, bill %d→%d", label, lastWork, s.WorkTotal, lastBill, s.BillTotal)
 		}
-		if s.BillTotal < lastBill {
-			t.Errorf("%s: BillTotal stepped backward: %d → %d", label, lastBill, s.BillTotal)
+		if s.WorkTotal == 99999 || s.BillTotal == 99999 {
+			t.Errorf("%s: readout tracked the OTEL rate source instead of the transcript", label)
 		}
 		lastWork, lastBill = s.WorkTotal, s.BillTotal
 	}
 
-	s0 := tc.Tick(t0) // OTEL: work=10000 (excludes cache_read), bill=15000 (includes it)
-	if s0.WorkTotal != 10000 {
-		t.Errorf("WorkTotal want 10000 (input+output+cacheCreate, NOT cache_read); got %d", s0.WorkTotal)
+	// Transcript turn while OTEL drives the rate. Readout = transcript work
+	// (100+50+30=180), bill (+200=380) — NOT the OTEL 99999.
+	appendMsg("m1", 100, 50, 30, 200)
+	s1 := tc.Tick(t0.Add(time.Second))
+	if s1.WorkTotal != 180 || s1.BillTotal != 380 {
+		t.Errorf("readout want work=180 bill=380 (transcript, cache_read out of work); got work=%d bill=%d", s1.WorkTotal, s1.BillTotal)
 	}
-	if s0.BillTotal != 15000 {
-		t.Errorf("BillTotal want 15000 (work + cache_read); got %d", s0.BillTotal)
-	}
-	check("t0 OTEL", s0)
-	view.live = false                                    // OTEL offline → transcript
-	check("t1 transcript", tc.Tick(t0.Add(time.Second))) // naive would drop to work=0
-	view.live = true                                     // OTEL back
-	check("t2 OTEL", tc.Tick(t0.Add(2*time.Second)))     // back to OTEL absolute
-	view.live = false                                    // and offline again
-	check("t3 transcript", tc.Tick(t0.Add(3*time.Second)))
+	check("t1 OTEL-rate", s1)
 
-	if lastWork < 10000 {
-		t.Errorf("final WorkTotal %d lost the OTEL high-water mark (want ≥ 10000)", lastWork)
-	}
+	view.live = false // OTEL offline → flip; transcript keeps growing
+	appendMsg("m2", 10, 5, 0, 50)
+	check("t2 transcript", tc.Tick(t0.Add(2*time.Second)))
+
+	view.live = true // OTEL back — readout still tracks transcript, never regressed
+	appendMsg("m3", 20, 10, 0, 0)
+	check("t3 OTEL-rate", tc.Tick(t0.Add(3*time.Second)))
 }
 
 func TestTokenCollectorColdStartSkipsHistory(t *testing.T) {
