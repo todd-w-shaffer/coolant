@@ -38,7 +38,7 @@ func seedActiveWide(h *Horizontal) {
 			{PID: 4, PPID: 1, TypeCode: "G"},
 			{PID: 6, PPID: 5, TypeCode: "V"},
 		},
-		Tokens:    collector.TokenStats{IOTokensPerSec: 500, PrettyTokensPerSec: 480, InputTotal: 100000, OutputTotal: 50000},
+		Tokens:    collector.TokenStats{IOTokensPerSec: 500, PrettyTokensPerSec: 480, InputTotal: 100000, OutputTotal: 50000, WorkTotal: 150000, BillTotal: 150000},
 		Online:    true,
 		Timestamp: time.Now(),
 	}
