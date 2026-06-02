@@ -453,6 +453,61 @@ func TestTokenCollector_FanIn_DateRollDoesNotBurnDriftGate(t *testing.T) {
 	}
 }
 
+// BUG 2: the cumulative tok/bill readout must never step backward when the
+// authoritative source flips (OTEL↔transcript) and their absolute totals
+// differ. The rate/sparkline path is already flip-clamped; the readout was
+// not, so at midnight and on every flip it stepped to the other source's
+// (lower) total. Fix carries the last-good cumulative (max-hold) so WorkTotal
+// and BillTotal are monotonic across an OTEL→transcript→OTEL flip.
+func TestTokenCollector_FanIn_ReadoutMonotonicAcrossSourceFlip(t *testing.T) {
+	dir, path := seedTranscriptProject(t)
+	view := &fakeOTELView{
+		live: true, ok: true,
+		input: 10000, output: 0, cacheCreate: 0, cacheRead: 5000, // work=10000 bill=15000
+	}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = dir
+
+	t0 := time.Now()
+
+	// A small transcript turn — far below the OTEL absolute, so a naive
+	// readout would step DOWN when OTEL goes offline and transcript takes over.
+	body := `{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":0,"cache_read_input_tokens":20}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var lastWork, lastBill int64
+	check := func(label string, s TokenStats) {
+		if s.WorkTotal < lastWork {
+			t.Errorf("%s: WorkTotal stepped backward: %d → %d", label, lastWork, s.WorkTotal)
+		}
+		if s.BillTotal < lastBill {
+			t.Errorf("%s: BillTotal stepped backward: %d → %d", label, lastBill, s.BillTotal)
+		}
+		lastWork, lastBill = s.WorkTotal, s.BillTotal
+	}
+
+	s0 := tc.Tick(t0) // OTEL: work=10000 (excludes cache_read), bill=15000 (includes it)
+	if s0.WorkTotal != 10000 {
+		t.Errorf("WorkTotal want 10000 (input+output+cacheCreate, NOT cache_read); got %d", s0.WorkTotal)
+	}
+	if s0.BillTotal != 15000 {
+		t.Errorf("BillTotal want 15000 (work + cache_read); got %d", s0.BillTotal)
+	}
+	check("t0 OTEL", s0)
+	view.live = false                                    // OTEL offline → transcript
+	check("t1 transcript", tc.Tick(t0.Add(time.Second))) // naive would drop to work=0
+	view.live = true                                     // OTEL back
+	check("t2 OTEL", tc.Tick(t0.Add(2*time.Second)))     // back to OTEL absolute
+	view.live = false                                    // and offline again
+	check("t3 transcript", tc.Tick(t0.Add(3*time.Second)))
+
+	if lastWork < 10000 {
+		t.Errorf("final WorkTotal %d lost the OTEL high-water mark (want ≥ 10000)", lastWork)
+	}
+}
+
 func TestTokenCollectorColdStartSkipsHistory(t *testing.T) {
 	// A pre-existing session file should not have its accumulated history
 	// counted as "just happened" on first scan. Offsets must seed to file size

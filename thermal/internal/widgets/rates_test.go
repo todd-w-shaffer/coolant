@@ -197,17 +197,17 @@ func TestTokReadoutShowsSplit(t *testing.T) {
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 200
-	state.Current.Tokens.OutputTotal = 100
-	state.Current.Tokens.CacheCreateTotal = 300
-	state.Current.Tokens.CacheReadTotal = 400
+	// The collector now computes the cumulative readouts (max-held across a
+	// source flip); the widget renders WorkTotal / BillTotal verbatim.
+	state.Current.Tokens.WorkTotal = 600 // 200+100+300
+	state.Current.Tokens.BillTotal = 1000
 	r.Update(state)
 	got := r.View()
 	if !strings.Contains(got, "tok 600") {
-		t.Errorf("View should contain 'tok 600' (200+100+300); got:\n%s", got)
+		t.Errorf("View should contain 'tok 600' (WorkTotal); got:\n%s", got)
 	}
 	if !strings.Contains(got, "bill 1.0K") {
-		t.Errorf("View should contain 'bill 1.0K' (200+100+300+400); got:\n%s", got)
+		t.Errorf("View should contain 'bill 1.0K' (BillTotal); got:\n%s", got)
 	}
 	if strings.Contains(got, "cache ") {
 		t.Errorf("cache %% readout should be gone (bill≫tok discloses mix); got:\n%s", got)
@@ -225,17 +225,13 @@ func TestTokReadoutMonotonic(t *testing.T) {
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 200
-	state.Current.Tokens.OutputTotal = 100
-	state.Current.Tokens.CacheCreateTotal = 300
-	state.Current.Tokens.CacheReadTotal = 400
+	state.Current.Tokens.WorkTotal = 600
+	state.Current.Tokens.BillTotal = 1000
 	r.Update(state)
 	first := r.View()
 
-	state.Current.Tokens.InputTotal = 400
-	state.Current.Tokens.OutputTotal = 200
-	state.Current.Tokens.CacheCreateTotal = 600
-	state.Current.Tokens.CacheReadTotal = 800
+	state.Current.Tokens.WorkTotal = 1200
+	state.Current.Tokens.BillTotal = 2000
 	r.Update(state)
 	second := r.View()
 
@@ -258,22 +254,17 @@ func TestTokReadoutAcrossOTELFlip(t *testing.T) {
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 200
-	state.Current.Tokens.OutputTotal = 100
-	state.Current.Tokens.CacheCreateTotal = 300
-	state.Current.Tokens.CacheReadTotal = 400
+	state.Current.Tokens.WorkTotal = 600
+	state.Current.Tokens.BillTotal = 1000
 	r.Update(state)
 	if got := r.View(); !strings.Contains(got, "tok 600") || !strings.Contains(got, "bill 1.0K") {
 		t.Errorf("pre-flip: expected 'tok 600' and 'bill 1.0K'; got:\n%s", got)
 	}
 
-	// OTEL takes over — totals replace transcript baseline. Cumulative
-	// stays non-decreasing because OTEL has already been ticking in
-	// the background; the collector merges them as the new authority.
-	state.Current.Tokens.InputTotal = 1000
-	state.Current.Tokens.OutputTotal = 500
-	state.Current.Tokens.CacheCreateTotal = 1500
-	state.Current.Tokens.CacheReadTotal = 2000
+	// OTEL takes over — the collector's max-held totals replace the transcript
+	// baseline. Cumulative stays non-decreasing (the collector guarantees it).
+	state.Current.Tokens.WorkTotal = 3000
+	state.Current.Tokens.BillTotal = 5000
 	r.Update(state)
 	if got := r.View(); !strings.Contains(got, "tok 3.0K") || !strings.Contains(got, "bill 5.0K") {
 		t.Errorf("post-flip: expected 'tok 3.0K' and 'bill 5.0K'; got:\n%s", got)
@@ -293,19 +284,20 @@ func TestTokReadoutCacheHeavyWorkload(t *testing.T) {
 	r := NewRates(testTheme, keys.Default())
 	r.SetSize(126, 1)
 
-	state.Current.Tokens.InputTotal = 5000
-	state.Current.Tokens.OutputTotal = 3000
-	state.Current.Tokens.CacheCreateTotal = 2000
-	state.Current.Tokens.CacheReadTotal = 90000
+	// WorkTotal is the unique-work slice (5000+3000+2000); BillTotal folds in
+	// the 90000 cache_read. The widget must render tok=Work and bill=Bill, never
+	// conflating them (the collector formula keeps cache_read out of WorkTotal).
+	state.Current.Tokens.WorkTotal = 10000
+	state.Current.Tokens.BillTotal = 100000
 	r.Update(state)
 	got := r.View()
 	if !strings.Contains(got, "tok 10K") {
-		t.Errorf("cache-heavy workload: expected 'tok 10K' (5+3+2 unique work, no cache_read); got:\n%s", got)
+		t.Errorf("cache-heavy workload: expected 'tok 10K' (WorkTotal, no cache_read); got:\n%s", got)
 	}
 	if !strings.Contains(got, "bill 100K") {
-		t.Errorf("cache-heavy workload: expected 'bill 100K' (full billable including cache_read); got:\n%s", got)
+		t.Errorf("cache-heavy workload: expected 'bill 100K' (BillTotal, includes cache_read); got:\n%s", got)
 	}
 	if strings.Contains(got, "tok 100K") {
-		t.Errorf("CacheRead leaked into tok (split collapsed); got:\n%s", got)
+		t.Errorf("BillTotal leaked into the tok slot (split collapsed); got:\n%s", got)
 	}
 }

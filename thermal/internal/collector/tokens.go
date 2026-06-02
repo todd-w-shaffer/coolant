@@ -154,6 +154,8 @@ type TokenCollector struct {
 	lastActiveBytes int64   // sum of transcript file sizes (from offsets), last tick — drives PrettyTokensPerSec
 	lastIOPerS      float64 // raw last per-tick input+output rate, carried across no-sample / source-flip ticks
 	lastPrettyPerS  float64 // raw last per-tick chars÷4 rate from transcript byte growth
+	lastWorkTotal   int64   // max-held cumulative work readout — never regresses across a source flip
+	lastBillTotal   int64   // max-held cumulative bill readout — never regresses across a source flip
 
 	otel             OTELTokenView
 	lastSourceOTEL   bool   // tracks whether prior tick rendered OTEL — flip clamps deltas
@@ -309,6 +311,24 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 			}
 		}
 	}
+
+	// Cumulative readouts are max-held across source flips: when OTEL↔transcript
+	// swap, the new source's lower absolute must not step the displayed total
+	// backward. Within a single source the totals already grow monotonically, so
+	// the max only bites at a flip. Last-good-carry, never sum the two streams —
+	// summing double-counts (OTEL and transcript both observe the same turn).
+	work := out.InputTotal + out.OutputTotal + out.CacheCreateTotal
+	bill := work + out.CacheReadTotal
+	if work < tc.lastWorkTotal {
+		work = tc.lastWorkTotal
+	}
+	if bill < tc.lastBillTotal {
+		bill = tc.lastBillTotal
+	}
+	tc.lastWorkTotal = work
+	tc.lastBillTotal = bill
+	out.WorkTotal = work
+	out.BillTotal = bill
 
 	out.IOTokensPerSec = tc.lastIOPerS
 	out.PrettyTokensPerSec = tc.lastPrettyPerS

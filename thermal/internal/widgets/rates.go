@@ -154,11 +154,11 @@ func (r *Rates) View() string {
 	// stays as a rate of Input+Output only (fresh model traffic; drops
 	// to 0 between bursts).
 	tok := snap.Tokens
-	tokWork := tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal
-	tokBill := tokWork + tok.CacheReadTotal
+	// WorkTotal / BillTotal are the collector's max-held cumulatives — monotonic
+	// across an OTEL↔transcript source flip, so the readout never steps backward.
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.TokensColor,
-		fmt.Sprintf("tok %s · bill %s", format.FormatCount(tokWork), format.FormatCount(tokBill))))
+		fmt.Sprintf("tok %s · bill %s", format.FormatCount(tok.WorkTotal), format.FormatCount(tok.BillTotal))))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {

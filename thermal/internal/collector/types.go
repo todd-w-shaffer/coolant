@@ -69,6 +69,12 @@ type TokenStats struct {
 	PrettyTokensPerSec float64 // chars÷4 estimate from transcript file byte growth — mimics CC's UI counter (which counts streamed chars locally). Lands per content-block completion, not per text chunk; the visual still steps rather than ramps, but the magnitude differs from IOTokensPerSec for multi-block turns.
 	CacheHitRatio      float64 // 0.0–1.0
 	ActiveSessions     int     // session files with mtime within ActiveSessionWindow
+	// WorkTotal (Input+Output+CacheCreate) and BillTotal (+CacheRead) are the
+	// cumulative "since launch" readouts. Monotonic by construction in the
+	// collector (max-hold across a source flip) so the displayed total never
+	// steps backward when OTEL↔transcript swap and their absolutes differ.
+	WorkTotal int64
+	BillTotal int64
 }
 
 // Snapshot is the unified data model produced by the collector goroutine.
