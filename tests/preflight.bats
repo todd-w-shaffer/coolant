@@ -9,6 +9,15 @@ run_preflight() {
     | bash "$PROJECT_ROOT/scripts/preflight.sh" 2>/dev/null
 }
 
+# Helper: run preflight.sh with an explicit SessionStart source
+# (startup|resume|clear) and session_id, from a given cwd.
+run_preflight_src() {
+  local cwd="$1" source="$2" sid="${3:-test}"
+  printf '{"session_id":"%s","cwd":"%s","hook_event_name":"SessionStart","source":"%s"}' \
+    "$sid" "$cwd" "$source" \
+    | bash "$PROJECT_ROOT/scripts/preflight.sh" 2>/dev/null
+}
+
 # ── Worktree exclusion detection ─────────────────────────
 
 @test "preflight warns when vitest.config.ts missing .claude exclude" {
@@ -118,15 +127,70 @@ EOF
   [ "$(cat "$COOLANT_SESSION_FILE")" = "abc-123" ]
 }
 
-@test "SessionStart hook fires on resume so the sidecar re-stamps" {
+@test "SessionStart hook fires on startup, resume, and clear" {
   # preflight writes the session sidecar that thermo's tailer reads to
-  # scope agent events. A resumed session keeps its session_id but,
-  # with a startup-only matcher, never re-runs preflight — leaving the
-  # sidecar pinned to whatever session last cold-started (often a dead
-  # transient). Broaden the matcher so resume re-stamps the sidecar.
-  local matcher
-  matcher=$(jq -r '.hooks.SessionStart[0].matcher' "$PROJECT_ROOT/hooks/hooks.json")
+  # scope agent events. A resumed/cleared session keeps its session_id
+  # but, with a startup-only matcher, never re-runs preflight — leaving
+  # the sidecar pinned to whatever session last cold-started (often a
+  # dead transient). The matcher must fire on all three sources, and the
+  # entry must still point at preflight.sh. Asserting each token guards
+  # against a future edit silently dropping one (e.g. narrowing back to
+  # startup-only, which re-breaks resume/clear agent visibility).
+  local entry matcher cmd
+  entry=$(jq -c '.hooks.SessionStart[] | select(.hooks[].command | test("preflight"))' \
+    "$PROJECT_ROOT/hooks/hooks.json")
+  matcher=$(printf '%s' "$entry" | jq -r '.matcher')
+  cmd=$(printf '%s' "$entry" | jq -r '.hooks[0].command')
+  [[ "$matcher" == *startup* ]]
   [[ "$matcher" == *resume* ]]
+  [[ "$matcher" == *clear* ]]
+  [[ "$cmd" == *preflight.sh ]]
+}
+
+# ── Source-gated side effects (resume/clear must not clobber shared,
+#    cross-session state) ───────────────────────────────────────────
+
+@test "preflight does NOT emit counter.reset on resume" {
+  # counter.reset is a GLOBAL (non-session-scoped) signal: the Go live
+  # model purges ALL active agent records on it, machine-wide. thermo is
+  # one-per-machine on a shared JSONL bus, so a resume in one session
+  # would wipe another concurrent session's live agents. Only a true
+  # cold start should reset the agent epoch.
+  mkdir -p "$TEST_TMPDIR/project"
+  run_preflight_src "$TEST_TMPDIR/project" resume > /dev/null
+  run grep -q '"event":"counter.reset"' "$COOLANT_EVENTS"
+  [ "$status" -ne 0 ]
+}
+
+@test "preflight does NOT emit counter.reset on clear" {
+  mkdir -p "$TEST_TMPDIR/project"
+  run_preflight_src "$TEST_TMPDIR/project" clear > /dev/null
+  run grep -q '"event":"counter.reset"' "$COOLANT_EVENTS"
+  [ "$status" -ne 0 ]
+}
+
+@test "preflight preserves the review-audit log on clear" {
+  # The review-gate audit log is the per-session ledger the commit gate
+  # reads to confirm /simplify + /observations ran. The review→/clear→
+  # commit flow is explicitly recommended; truncating on /clear would
+  # falsely block the commit. Only cold start truncates.
+  mkdir -p "$TEST_TMPDIR/project"
+  printf 'prior-review-entry\n' > "$COOLANT_REVIEW_AUDIT"
+  run_preflight_src "$TEST_TMPDIR/project" clear > /dev/null
+  grep -q 'prior-review-entry' "$COOLANT_REVIEW_AUDIT"
+}
+
+@test "preflight still re-stamps the session sidecar on resume" {
+  mkdir -p "$TEST_TMPDIR/project"
+  run_preflight_src "$TEST_TMPDIR/project" resume "resumed-sid" > /dev/null
+  [ "$(cat "$COOLANT_SESSION_FILE")" = "resumed-sid" ]
+}
+
+@test "preflight truncates the review-audit log on startup" {
+  mkdir -p "$TEST_TMPDIR/project"
+  printf 'stale-entry\n' > "$COOLANT_REVIEW_AUDIT"
+  run_preflight "$TEST_TMPDIR/project" > /dev/null
+  [ "$(wc -l < "$COOLANT_REVIEW_AUDIT")" -eq 0 ]
 }
 
 @test "preflight truncates COOLANT_DEGRADED_COUNT" {

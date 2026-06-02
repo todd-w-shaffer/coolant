@@ -6,25 +6,41 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# Read hook stdin for cwd + session_id
+# Read hook stdin for cwd + session_id + source.
 input=$(cat)
-
-# Capture session_id into the sidecar BEFORE any event emission. The
-# sidecar (read by _reconcile_counter and the Go tailer) is the
-# canonical source for "which session is this thermo / awk pass scoped
-# to" — without it written first, downstream readers race against the
-# very first emitted event.
 session_id=$(printf '%s' "$input" | _json_field session_id)
+hook_source=$(printf '%s' "$input" | _json_field source)
+
+# ALWAYS re-stamp the session sidecar — and do it BEFORE any event
+# emission. The sidecar (read by _reconcile_counter and the Go tailer)
+# is the canonical "which session is thermo / the awk pass scoped to."
+# A resumed or cleared session keeps its session_id but restarts the
+# process; without an unconditional re-stamp, the sidecar stays pinned
+# to whatever session last cold-started — often a dead transient — and
+# thermo filters out the live session's agents.
 if [ -n "$session_id" ]; then
   printf '%s\n' "$session_id" > "$COOLANT_SESSION_FILE"
   export COOLANT_SESSION_ID="$session_id"
 fi
 
-# Lifecycle anchor BEFORE counter epoch: aggregator's
-# session.start case folds the lifecycle map; consumers that fold
-# events in JSONL order see the lifecycle anchor before the counter
-# epoch resets. (Aggregator's counter.reset case is a no-op — the
-# two events are not redundant.)
+# Everything below is cold-start-only. On resume/clear (and compact, were
+# it ever matched) the process re-attaches to an EXISTING session whose
+# agents and per-session review-gate ledger may still be live in the
+# machine-wide thermo and the shared per-user JSONL bus. counter.reset is
+# a global signal — the Go live model purges ALL active agent records on
+# it — so re-firing it on resume/clear would wipe a concurrent session's
+# agents; and truncating the audit logs would clobber an in-flight
+# session's review gate. Only a true cold start owns a fresh epoch.
+case "$hook_source" in
+  resume|clear|compact)
+    exit 0
+    ;;
+esac
+
+# Lifecycle anchor BEFORE counter epoch: aggregator's session.start case
+# folds the lifecycle map; consumers that fold events in JSONL order see
+# the lifecycle anchor before the counter epoch resets. (Aggregator's
+# counter.reset case is a no-op — the two events are not redundant.)
 if [ -n "$session_id" ]; then
   coolant_event '"event":"session.start","session_id":"'"$session_id"'"'
 fi
