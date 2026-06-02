@@ -124,18 +124,18 @@ func parseTranscriptLine(line []byte) (string, Usage, bool) {
 // only the LAST id per file is sufficient because rows from one response
 // arrive consecutively.
 type TokenCollector struct {
-	acc           *TokenAccumulator
-	offsets       map[string]int64
-	lastMsgIDs    map[string]string
-	projects      string // ~/.claude/projects/ (overridable for tests)
-	lastInput     int64
-	lastOutput    int64
-	lastCacheCrt  int64
-	lastCacheRead int64
-	lastTick      time.Time
-	cachedFiles   []string
-	lastDiscov    time.Time
-	window        cacheWindow
+	acc             *TokenAccumulator
+	offsets         map[string]int64
+	lastMsgIDs      map[string]string
+	projects        string // ~/.claude/projects/ (overridable for tests)
+	lastInput       int64
+	lastOutput      int64
+	lastCacheCrt    int64
+	lastCacheRead   int64
+	lastTick        time.Time
+	cachedFiles     []string
+	lastDiscov      time.Time
+	window          cacheWindow
 	lastActiveBytes int64 // sum of os.Stat sizes across active transcript files, last tick — drives PrettyTokensPerSec
 }
 

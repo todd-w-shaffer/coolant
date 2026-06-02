@@ -61,16 +61,15 @@ type SessionTree struct {
 // collector started. CacheHitRatio uses the canonical Anthropic formula
 // (cache_read / (input + cache_create + cache_read); output is excluded).
 type TokenStats struct {
-	InputTotal       int64
-	OutputTotal      int64
-	CacheCreateTotal int64
-	CacheReadTotal   int64
+	InputTotal         int64
+	OutputTotal        int64
+	CacheCreateTotal   int64
+	CacheReadTotal     int64
 	IOTokensPerSec     float64 // raw per-tick rate of input+output tokens only (excludes cache_create + cache_read); reflects fresh model traffic, not cache pressure. Drops to 0 between bursts so the sparkline amplitude tracks current activity.
 	PrettyTokensPerSec float64 // chars÷4 estimate from transcript file byte growth — mimics CC's UI counter (which counts streamed chars locally). Lands per content-block completion, not per text chunk; the visual still steps rather than ramps, but the magnitude differs from IOTokensPerSec for multi-block turns.
-	CacheHitRatio    float64 // 0.0–1.0
-	ActiveSessions   int     // session files with mtime within ActiveSessionWindow
+	CacheHitRatio      float64 // 0.0–1.0
+	ActiveSessions     int     // session files with mtime within ActiveSessionWindow
 }
-
 
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {

@@ -156,7 +156,7 @@ func TestValueToLevelLogScale(t *testing.T) {
 		{1, 1, 1},     // log1p(1)/log1p(4000) ≈ 8% → clamped up to 1
 		{10, 2, 3},    // log1p(10)/log1p(4000) ≈ 29% → level 2
 		{100, 4, 5},   // log1p(100)/log1p(4000) ≈ 56% → level 4
-		{1000, 6, 7}, // log1p(1000)/log1p(4000) ≈ 83% → level 6
+		{1000, 6, 7},  // log1p(1000)/log1p(4000) ≈ 83% → level 6
 		{4000, 8, 8},  // crit: full height
 		{10000, 8, 8}, // above crit: clamped
 	}

@@ -14,13 +14,13 @@ func seedActiveWide(h *Horizontal) {
 	h.SetSize(240, 10)
 	snap := collector.Snapshot{
 		System: collector.SystemStats{
-			CPUPercent:    47,
-			MemUsedBytes:  10 << 30,
-			MemTotalBytes: 16 << 30,
-			NCPUs:         10,
+			CPUPercent:     47,
+			MemUsedBytes:   10 << 30,
+			MemTotalBytes:  16 << 30,
+			NCPUs:          10,
 			Decompressions: 1200,
-			GPUPercent:    33,
-			SwapUsedBytes: 2 << 30,
+			GPUPercent:     33,
+			SwapUsedBytes:  2 << 30,
 		},
 		Sessions: []collector.SessionTree{
 			{RootPID: 1, RootComm: "claude", Descendants: []collector.ProcessInfo{

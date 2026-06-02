@@ -17,7 +17,7 @@ func TestComputePercentFirstSample(t *testing.T) {
 
 func TestComputePercentNormal(t *testing.T) {
 	prev := cpuTicks{User: 100, Idle: 100} // total 200, busy 100
-	cur := cpuTicks{User: 150, Idle: 150}   // total 300, busy 150 → delta 50/100
+	cur := cpuTicks{User: 150, Idle: 150}  // total 300, busy 150 → delta 50/100
 	pct, ok := computePercent(prev, cur, 0)
 	if !ok || pct != 50 {
 		t.Errorf("normal delta = (%v, %v), want (50, true)", pct, ok)
@@ -37,7 +37,7 @@ func TestComputePercentBackwardsHolds(t *testing.T) {
 	// Counter went backwards (sleep/wake, CPU offline/online). Must NOT wrap to
 	// a huge unsigned delta and emit garbage — hold the last reading.
 	prev := cpuTicks{User: 300, Idle: 300} // total 600
-	cur := cpuTicks{User: 100, Idle: 100}   // total 200 < prev
+	cur := cpuTicks{User: 100, Idle: 100}  // total 200 < prev
 	pct, ok := computePercent(prev, cur, 42)
 	if ok || pct != 42 {
 		t.Errorf("backwards delta = (%v, %v), want (42, false) — hold last", pct, ok)
@@ -45,8 +45,8 @@ func TestComputePercentBackwardsHolds(t *testing.T) {
 }
 
 func TestComputePercentClampsAt100(t *testing.T) {
-	prev := cpuTicks{Idle: 100}            // total 100, busy 0
-	cur := cpuTicks{User: 200, Idle: 100}   // total 300, busy 200 → 200/200 = 100%
+	prev := cpuTicks{Idle: 100}           // total 100, busy 0
+	cur := cpuTicks{User: 200, Idle: 100} // total 300, busy 200 → 200/200 = 100%
 	pct, ok := computePercent(prev, cur, 0)
 	if !ok || pct != 100 {
 		t.Errorf("full-busy delta = (%v, %v), want (100, true)", pct, ok)

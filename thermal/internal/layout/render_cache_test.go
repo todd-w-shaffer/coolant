@@ -88,7 +88,7 @@ func TestRenderContentMouseToggleInvalidatesScan(t *testing.T) {
 	_ = h.RenderContent(true) // mouse on: scans frame A, caches it
 	// Change the frame while mouse is OFF (filter dims category cells).
 	h.State().ToggleCategoryFilter("build")
-	_ = h.RenderContent(false) // mouse off: raw frame B, must invalidate scan cache
+	_ = h.RenderContent(false)   // mouse off: raw frame B, must invalidate scan cache
 	got := h.RenderContent(true) // mouse on again: must re-scan frame B
 	if got != zone.Scan(h.View()) {
 		t.Errorf("mouse on→off→on returned a stale scan; expected a fresh scan of the changed frame")

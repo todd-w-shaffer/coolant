@@ -67,7 +67,7 @@ func TestCacheWindowSingleDelta(t *testing.T) {
 
 func TestCacheWindowAveragesAcrossTicks(t *testing.T) {
 	var w cacheWindow
-	w.add(cacheDelta{read: 0, total: 100})    // tick 1: 0% hit
+	w.add(cacheDelta{read: 0, total: 100})   // tick 1: 0% hit
 	w.add(cacheDelta{read: 100, total: 100}) // tick 2: 100% hit
 	// Combined: 100 read / 200 total = 50%
 	if got := w.ratio(); math.Abs(got-0.5) > 1e-9 {
