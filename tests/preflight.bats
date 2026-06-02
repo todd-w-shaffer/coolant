@@ -136,6 +136,7 @@ EOF
   # entry must still point at preflight.sh. Asserting each token guards
   # against a future edit silently dropping one (e.g. narrowing back to
   # startup-only, which re-breaks resume/clear agent visibility).
+  require_jq
   local entry matcher cmd
   entry=$(jq -c '.hooks.SessionStart[] | select(.hooks[].command | test("preflight"))' \
     "$PROJECT_ROOT/hooks/hooks.json")
@@ -184,6 +185,40 @@ EOF
   mkdir -p "$TEST_TMPDIR/project"
   run_preflight_src "$TEST_TMPDIR/project" resume "resumed-sid" > /dev/null
   [ "$(cat "$COOLANT_SESSION_FILE")" = "resumed-sid" ]
+}
+
+@test "preflight preserves the degraded-write counter on resume" {
+  # The cold-start gate also protects the degraded-counter truncation.
+  # A regression hoisting the `: >` truncations above the source gate
+  # would pass the review-audit tests but be caught here.
+  mkdir -p "$TEST_TMPDIR/project"
+  printf '\n\n\n' > "$COOLANT_DEGRADED_COUNT"
+  run_preflight_src "$TEST_TMPDIR/project" resume > /dev/null
+  [ "$(wc -l < "$COOLANT_DEGRADED_COUNT")" -eq 3 ]
+}
+
+@test "preflight does NOT scan worktree configs on resume" {
+  # The misconfiguration scan (and its preflight.warn emission) is
+  # cold-start-only; resume must not re-warn on every context resume.
+  mkdir -p "$TEST_TMPDIR/project"
+  cat > "$TEST_TMPDIR/project/vitest.config.ts" <<'EOF'
+export default defineConfig({ test: {} })
+EOF
+  run_preflight_src "$TEST_TMPDIR/project" resume > /dev/null
+  run grep -q '"event":"preflight.warn"' "$COOLANT_EVENTS"
+  [ "$status" -ne 0 ]
+}
+
+@test "preflight treats a missing source field as a cold start" {
+  # _json_field returns empty when `source` is absent; the source gate
+  # must fall through to full cold-start behavior (counter.reset fires)
+  # so a malformed or older CC payload doesn't silently skip the epoch
+  # reset on a genuine new session.
+  mkdir -p "$TEST_TMPDIR/project"
+  printf '{"session_id":"test","cwd":"%s","hook_event_name":"SessionStart"}' \
+    "$TEST_TMPDIR/project" \
+    | bash "$PROJECT_ROOT/scripts/preflight.sh" > /dev/null
+  grep -q '"event":"counter.reset"' "$COOLANT_EVENTS"
 }
 
 @test "preflight truncates the review-audit log on startup" {

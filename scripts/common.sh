@@ -13,11 +13,13 @@ COOLANT_AGENT_STARTS="${COOLANT_AGENT_STARTS:-${_COOLANT_DIR}coolant-${USER}.age
 COOLANT_DEGRADED_COUNT="${COOLANT_DEGRADED_COUNT:-${_COOLANT_DIR}coolant-${USER}.degraded.count}"
 # Per-session JSONL audit log of review-shaped Agent invocations.
 # Populated by .claude/hooks/audit-review-agents.sh, gated against by
-# .claude/hooks/enforce-spec-to-ship-reviews.sh. Truncated by preflight.
+# .claude/hooks/enforce-spec-to-ship-reviews.sh. Truncated by preflight
+# on cold start only — resume/clear preserve it so the
+# review→/clear→commit gate survives a mid-session context reset.
 COOLANT_REVIEW_AUDIT="${COOLANT_REVIEW_AUDIT:-${_COOLANT_DIR}coolant-${USER}.review-audit.jsonl}"
-# Sidecar holding the current session_id, written by preflight.sh on
-# session start. Read by _reconcile_counter and the Go tailer to scope
-# per-session counters and event consumption.
+# Sidecar holding the current session_id, re-stamped by preflight.sh on
+# every SessionStart (startup|resume|clear). Read by _reconcile_counter
+# and the Go tailer to scope per-session counters and event consumption.
 COOLANT_SESSION_FILE="${COOLANT_SESSION_FILE:-${_COOLANT_DIR}coolant-${USER}.session}"
 COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
 # Maximum bytes of a per-agent transcript that `_parse_agent_telemetry`

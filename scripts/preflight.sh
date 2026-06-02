@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
-# SessionStart hook: one-time preflight checks for common misconfigurations.
-# Scans test runner configs for missing .claude/ worktree exclusions.
+# SessionStart hook (matches startup|resume|clear). Always re-stamps the
+# session sidecar; on cold start only, also resets the agent-counter epoch
+# and scans test-runner configs for missing .claude/ worktree exclusions.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"

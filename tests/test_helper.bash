@@ -112,6 +112,14 @@ emit_event() {
   coolant_event "$1"
 }
 
+# Skip the calling test when jq is unavailable, so jq-dependent tests
+# skip cleanly on a jq-less runner instead of erroring.
+require_jq() {
+  if ! command -v jq > /dev/null 2>&1; then
+    skip "jq not installed"
+  fi
+}
+
 teardown() {
   rm -rf "$TEST_TMPDIR"
 }
