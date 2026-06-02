@@ -118,6 +118,17 @@ EOF
   [ "$(cat "$COOLANT_SESSION_FILE")" = "abc-123" ]
 }
 
+@test "SessionStart hook fires on resume so the sidecar re-stamps" {
+  # preflight writes the session sidecar that thermo's tailer reads to
+  # scope agent events. A resumed session keeps its session_id but,
+  # with a startup-only matcher, never re-runs preflight — leaving the
+  # sidecar pinned to whatever session last cold-started (often a dead
+  # transient). Broaden the matcher so resume re-stamps the sidecar.
+  local matcher
+  matcher=$(jq -r '.hooks.SessionStart[0].matcher' "$PROJECT_ROOT/hooks/hooks.json")
+  [[ "$matcher" == *resume* ]]
+}
+
 @test "preflight truncates COOLANT_DEGRADED_COUNT" {
   mkdir -p "$TEST_TMPDIR/project"
   # Pre-seed a stale counter from a prior session.
