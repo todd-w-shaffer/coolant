@@ -190,12 +190,12 @@ func TestOTELTokens_SumsAcrossQuerySources(t *testing.T) {
 // zeros for the cache fields with ok=true. With the new billable-total
 // readout (Input+Output+CacheCreate+CacheRead), that silence becomes a
 // visible 3-4× downward step on source flip. Guard:
-//  - track a sticky bit per cache type (cacheCreation, cacheRead) — set
-//    the first time the type is observed this process
-//  - if non-cache types are present this tick AND a previously-observed
-//    cache type returns nothing this tick → fire schema_drift for the
-//    missing field(s) and return ok=false (transcript stays
-//    authoritative)
+//   - track a sticky bit per cache type (cacheCreation, cacheRead) — set
+//     the first time the type is observed this process
+//   - if non-cache types are present this tick AND a previously-observed
+//     cache type returns nothing this tick → fire schema_drift for the
+//     missing field(s) and return ok=false (transcript stays
+//     authoritative)
 //
 // Cold start with no cache data ever is NOT drift — the sticky bit
 // gates against false positives on early ticks.
