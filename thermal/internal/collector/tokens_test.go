@@ -171,15 +171,25 @@ func TestTokenCollectorTickProducesWindowedCacheRatio(t *testing.T) {
 
 // fakeOTELView is a controllable OTELTokenView for the fan-in tests —
 // avoids booting the OTEL receiver / tailer for collector-level tests.
+//
+// OTELTokens is now-aware: when okDays is non-nil it gates ok on the
+// query's UTC date (mirroring the real adapter, whose per-day cumulative
+// bucket rolls empty at 00:00 UTC). When okDays is nil it falls back to
+// the static ok flag, so the pre-existing fan-in tests are unaffected.
 type fakeOTELView struct {
 	input, output, cacheCreate, cacheRead int64
 	ok                                    bool
 	live                                  bool
+	okDays                                map[string]bool // UTC "2006-01-02" → bucket has data
 	driftCalls                            []string
 }
 
-func (f *fakeOTELView) OTELTokens(time.Time) (int64, int64, int64, int64, bool) {
-	return f.input, f.output, f.cacheCreate, f.cacheRead, f.ok
+func (f *fakeOTELView) OTELTokens(now time.Time) (int64, int64, int64, int64, bool) {
+	ok := f.ok
+	if f.okDays != nil {
+		ok = f.okDays[now.UTC().Format("2006-01-02")]
+	}
+	return f.input, f.output, f.cacheCreate, f.cacheRead, ok
 }
 func (f *fakeOTELView) IsOTELLive(time.Time) bool { return f.live }
 func (f *fakeOTELView) ObserveTokenSchemaDrift(field, _ string) {
@@ -396,6 +406,50 @@ func TestTokenCollector_FanIn_NoDriftCallOnColdStartLookupMiss(t *testing.T) {
 
 	if len(view.driftCalls) != 0 {
 		t.Errorf("cold-start lookup miss must not fire drift: got %v", view.driftCalls)
+	}
+}
+
+// BUG 1: at 00:00 UTC the adapter's per-day cumulative bucket rolls empty, so
+// OTELTokens returns ok=false. The collector must treat that as a gap (no-data
+// for the new day) — a baseline reset, NOT a schema-drift event. The original
+// code fired token_lookup_miss and burned the one-shot driftFired, so a genuine
+// later attribute rename could never fire for the rest of the process.
+func TestTokenCollector_FanIn_DateRollDoesNotBurnDriftGate(t *testing.T) {
+	dir, _ := seedTranscriptProject(t)
+	view := &fakeOTELView{
+		live:  true,
+		input: 500,
+		okDays: map[string]bool{
+			"2026-06-01": true,  // day 1 bucket has data
+			"2026-06-02": false, // day 2 bucket empty (the midnight roll)
+		},
+	}
+	tc := NewTokenCollector(WithOTELView(view))
+	tc.projects = dir
+
+	// Day 1, OTEL producing.
+	tc.Tick(time.Date(2026, 6, 1, 23, 59, 0, 0, time.UTC))
+
+	// Day 2 just after midnight UTC — bucket rolled empty → ok=false. This is a
+	// date roll, not a rename: no drift, and the one-shot gate stays available.
+	tc.Tick(time.Date(2026, 6, 2, 0, 1, 0, 0, time.UTC))
+
+	if len(view.driftCalls) != 0 {
+		t.Errorf("UTC date roll fired a false drift: %v (want none)", view.driftCalls)
+	}
+	if tc.driftFired {
+		t.Error("date roll burned the one-shot driftFired gate; a real later rename can no longer fire")
+	}
+
+	// Day 2 resumes producing, then a genuine same-day miss (attribute rename)
+	// must STILL fire the gate — proof the midnight roll didn't consume it.
+	view.okDays["2026-06-02"] = true
+	tc.Tick(time.Date(2026, 6, 2, 9, 0, 0, 0, time.UTC))
+	view.okDays["2026-06-02"] = false
+	tc.Tick(time.Date(2026, 6, 2, 14, 0, 0, 0, time.UTC))
+
+	if len(view.driftCalls) == 0 {
+		t.Error("a genuine same-day miss after the roll did not fire drift (gate wrongly unavailable)")
 	}
 }
 

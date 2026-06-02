@@ -156,9 +156,10 @@ type TokenCollector struct {
 	lastPrettyPerS  float64 // raw last per-tick chars÷4 rate from transcript byte growth
 
 	otel             OTELTokenView
-	lastSourceOTEL   bool // tracks whether prior tick rendered OTEL — flip clamps deltas
-	otelEverProduced bool // sticky: once OTEL returned ok=true, lookup miss becomes drift
-	driftFired       bool // one-shot per process — never spam ObserveTokenSchemaDrift
+	lastSourceOTEL   bool   // tracks whether prior tick rendered OTEL — flip clamps deltas
+	otelEverProduced bool   // sticky: once OTEL returned ok=true, lookup miss becomes drift
+	driftFired       bool   // one-shot per process — never spam ObserveTokenSchemaDrift
+	lastOTELDay      string // UTC "2006-01-02" of the last ok=true OTEL read — date roll vs. same-day miss
 }
 
 // TokenCollectorOption configures NewTokenCollector. Variadic so callers
@@ -234,18 +235,24 @@ func (tc *TokenCollector) Tick(now time.Time) TokenStats {
 	var out TokenStats
 	if tc.otel != nil && tc.otel.IsOTELLive(now) {
 		in, op, cC, cR, ok := tc.otel.OTELTokens(now)
+		day := now.UTC().Format("2006-01-02")
 		switch {
 		case ok:
 			tc.otelEverProduced = true
+			tc.lastOTELDay = day
 			useOTEL = true
 			out.InputTotal = in
 			out.OutputTotal = op
 			out.CacheCreateTotal = cC
 			out.CacheReadTotal = cR
-		case tc.otelEverProduced && !tc.driftFired:
-			// Live receiver, lookup miss, previously produced — strong
-			// signal of attribute rename. Fire the drift gate once. Fall
-			// back to transcript for this tick.
+		case tc.otelEverProduced && !tc.driftFired && day == tc.lastOTELDay:
+			// Live receiver, lookup miss, previously produced, SAME UTC day —
+			// strong signal of an attribute rename. Fire the drift gate once.
+			// An empty lookup on a NEW UTC day is the per-day cumulative bucket
+			// rolling over at midnight (a gap / no-data-yet), not a rename:
+			// treat it as a baseline reset and leave the one-shot gate
+			// available so a genuine later rename can still fire. Either way,
+			// fall back to transcript for this tick.
 			tc.otel.ObserveTokenSchemaDrift("token_lookup_miss", "")
 			tc.driftFired = true
 		}
