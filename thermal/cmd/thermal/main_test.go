@@ -199,9 +199,14 @@ func TestIntelKeyTogglesOverlay(t *testing.T) {
 		t.Error("'i' should toggle intel mode on")
 	}
 	m, _ = pressKey(t, m, "i")
-	// Any key in intel mode dismisses — so second 'i' dismisses, doesn't toggle back on
+	// `i` inside intel cycles pages: session summary → scoreboard.
+	if !m.layout.IntelMode() {
+		t.Error("second 'i' should advance to the scoreboard page, not dismiss")
+	}
+	m, _ = pressKey(t, m, "i")
+	// Third `i` completes the cycle: scoreboard → off.
 	if m.layout.IntelMode() {
-		t.Error("second key in intel mode should dismiss")
+		t.Error("third 'i' from scoreboard should dismiss intel")
 	}
 }
 
@@ -246,10 +251,15 @@ func TestIntelKeyCyclesDepthFromFocused(t *testing.T) {
 	if !m.layout.IntelMode() {
 		t.Error("'i' from focused should keep intel mode (session summary)")
 	}
-	// i again → exits intel entirely
+	// i again → session summary advances to the scoreboard page
+	m, _ = pressKey(t, m, "i")
+	if !m.layout.IntelMode() {
+		t.Error("'i' from session summary should advance to scoreboard, not exit")
+	}
+	// i once more → exits intel entirely
 	m, _ = pressKey(t, m, "i")
 	if m.layout.IntelMode() {
-		t.Error("'i' from session summary should exit intel")
+		t.Error("'i' from scoreboard should exit intel")
 	}
 }
 

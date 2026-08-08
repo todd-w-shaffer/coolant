@@ -15,6 +15,8 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/anim"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats/format"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 	"github.com/toddwshaffer/coolant/thermal/internal/widgets"
@@ -25,6 +27,14 @@ import (
 const (
 	HelpShort int8 = 0
 	HelpFull  int8 = 1
+)
+
+// Intel overlay pages. The `i` key cycles off → session summary →
+// scoreboard → off; focused-agent sub-mode always returns to the
+// session page (never scoreboard).
+const (
+	intelPageSession    int8 = 0
+	intelPageScoreboard int8 = 1
 )
 
 // Horizontal is the bottom-strip layout engine (wide, short — ~244x10).
@@ -46,9 +56,48 @@ type Horizontal struct {
 	alerts         *widgets.Alerts
 	helpMode       int8
 	intelMode      bool
+	intelPage      int8   // page shown when intel is on and no agent is focused
 	focusedAgentID string // non-empty → focused-agent sub-mode within intel
 	collapsed      bool
 	theme          *theme.Theme
+
+	// scoreboardSrc overrides the scoreboard's stats source (tests
+	// inject a counting fake). Nil → the state's attached aggregator.
+	scoreboardSrc statsSource
+	sbCache       scoreboardCache
+}
+
+// statsSource is the narrow read surface the scoreboard page pulls
+// from. *stats.Aggregator satisfies it; window and distribution
+// queries live on the live aggregator (each takes its read lock), not
+// on Snapshot, so the pull captures everything in one pass and the
+// render path never touches the source.
+type statsSource interface {
+	Snapshot() stats.Snapshot
+	VisibleWindows() []string
+	Window(days int) stats.Counters
+	WindowByType(days int) map[string]int64
+	WindowByProject(days int) map[string]int64
+}
+
+// scoreboardCache captures everything the scoreboard page renders in
+// a single pull (§3.4 of the scoreboard spec). Mixing a cached
+// snapshot with live window queries would show internally
+// inconsistent numbers, so all of it lands together. pulledAt doubles
+// as Renderer.Now for every format call on the page.
+type scoreboardCache struct {
+	snap        stats.Snapshot
+	windowKeys  []string                  // "today" + VisibleWindows() + "lifetime", deduped
+	windows     map[string]stats.Counters // per key in windowKeys
+	byType30    map[string]int64
+	byProject30 map[string]int64
+	pulledAt    time.Time
+
+	// rendered memoizes the formatted band so per-frame renders are a
+	// slice return, not a re-format of unchanged data. Invalidated by
+	// any re-pull (fresh struct) or a width change.
+	rendered      []string
+	renderedWidth int
 }
 
 func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizontal {
@@ -97,8 +146,7 @@ func (h *Horizontal) HelpMode() int8 {
 }
 
 func (h *Horizontal) ToggleHelp() {
-	h.intelMode = false
-	h.focusedAgentID = ""
+	h.DismissIntel()
 	if h.helpMode == HelpFull {
 		h.helpMode = HelpShort
 		return
@@ -116,19 +164,96 @@ func (h *Horizontal) IntelMode() bool {
 
 func (h *Horizontal) ToggleIntel() {
 	h.helpMode = HelpShort
-	if h.intelMode && h.focusedAgentID != "" {
+	switch {
+	case h.intelMode && h.focusedAgentID != "":
 		// Focused → session summary: clear focus, keep intel.
 		h.focusedAgentID = ""
-	} else {
-		// Session summary → neutral, or neutral → session summary.
-		h.intelMode = !h.intelMode
+		h.intelPage = intelPageSession
+	case h.intelMode && h.intelPage == intelPageSession:
+		h.intelPage = intelPageScoreboard
+		h.ensureScoreboardPull(true)
+	case h.intelMode:
+		// Scoreboard → off.
+		h.DismissIntel()
+	default:
+		// Off → session summary.
+		h.intelMode = true
+		h.intelPage = intelPageSession
 		h.focusedAgentID = ""
 	}
 }
 
 func (h *Horizontal) DismissIntel() {
 	h.intelMode = false
+	h.intelPage = intelPageSession
 	h.focusedAgentID = ""
+	h.sbCache = scoreboardCache{} // stale data must not resurface on re-entry
+}
+
+// resolveStatsSource resolves the scoreboard's data source: the test
+// seam if set, else the state's attached aggregator. The
+// nil-aggregator check stays explicit so a nil *stats.Aggregator
+// never leaks out as a non-nil interface value.
+func (h *Horizontal) resolveStatsSource() statsSource {
+	if h.scoreboardSrc != nil {
+		return h.scoreboardSrc
+	}
+	if agg := h.state.Aggregator(); agg != nil {
+		return agg
+	}
+	return nil
+}
+
+// ensureScoreboardPull owns all the §3.4 pull moments in one place:
+// page entry (force), unpopulated cache (covers any entry path that
+// bypassed the `i` keypress), and UTC day rollover (otherwise the
+// "today" row silently zeroes at midnight). Returns the resolved
+// source, nil when no aggregator is attached.
+func (h *Horizontal) ensureScoreboardPull(force bool) statsSource {
+	src := h.resolveStatsSource()
+	if src == nil {
+		return nil
+	}
+	if force || h.sbCache.pulledAt.IsZero() ||
+		stats.DayKey(time.Now().UTC()) != stats.DayKey(h.sbCache.pulledAt) {
+		h.pullScoreboard(src)
+	}
+	return src
+}
+
+// pullScoreboard refills the cache from src in one pass.
+func (h *Horizontal) pullScoreboard(src statsSource) {
+	now := time.Now().UTC()
+	snap := src.Snapshot()
+	keys := format.WindowKeys(src.VisibleWindows())
+	windows := make(map[string]stats.Counters, len(keys))
+	for _, k := range keys {
+		windows[k] = windowCountersFor(src, snap, k, now)
+	}
+	h.sbCache = scoreboardCache{
+		snap:        snap,
+		windowKeys:  keys,
+		windows:     windows,
+		byType30:    src.WindowByType(30),
+		byProject30: src.WindowByProject(30),
+		pulledAt:    now,
+	}
+}
+
+// windowCountersFor maps a window key to its Counters. The key
+// vocabulary is parsed by format.ParseWindowKey (shared with the
+// CLI's windowCounters); only the source dispatch lives here.
+func windowCountersFor(src statsSource, snap stats.Snapshot, key string, now time.Time) stats.Counters {
+	switch kind, days := format.ParseWindowKey(key); kind {
+	case format.WindowToday:
+		return snap.Daily[stats.DayKey(now)]
+	case format.WindowLifetime:
+		return snap.Lifetime()
+	case format.WindowDays:
+		return src.Window(days)
+	default:
+		return stats.Counters{}
+	}
 }
 
 // FocusAgent enters the focused-agent intel sub-mode for the given agent ID.
@@ -136,6 +261,7 @@ func (h *Horizontal) DismissIntel() {
 func (h *Horizontal) FocusAgent(id string) {
 	h.helpMode = HelpShort
 	h.intelMode = true
+	h.intelPage = intelPageSession
 	h.focusedAgentID = id
 }
 
@@ -168,8 +294,7 @@ func (h *Horizontal) IsCollapsed() bool {
 func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
 	if state.IsIdle() {
-		h.intelMode = false // dismiss stale intel on idle transition
-		h.focusedAgentID = ""
+		h.DismissIntel() // dismiss stale intel on idle transition
 	}
 	h.headline.Update(state)
 	h.gauges.Update(state)
@@ -231,6 +356,11 @@ func (h *Horizontal) activeView() string {
 // help line as the opacity border: each help row is padded to that width,
 // and dimmed sparkline shows through from that column onward on every row.
 // Gauge rows below the help block render as unmodified dimmed sparklines.
+//
+// Truncation contract: this composites at most len(gaugeLines) rows and
+// silently drops the rest — callers own fitting their band to the canvas
+// (the session page uses 5 of the ~6 gauge rows; the scoreboard band caps
+// itself at 6).
 func overlayContent(help, gaugeLines []string) []string {
 	if len(gaugeLines) == 0 {
 		return gaugeLines
@@ -274,7 +404,7 @@ func (h *Horizontal) helpView() []string {
 		" " + dim("filter") + " " + ct(d, "[ prev") + "  " + ct(d, "] next") + "  " + ct(d, "\\ clear") + "  " +
 			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
 			dim("click a headline category to filter"),
-		" " + ct(d, "i session intel") + "  " +
+		" " + ct(d, "i intel · scoreboard") + "  " +
 			dim("|") + " " + ct(d, "x clear completed") + "  " + ct(d, "c collapse"),
 		" " + dim("press any key to dismiss"),
 	}
@@ -284,6 +414,9 @@ func (h *Horizontal) intelView() []string {
 	// Focused-agent sub-mode: render single-agent view.
 	if h.focusedAgentID != "" {
 		return h.focusedIntelView()
+	}
+	if h.intelPage == intelPageScoreboard {
+		return h.scoreboardView()
 	}
 
 	dim := ui.DimText
@@ -386,9 +519,242 @@ func (h *Horizontal) intelView() []string {
 	bytesStr := ct(formatBytesCompact(totalBytes) + " transcripts")
 	orphanStr := ct(fmt.Sprintf("%d orphans", s.OrphanStopCount()))
 	driftStr := ct(fmt.Sprintf("drift %d", s.CounterDrift()))
-	row5 := " " + dim("output") + "    " + bytesStr + sep + orphanStr + sep + driftStr
+	// Inline scoreboard hint keeps the page discoverable without a
+	// sixth row — the 5-row band shape is a locked contract.
+	row5 := " " + dim("output") + "    " + bytesStr + sep + orphanStr + sep + driftStr +
+		sep + dim("i scoreboard")
 
 	return []string{row1, row2, row3, row4, row5}
+}
+
+// scoreboardView renders the scoreboard intel page from sbCache.
+// Steady-state renders read only the cache; the source is touched
+// solely by the pull guard below (unpopulated cache or UTC day
+// rollover — see pullScoreboard).
+//
+// Formatting vocabulary note: this file holds two. The session page
+// keeps the private formatDuration/formatBytesCompact helpers (their
+// tiering differs — "1m30s" vs stats/format's "1m 30s"); the
+// scoreboard page renders exclusively through stats/format so the
+// CLI and OTEL consumers stay copy-identical. Do not mix vocabularies
+// within a page.
+func (h *Horizontal) scoreboardView() []string {
+	if src := h.ensureScoreboardPull(false); src == nil {
+		// Bare test/degraded-init state — no aggregator attached.
+		return []string{" " + ui.DimText("stats unavailable")}
+	}
+	// Everything below is pure formatting of the immutable cache, so
+	// it memoizes per (pull, width) — steady-state frames return the
+	// cached band.
+	if h.sbCache.rendered == nil || h.sbCache.renderedWidth != h.width {
+		h.sbCache.rendered = h.renderScoreboard()
+		h.sbCache.renderedWidth = h.width
+	}
+	return h.sbCache.rendered
+}
+
+// renderScoreboard formats the band from sbCache. Called only on
+// cache or width changes — see the memoization in scoreboardView.
+func (h *Horizontal) renderScoreboard() []string {
+	if h.sbCache.snap.FirstSeen.IsZero() {
+		// Neutral copy only: a brand-new healthy install is also
+		// FirstSeen-zero, so no upgrade hint here (that stays CLI-side
+		// behind its stricter folded-events gate).
+		return []string{" " + ui.DimText("no agent activity recorded yet — records appear after the first subagent runs")}
+	}
+	if h.width > 0 && h.width < scoreboardMinWidth {
+		// Cycle order is unchanged — the page still occupies its slot
+		// so muscle memory stays intact.
+		return []string{" " + ui.DimText("scoreboard needs a wider window")}
+	}
+
+	dim := ui.DimText
+	ct := func(s string) string { return ui.ColorText(h.theme.HelpColor, s) }
+	title := " " + dim("── ") + ct("scoreboard · all-time") + dim(" ──  i session intel · any key dismiss")
+
+	groups := [][]string{h.sbRecordsGroup(), h.sbWindowsGroup(), h.sbDistributionsGroup()}
+	groups = fitColumnGroups(groups, h.width, ansi.StringWidth(sbGroupSep))
+	return append([]string{title}, joinColumnGroups(groups, dim(sbGroupSep))...)
+}
+
+// sbGroupSep separates side-by-side column groups (rendered dim).
+const sbGroupSep = " │ "
+
+// scoreboardMinWidth is the floor below which the scoreboard page
+// renders a single-line fallback instead of any column group.
+const scoreboardMinWidth = 60
+
+// fitColumnGroups keeps the leading groups that fit within width,
+// dropping from the tail first (distributions, then windows). The
+// first group always survives — records are the page's reason to
+// exist, and the <scoreboardMinWidth fallback already bounds the
+// degenerate case. width <= 0 means unsized (tests, pre-layout) and
+// keeps everything.
+func fitColumnGroups(groups [][]string, width, sepWidth int) [][]string {
+	if width <= 0 {
+		return groups
+	}
+	used := maxLineWidth(groups[0])
+	keep := 1
+	for _, g := range groups[1:] {
+		used += sepWidth + maxLineWidth(g)
+		if used > width {
+			break
+		}
+		keep++
+	}
+	return groups[:keep]
+}
+
+// maxLineWidth returns the widest visible width across a group's
+// lines.
+func maxLineWidth(lines []string) int {
+	w := 0
+	for _, l := range lines {
+		w = max(w, ansi.StringWidth(l))
+	}
+	return w
+}
+
+// sbCell is one label/value/meta row inside a scoreboard sub-column.
+type sbCell struct {
+	label, value, meta string
+}
+
+// sbRecordsGroup renders the seven eternal leaderboards' top-1
+// entries as two side-by-side sub-columns (4 + 3, matching the §3.1
+// sketch). Empty boards keep their label and show the dash glyph in
+// the value column.
+func (h *Horizontal) sbRecordsGroup() []string {
+	rec := h.sbCache.snap.Records
+	now := h.sbCache.pulledAt
+
+	// Split boards + the burst cell into two balanced sub-columns
+	// (4+3 today); deriving from len keeps the columns balanced if
+	// the board table ever grows.
+	boards := format.Boards()
+	split := (len(boards) + 2) / 2
+	left := make([]sbCell, 0, split)
+	for _, b := range boards[:split] {
+		v, when := format.FormatTop1(b.Kind, b.Pick(rec), now)
+		left = append(left, sbCell{b.Label, v, when})
+	}
+	burstValue, burstWhen := format.FormatBurstTop1(rec.BiggestBurst, now)
+	right := []sbCell{{format.BurstBoardLabel, burstValue, burstWhen}}
+	for _, b := range boards[split:] {
+		v, when := format.FormatTop1(b.Kind, b.Pick(rec), now)
+		right = append(right, sbCell{b.Label, v, when})
+	}
+	return joinColumnGroups([][]string{h.styleCells(left), h.styleCells(right)}, ui.DimText(sbGroupSep))
+}
+
+// styleCells pads labels and values to per-column widths (computed on
+// the plain strings, before styling) and applies the intel theme
+// tokens: dim labels/meta, help-color values.
+func (h *Horizontal) styleCells(cells []sbCell) []string {
+	var lw, vw int
+	for _, c := range cells {
+		lw = max(lw, ansi.StringWidth(c.label))
+		vw = max(vw, ansi.StringWidth(c.value))
+	}
+	ct := func(s string) string { return ui.ColorText(h.theme.HelpColor, s) }
+	out := make([]string, len(cells))
+	for i, c := range cells {
+		line := " " + ui.DimText(padRight(c.label, lw)) + " " + ct(padRight(c.value, vw))
+		if c.meta != "" {
+			line += " " + ui.DimText(c.meta)
+		}
+		out[i] = line
+	}
+	return out
+}
+
+// sbWindowsGroup renders one row per cached window key in the shared
+// counters row shape.
+func (h *Horizontal) sbWindowsGroup() []string {
+	c := &h.sbCache
+	cells := make([]sbCell, 0, len(c.windowKeys))
+	for _, k := range c.windowKeys {
+		cells = append(cells, sbCell{format.FormatWindowLabel(k), format.FormatWindowCounters(c.windows[k]), ""})
+	}
+	return h.styleCells(cells)
+}
+
+// scoreboardDistTop is how many by_type rows the distributions column
+// shows before collapsing the remainder into an inline "(N more)".
+const scoreboardDistTop = 3
+
+// sbDistributionsGroup renders by_type top-N plus a one-row
+// by_project summary, lifetime · last-30d pairs throughout. Overflow
+// collapses inline so the group never exceeds the content-row budget.
+func (h *Horizontal) sbDistributionsGroup() []string {
+	c := &h.sbCache
+	dim := ui.DimText
+	ct := func(s string) string { return ui.ColorText(h.theme.HelpColor, s) }
+
+	lines := []string{" " + dim("by type (life · 30d)")}
+	rows := format.DistRows(c.snap.ByType, c.byType30)
+	shown := min(scoreboardDistTop, len(rows))
+	for i := 0; i < shown; i++ {
+		label, counts := format.FormatDistributionRow(rows[i].Key, rows[i].Lifetime, rows[i].Last30)
+		line := "  " + ct(label) + " " + dim(counts)
+		if i == shown-1 {
+			line += overflowSuffix(len(rows) - shown)
+		}
+		lines = append(lines, line)
+	}
+	if proj := format.DistRows(c.snap.ByProject, c.byProject30); len(proj) > 0 {
+		label, counts := format.FormatDistributionRow(proj[0].Key, proj[0].Lifetime, proj[0].Last30)
+		lines = append(lines, " "+dim("by project:")+" "+ct(label)+" "+dim(counts)+overflowSuffix(len(proj)-1))
+	}
+	return lines
+}
+
+// overflowSuffix renders the dim " (N more)" tail, empty when nothing
+// overflows.
+func overflowSuffix(extra int) string {
+	if extra <= 0 {
+		return ""
+	}
+	return " " + ui.DimText(fmt.Sprintf("(%d more)", extra))
+}
+
+// joinColumnGroups pads each group's lines to that group's max
+// visible width and joins them row-wise with sep. Shorter groups pad
+// with blanks; the last group is never right-padded so the band's
+// border (the widest line) stays content-driven. Widths use
+// ansi.StringWidth — never len (zone marks inflate byte length).
+func joinColumnGroups(groups [][]string, sep string) []string {
+	rows := 0
+	widths := make([]int, len(groups))
+	for gi, g := range groups {
+		rows = max(rows, len(g))
+		widths[gi] = maxLineWidth(g)
+	}
+	out := make([]string, rows)
+	for r := 0; r < rows; r++ {
+		parts := make([]string, len(groups))
+		for gi, g := range groups {
+			line := ""
+			if r < len(g) {
+				line = g[r]
+			}
+			if gi < len(groups)-1 {
+				line = padRight(line, widths[gi])
+			}
+			parts[gi] = line
+		}
+		out[r] = strings.TrimRight(strings.Join(parts, sep), " ")
+	}
+	return out
+}
+
+// padRight pads s with spaces to visible width w.
+func padRight(s string, w int) string {
+	if d := w - ansi.StringWidth(s); d > 0 {
+		return s + strings.Repeat(" ", d)
+	}
+	return s
 }
 
 // focusedIntelView renders the single-agent focused view. Nil-guards

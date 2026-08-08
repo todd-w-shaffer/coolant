@@ -25,7 +25,7 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 		{"CategoryNext", km.CategoryNext, []string{"]"}, "]", "next category"},
 		{"CategoryClear", km.CategoryClear, []string{"\\"}, "\\", "clear filter"},
 		{"MouseToggle", km.MouseToggle, []string{"m"}, "m", "toggle mouse"},
-		{"Intel", km.Intel, []string{"i"}, "i", "session intel"},
+		{"Intel", km.Intel, []string{"i"}, "i", "intel · scoreboard"},
 	}
 
 	for _, tt := range tests {

@@ -11,6 +11,7 @@ package format
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -262,6 +263,142 @@ func FormatBurstLeaderboard(rl stats.BurstRecordList, n int, now time.Time) [][2
 	return rows
 }
 
+// Board pairs a leaderboard's display label with its value kind and
+// the accessor that picks its RecordList off stats.Records. The table
+// is the shared board vocabulary — CLI and scoreboard iterate the
+// same slice so labels and ordering never drift between surfaces.
+type Board struct {
+	Label string
+	Kind  RecordKind
+	Pick  func(stats.Records) stats.RecordList
+}
+
+// BurstBoardLabel names the biggest-burst leaderboard, which lives
+// outside Boards() because BurstRecordList is a distinct type with
+// its own formatter (FormatBurstLeaderboard).
+const BurstBoardLabel = "biggest burst"
+
+var boards = []Board{
+	{"peak concurrent", KindCount, func(r stats.Records) stats.RecordList { return r.PeakConcurrent }},
+	{"longest agent", KindDuration, func(r stats.Records) stats.RecordList { return r.LongestAgentS }},
+	{"longest session", KindDuration, func(r stats.Records) stats.RecordList { return r.LongestSessionS }},
+	{"most agents/session", KindCount, func(r stats.Records) stats.RecordList { return r.MostAgentsSession }},
+	{"most tokens (agent)", KindCount, func(r stats.Records) stats.RecordList { return r.MostTokensAgent }},
+	{"most tool calls", KindCount, func(r stats.Records) stats.RecordList { return r.MostToolCallsAgent }},
+}
+
+// Boards returns the six non-burst leaderboards in display order. The
+// returned slice is shared — callers must not mutate it.
+func Boards() []Board {
+	return boards
+}
+
+// FormatTop1 renders a RecordList's top entry as (value, relative
+// time). Zero-safe: an empty list yields the dash glyph with no time,
+// so callers never index the list directly. This is the overlay-width
+// sibling of FormatRecord — same value vocabulary, but the meta is
+// just the timestamp (dash-glyph times collapse to "").
+func FormatTop1(kind RecordKind, rl stats.RecordList, now time.Time) (value, when string) {
+	if len(rl) == 0 {
+		return dashGlyph, ""
+	}
+	if rel := FormatRelativeTime(rl[0].At, now); rel != dashGlyph {
+		when = rel
+	}
+	return formatRecordValue(kind, rl[0].Value), when
+}
+
+// FormatBurstTop1 is the BurstRecordList sibling of FormatTop1.
+func FormatBurstTop1(rl stats.BurstRecordList, now time.Time) (value, when string) {
+	if len(rl) == 0 {
+		return dashGlyph, ""
+	}
+	if rel := FormatRelativeTime(rl[0].At, now); rel != dashGlyph {
+		when = rel
+	}
+	return FormatCount(rl[0].Count), when
+}
+
+// WindowKind classifies a window key so consumers can dispatch onto
+// their own data source without re-owning the key vocabulary — the
+// switch that routes "today"/"Nd"/"lifetime" to snapshot buckets vs
+// live window sums lives with each caller, but the parsing lives here.
+type WindowKind int
+
+const (
+	WindowUnknown WindowKind = iota
+	WindowToday
+	WindowLifetime
+	WindowDays
+)
+
+// ParseWindowKey classifies a window key. Day-window keys parse
+// generically ("7d" → (WindowDays, 7)) so future tiers need no edit
+// here or in any consumer's dispatch.
+func ParseWindowKey(key string) (WindowKind, int) {
+	switch key {
+	case "today":
+		return WindowToday, 0
+	case "alltime", "lifetime":
+		return WindowLifetime, 0
+	}
+	if n, ok := strings.CutSuffix(key, "d"); ok {
+		if days, err := strconv.Atoi(n); err == nil && days > 0 {
+			return WindowDays, days
+		}
+	}
+	return WindowUnknown, 0
+}
+
+// FormatWindowCounters renders one window's Counters in the shared
+// row shape: started · completed · orphaned · sessions, with
+// transcripts and gate.cap appended only when non-zero (zero-valued
+// tails drop; the four head counters always render so rows stay
+// column-comparable across windows).
+func FormatWindowCounters(c stats.Counters) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d started · %d completed · %d orphaned · %d sessions",
+		c.AgentsStarted, c.AgentsCompleted, c.AgentsOrphaned, c.Sessions)
+	if c.TranscriptBytesTotal > 0 {
+		fmt.Fprintf(&b, " · %s transcripts", FormatBytes(c.TranscriptBytesTotal))
+	}
+	if c.GateCapEvents > 0 {
+		fmt.Fprintf(&b, " · %d gate.cap", c.GateCapEvents)
+	}
+	return b.String()
+}
+
+// DistRow is one row of a lifetime · last-30d distribution pairing.
+type DistRow struct {
+	Key      string
+	Lifetime int64
+	Last30   int64
+}
+
+// DistRows builds rows from the union keyset of the two maps, sorted
+// by lifetime desc with key asc on ties. The asc-on-ties rule places
+// "__other" at the bottom of any count tier without a special-case
+// branch. Callers clamp to their own top-N.
+func DistRows(lifetime, last30 map[string]int64) []DistRow {
+	rows := make([]DistRow, 0, len(lifetime)+len(last30))
+	for k, v := range lifetime {
+		rows = append(rows, DistRow{Key: k, Lifetime: v, Last30: last30[k]})
+	}
+	for k, v := range last30 {
+		if _, present := lifetime[k]; present {
+			continue
+		}
+		rows = append(rows, DistRow{Key: k, Last30: v})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Lifetime != rows[j].Lifetime {
+			return rows[i].Lifetime > rows[j].Lifetime
+		}
+		return rows[i].Key < rows[j].Key
+	})
+	return rows
+}
+
 // FormatDistributionRow renders one entry from a by_type or
 // by_project map as (label, "lifetime · last30d"). Caller pre-sorts
 // and pre-clamps; this helper just shapes the row.
@@ -307,6 +444,25 @@ func FormatRelativeTime(t, now time.Time) string {
 	default:
 		return tu.Format("Jan 2")
 	}
+}
+
+// WindowKeys brackets the aggregator's visible windows with the
+// "today" and "lifetime" sentinels: "today" + visible + "lifetime",
+// deduped. "alltime" and "lifetime" are the same sentinel (mirroring
+// FormatWindowLabel) — if visible already carries either, no extra
+// tail is appended. This is the shared window-row vocabulary for the
+// CLI and the scoreboard overlay; pure by contract (caller passes
+// Aggregator.VisibleWindows() output).
+func WindowKeys(visible []string) []string {
+	out := make([]string, 0, len(visible)+2)
+	out = append(out, "today")
+	out = append(out, visible...)
+	for _, k := range out {
+		if k == "alltime" || k == "lifetime" {
+			return out
+		}
+	}
+	return append(out, "lifetime")
 }
 
 // FormatWindowLabel maps a window key to its human label. Both

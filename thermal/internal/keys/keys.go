@@ -52,7 +52,7 @@ func Default() KeyMap {
 		),
 		Intel: key.NewBinding(
 			key.WithKeys("i"),
-			key.WithHelp("i", "session intel"),
+			key.WithHelp("i", "intel · scoreboard"),
 		),
 	}
 }

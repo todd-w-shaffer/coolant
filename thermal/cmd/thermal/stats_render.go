@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/stats"
@@ -36,31 +35,14 @@ func renderHeader(w io.Writer, snap stats.Snapshot, r format.Renderer, now time.
 	fmt.Fprintf(w, "%s — first seen %s · last update %s\n", title, first, last)
 }
 
-type recordSpec struct {
-	label string
-	kind  format.RecordKind
-}
-
-var recordBoards = []struct {
-	spec recordSpec
-	pick func(stats.Records) stats.RecordList
-}{
-	{recordSpec{"peak concurrent", format.KindCount}, func(r stats.Records) stats.RecordList { return r.PeakConcurrent }},
-	{recordSpec{"longest agent", format.KindDuration}, func(r stats.Records) stats.RecordList { return r.LongestAgentS }},
-	{recordSpec{"longest session", format.KindDuration}, func(r stats.Records) stats.RecordList { return r.LongestSessionS }},
-	{recordSpec{"most agents/session", format.KindCount}, func(r stats.Records) stats.RecordList { return r.MostAgentsSession }},
-	{recordSpec{"most tokens (agent)", format.KindCount}, func(r stats.Records) stats.RecordList { return r.MostTokensAgent }},
-	{recordSpec{"most tool calls", format.KindCount}, func(r stats.Records) stats.RecordList { return r.MostToolCallsAgent }},
-}
-
 func renderRecords(w io.Writer, snap stats.Snapshot, f statsFlags, r format.Renderer, now time.Time) {
 	fmt.Fprintln(w, r.Style(format.StyleSectionTitle, "records"))
-	for _, b := range recordBoards {
-		rows := format.FormatLeaderboard(b.spec.kind, b.pick(snap.Records), f.top, now)
-		renderRows(w, b.spec.label, rows, r)
+	for _, b := range format.Boards() {
+		rows := format.FormatLeaderboard(b.Kind, b.Pick(snap.Records), f.top, now)
+		renderRows(w, b.Label, rows, r)
 	}
 	rows := format.FormatBurstLeaderboard(snap.Records.BiggestBurst, f.top, now)
-	renderRows(w, "biggest burst", rows, r)
+	renderRows(w, format.BurstBoardLabel, rows, r)
 }
 
 func renderRows(w io.Writer, label string, rows [][2]string, r format.Renderer) {
@@ -89,38 +71,20 @@ func windowsToShow(agg *stats.Aggregator, filter string) []string {
 	if filter != "" {
 		return []string{filter}
 	}
-	out := []string{"today"}
-	out = append(out, agg.VisibleWindows()...)
-	hasAllTime := false
-	for _, w := range out {
-		if w == "alltime" || w == "lifetime" {
-			hasAllTime = true
-			break
-		}
-	}
-	if !hasAllTime {
-		out = append(out, "lifetime")
-	}
-	return out
+	return format.WindowKeys(agg.VisibleWindows())
 }
 
 func windowCounters(agg *stats.Aggregator, snap stats.Snapshot, key string, now time.Time) stats.Counters {
-	switch key {
-	case "today":
+	switch kind, days := format.ParseWindowKey(key); kind {
+	case format.WindowToday:
 		// Anchor on `now` (Renderer-injected) rather than LastUpdated
 		// so a snapshot captured before midnight UTC still routes to
-		// the current day, and golden tests can pin the bucket.
+		// the current day, and pinned-clock tests can fix the bucket.
 		return snap.Daily[stats.DayKey(now)]
-	case "alltime", "lifetime":
+	case format.WindowLifetime:
 		return snap.Lifetime()
-	case "7d":
-		return agg.Window(7)
-	case "30d":
-		return agg.Window(30)
-	case "60d":
-		return agg.Window(60)
-	case "90d":
-		return agg.Window(90)
+	case format.WindowDays:
+		return agg.Window(days)
 	default:
 		return stats.Counters{}
 	}
@@ -131,48 +95,8 @@ func renderWindows(w io.Writer, agg *stats.Aggregator, snap stats.Snapshot, f st
 	for _, key := range windowsToShow(agg, f.window) {
 		c := windowCounters(agg, snap, key, now)
 		label := r.Style(format.StyleWindowLabel, format.FormatWindowLabel(key))
-		fmt.Fprintf(w, "  %-12s %d started · %d completed · %d orphaned · %d sessions",
-			label, c.AgentsStarted, c.AgentsCompleted, c.AgentsOrphaned, c.Sessions)
-		if c.TranscriptBytesTotal > 0 {
-			fmt.Fprintf(w, " · %s transcripts", format.FormatBytes(c.TranscriptBytesTotal))
-		}
-		if c.GateCapEvents > 0 {
-			fmt.Fprintf(w, " · %d gate.cap", c.GateCapEvents)
-		}
-		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  %-12s %s\n", label, format.FormatWindowCounters(c))
 	}
-}
-
-type distRow struct {
-	key      string
-	lifetime int64
-	last30d  int64
-}
-
-// collectDist builds rows from the union keyset of the two maps,
-// sorted by lifetime desc with key asc on ties. The asc-on-ties
-// rule places "__other" at the bottom of any count tier without a
-// special-case branch.
-func collectDist(lifetime, last30d map[string]int64) []distRow {
-	rows := make([]distRow, 0, len(lifetime)+len(last30d))
-	seen := make(map[string]struct{}, len(lifetime)+len(last30d))
-	for k, v := range lifetime {
-		rows = append(rows, distRow{key: k, lifetime: v, last30d: last30d[k]})
-		seen[k] = struct{}{}
-	}
-	for k, v := range last30d {
-		if _, present := seen[k]; present {
-			continue
-		}
-		rows = append(rows, distRow{key: k, lifetime: 0, last30d: v})
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].lifetime != rows[j].lifetime {
-			return rows[i].lifetime > rows[j].lifetime
-		}
-		return rows[i].key < rows[j].key
-	})
-	return rows
 }
 
 // renderDistributions pairs lifetime by_type / by_project with a
@@ -190,13 +114,13 @@ func renderDistributions(w io.Writer, agg *stats.Aggregator, snap stats.Snapshot
 		{"by project", snap.ByProject, agg.WindowByProject(30)},
 	} {
 		fmt.Fprintf(w, "  %s\n", group.title)
-		rows := collectDist(group.lifetime, group.last30d)
+		rows := format.DistRows(group.lifetime, group.last30d)
 		shown := f.top
 		if shown > len(rows) {
 			shown = len(rows)
 		}
 		for i := 0; i < shown; i++ {
-			label, counts := format.FormatDistributionRow(rows[i].key, rows[i].lifetime, rows[i].last30d)
+			label, counts := format.FormatDistributionRow(rows[i].Key, rows[i].Lifetime, rows[i].Last30)
 			fmt.Fprintf(w, "    %-20s %s\n",
 				r.Style(format.StyleRecordValue, label),
 				r.Style(format.StyleRecordMeta, counts),

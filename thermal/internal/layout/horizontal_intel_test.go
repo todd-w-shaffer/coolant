@@ -8,6 +8,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/toddwshaffer/coolant/thermal/internal/collector"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats/format"
 )
 
 // intelFixture populates a Horizontal with known agent data for intel overlay tests.
@@ -187,15 +189,32 @@ func TestActiveViewIntelTakesPriorityOverHelp(t *testing.T) {
 	}
 }
 
-func TestHelpViewContainsSessionIntel(t *testing.T) {
+func TestHelpViewContainsIntelScoreboard(t *testing.T) {
 	h := newHorizontalForTest(t)
 	lines := h.helpView()
 	combined := ""
 	for _, l := range lines {
 		combined += ansi.Strip(l) + " "
 	}
-	if !strings.Contains(combined, "session intel") {
-		t.Error("helpView should contain 'session intel' description for the i binding")
+	if !strings.Contains(combined, "intel · scoreboard") {
+		t.Error("helpView should describe the i binding as 'intel · scoreboard' so the page cycle is discoverable")
+	}
+}
+
+func TestSessionPageCarriesScoreboardHint(t *testing.T) {
+	h := intelFixture(t)
+	lines := h.intelView()
+	// The hint rides inline on an existing row — the session page
+	// keeps its 5-row shape (locked in the scoreboard spec §0).
+	if len(lines) != 5 {
+		t.Fatalf("session page should stay 5 rows, got %d", len(lines))
+	}
+	combined := ""
+	for _, l := range lines {
+		combined += ansi.Strip(l) + "\n"
+	}
+	if !strings.Contains(combined, "i scoreboard") {
+		t.Errorf("session page should hint at the scoreboard page\nfull:\n%s", combined)
 	}
 }
 
@@ -319,12 +338,69 @@ func TestToggleIntelFromFocusedClearsFocus(t *testing.T) {
 	}
 }
 
-func TestToggleIntelFromSessionSummaryExits(t *testing.T) {
+func TestToggleIntelCyclesSessionScoreboardOff(t *testing.T) {
 	h := intelFixture(t)
-	h.ToggleIntel() // enter session summary
-	h.ToggleIntel() // exit intel
+	h.ToggleIntel() // off → session summary
+	if !h.IntelMode() || h.intelPage != intelPageSession {
+		t.Fatalf("first ToggleIntel: mode=%v page=%d, want session page", h.IntelMode(), h.intelPage)
+	}
+	h.ToggleIntel() // session summary → scoreboard
+	if !h.IntelMode() || h.intelPage != intelPageScoreboard {
+		t.Fatalf("second ToggleIntel: mode=%v page=%d, want scoreboard page", h.IntelMode(), h.intelPage)
+	}
+	h.ToggleIntel() // scoreboard → off
 	if h.IntelMode() {
-		t.Error("second ToggleIntel from session summary should exit intel")
+		t.Error("third ToggleIntel from scoreboard should exit intel")
+	}
+	if h.intelPage != intelPageSession {
+		t.Errorf("exit should reset page to session, got %d", h.intelPage)
+	}
+}
+
+func TestToggleIntelFromFocusedLandsOnSessionPage(t *testing.T) {
+	h := intelFixture(t)
+	h.ToggleIntel() // session
+	h.ToggleIntel() // scoreboard
+	h.FocusAgent("aaa111")
+	h.ToggleIntel() // focused → session summary, never scoreboard
+	if h.FocusedAgentID() != "" {
+		t.Errorf("ToggleIntel from focused should clear focus, got %q", h.FocusedAgentID())
+	}
+	if !h.IntelMode() || h.intelPage != intelPageSession {
+		t.Errorf("ToggleIntel from focused should land on session page, mode=%v page=%d", h.IntelMode(), h.intelPage)
+	}
+}
+
+func TestDismissIntelResetsPage(t *testing.T) {
+	h := intelFixture(t)
+	h.ToggleIntel() // session
+	h.ToggleIntel() // scoreboard
+	h.DismissIntel()
+	if h.intelPage != intelPageSession {
+		t.Errorf("DismissIntel should reset page to session, got %d", h.intelPage)
+	}
+}
+
+func TestIdleTransitionResetsPage(t *testing.T) {
+	h := intelFixture(t)
+	h.SetSize(120, 10)
+	snap := collector.Snapshot{
+		Online:   true,
+		Sessions: []collector.SessionTree{{RootPID: 1}},
+		System:   collector.SystemStats{NCPUs: 10, MemTotalBytes: 16 * 1024 * 1024 * 1024},
+	}
+	h.State().Update(snap)
+	h.Update(h.State())
+
+	h.ToggleIntel() // session
+	h.ToggleIntel() // scoreboard
+
+	idleSnap := collector.Snapshot{Online: true, System: snap.System}
+	h.State().Update(idleSnap)
+	h.Update(h.State())
+
+	if h.intelPage != intelPageSession {
+		t.Errorf("idle transition should reset page to session, got %d", h.intelPage)
 	}
 }
 
@@ -615,5 +691,414 @@ func TestIntelViewEmptyState(t *testing.T) {
 		if !strings.Contains(combined, want) {
 			t.Errorf("empty intelView missing %q\nfull:\n%s", want, combined)
 		}
+	}
+}
+
+// ── Scoreboard page: cache + pull discipline ──────────────────
+
+// countingStatsSource is a statsSource fake that counts every method
+// call so tests can assert the pull discipline (once per page entry,
+// zero calls from the steady-state render path).
+type countingStatsSource struct {
+	calls int
+	snap  stats.Snapshot
+}
+
+func (c *countingStatsSource) Snapshot() stats.Snapshot { c.calls++; return c.snap }
+func (c *countingStatsSource) VisibleWindows() []string { c.calls++; return []string{"7d", "alltime"} }
+func (c *countingStatsSource) Window(days int) stats.Counters {
+	c.calls++
+	return stats.Counters{}
+}
+func (c *countingStatsSource) WindowByType(days int) map[string]int64 {
+	c.calls++
+	return map[string]int64{}
+}
+func (c *countingStatsSource) WindowByProject(days int) map[string]int64 {
+	c.calls++
+	return map[string]int64{}
+}
+
+func newCountingSource() *countingStatsSource {
+	return &countingStatsSource{snap: stats.Snapshot{FirstSeen: time.Now().UTC().Add(-time.Hour)}}
+}
+
+func enterScoreboard(h *Horizontal) {
+	h.ToggleIntel() // off → session
+	h.ToggleIntel() // session → scoreboard
+}
+
+func TestScoreboardCachePulledOncePerEntry(t *testing.T) {
+	h := newHorizontalForTest(t)
+	src := newCountingSource()
+	h.scoreboardSrc = src
+
+	enterScoreboard(h)
+	afterEntry := src.calls
+	if afterEntry == 0 {
+		t.Fatal("entering the scoreboard page should pull the cache")
+	}
+
+	for i := 0; i < 5; i++ {
+		h.intelView()
+	}
+	if src.calls != afterEntry {
+		t.Errorf("steady-state renders must not touch the source: %d calls after entry, %d after 5 renders", afterEntry, src.calls)
+	}
+
+	// Cycle out and back in — re-entry re-pulls.
+	h.ToggleIntel() // scoreboard → off
+	enterScoreboard(h)
+	if src.calls <= afterEntry {
+		t.Error("re-entering the scoreboard page should re-pull the cache")
+	}
+}
+
+func TestScoreboardCacheDayRolloverRepulls(t *testing.T) {
+	h := newHorizontalForTest(t)
+	src := newCountingSource()
+	h.scoreboardSrc = src
+
+	enterScoreboard(h)
+	h.intelView()
+	before := src.calls
+
+	// Simulate a UTC day rollover since the pull.
+	h.sbCache.pulledAt = h.sbCache.pulledAt.Add(-24 * time.Hour)
+	h.intelView()
+	if src.calls <= before {
+		t.Error("render after UTC day rollover should re-pull the cache")
+	}
+}
+
+func TestDismissIntelZeroesScoreboardCache(t *testing.T) {
+	h := newHorizontalForTest(t)
+	src := newCountingSource()
+	h.scoreboardSrc = src
+
+	enterScoreboard(h)
+	if h.sbCache.pulledAt.IsZero() {
+		t.Fatal("precondition: cache should be populated after entry")
+	}
+	h.DismissIntel()
+	if !h.sbCache.pulledAt.IsZero() {
+		t.Error("DismissIntel should zero the scoreboard cache")
+	}
+}
+
+func TestScoreboardWindowKeysCached(t *testing.T) {
+	h := newHorizontalForTest(t)
+	src := newCountingSource()
+	h.scoreboardSrc = src
+
+	enterScoreboard(h)
+	want := []string{"today", "7d", "alltime"}
+	if len(h.sbCache.windowKeys) != len(want) {
+		t.Fatalf("windowKeys = %v, want %v", h.sbCache.windowKeys, want)
+	}
+	for i, k := range want {
+		if h.sbCache.windowKeys[i] != k {
+			t.Errorf("windowKeys[%d] = %q, want %q", i, h.sbCache.windowKeys[i], k)
+		}
+	}
+	for _, k := range want {
+		if _, ok := h.sbCache.windows[k]; !ok {
+			t.Errorf("windows map missing cached counters for %q", k)
+		}
+	}
+}
+
+// ── Scoreboard page: band rendering ───────────────────────────
+
+// scoreboardAggFixture folds Schema:1 events into a fresh aggregator.
+// Timestamps sit within the last hour so the install age pins to the
+// youngest tier — VisibleWindows() = ["7d","alltime"] — keeping
+// window-label assertions stable as the test suite ages.
+func scoreboardAggFixture(t *testing.T) *stats.Aggregator {
+	t.Helper()
+	agg := stats.New(stats.Config{})
+	t0 := time.Now().UTC().Add(-30 * time.Minute)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStart, AgentID: "a1", AgentType: "general-purpose",
+		Project: "coolant", SessionID: "sess1", Timestamp: t0,
+	}, 0)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStart, AgentID: "a2", AgentType: "Explore",
+		Project: "coolant", SessionID: "sess1", Timestamp: t0.Add(time.Second),
+	}, 0)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStop, AgentID: "a1", AgentType: "general-purpose",
+		Project: "coolant", SessionID: "sess1", TokensIn: 1200, TokensOut: 3400, ToolCallCount: 12,
+		Timestamp: t0.Add(5 * time.Minute),
+	}, 0)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStop, AgentID: "a2", AgentType: "Explore",
+		Project: "coolant", SessionID: "sess1", Timestamp: t0.Add(7 * time.Minute),
+	}, 0)
+	// Three more sequential agents: a second general-purpose keeps it
+	// on top of the by_type sort, and 4 distinct types overflow the
+	// top-3 distributions cut so "(N more)" renders.
+	for i, typ := range []string{"general-purpose", "Plan", "code-reviewer"} {
+		id := fmt.Sprintf("a%d", i+3)
+		start := t0.Add(time.Duration(8+2*i) * time.Minute)
+		agg.Fold(collector.GateEvent{
+			Schema: 1, Event: collector.EventAgentStart, AgentID: id, AgentType: typ,
+			Project: "coolant", SessionID: "sess1", Timestamp: start,
+		}, 0)
+		agg.Fold(collector.GateEvent{
+			Schema: 1, Event: collector.EventAgentStop, AgentID: id, AgentType: typ,
+			Project: "coolant", SessionID: "sess1", Timestamp: start.Add(time.Minute),
+		}, 0)
+	}
+	return agg
+}
+
+func scoreboardStripped(t *testing.T, h *Horizontal) (lines []string, combined string) {
+	t.Helper()
+	lines = h.intelView()
+	stripped := make([]string, len(lines))
+	for i, l := range lines {
+		stripped[i] = ansi.Strip(l)
+	}
+	return lines, strings.Join(stripped, "\n")
+}
+
+func TestScoreboardPageRendersAllGroups(t *testing.T) {
+	h := newHorizontalForTest(t)
+	h.SetSize(240, 10)
+	h.State().AttachAggregator(scoreboardAggFixture(t))
+	enterScoreboard(h)
+	lines, combined := scoreboardStripped(t, h)
+
+	// Band must never exceed the gauge-row canvas (overlayContent
+	// silently truncates beyond it).
+	if len(lines) > 6 {
+		t.Fatalf("scoreboard band is %d rows, must not exceed 6", len(lines))
+	}
+	if !strings.Contains(combined, "scoreboard") {
+		t.Errorf("title row missing 'scoreboard'\nfull:\n%s", combined)
+	}
+	// Records group: shared board vocabulary, all boards present.
+	for _, b := range format.Boards() {
+		if !strings.Contains(combined, b.Label) {
+			t.Errorf("records group missing board %q\nfull:\n%s", b.Label, combined)
+		}
+	}
+	if !strings.Contains(combined, format.BurstBoardLabel) {
+		t.Errorf("records group missing burst board\nfull:\n%s", combined)
+	}
+	// Windows group: one row per cached key, labels via the shared helper.
+	if len(h.sbCache.windowKeys) == 0 {
+		t.Fatal("cache should carry window keys")
+	}
+	for _, k := range h.sbCache.windowKeys {
+		if !strings.Contains(combined, format.FormatWindowLabel(k)) {
+			t.Errorf("windows group missing label for %q\nfull:\n%s", k, combined)
+		}
+	}
+	// Windows group: counter values dispatch to the right source calls
+	// — the fixture folds exactly 5 starts and 5 stops today.
+	if !strings.Contains(combined, "5 started · 5 completed") {
+		t.Errorf("windows group missing today's folded counter values\nfull:\n%s", combined)
+	}
+	// Distributions group: data keys present, and the 4th type
+	// overflows the top-3 cut into the overflow indicator.
+	for _, want := range []string{"general-purpose", "Explore", "coolant", "(1 more)"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("distributions group missing %q\nfull:\n%s", want, combined)
+		}
+	}
+}
+
+func TestScoreboardOldestTierBandFitsCanvas(t *testing.T) {
+	// The >=90-day tier is the max-content shape: 5 window rows
+	// (today · 7d · 30d · 90d · lifetime). The band must still fit the
+	// 6-row gauge canvas — overlayContent truncates silently beyond it.
+	h := newHorizontalForTest(t)
+	h.SetSize(300, 10)
+	agg := stats.New(stats.Config{})
+	old := time.Now().UTC().Add(-100 * 24 * time.Hour)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStart, AgentID: "old1", AgentType: "general-purpose",
+		Project: "coolant", SessionID: "oldsess", Timestamp: old,
+	}, 0)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStop, AgentID: "old1", AgentType: "general-purpose",
+		Project: "coolant", SessionID: "oldsess", Timestamp: old.Add(time.Minute),
+	}, 0)
+	h.State().AttachAggregator(agg)
+	enterScoreboard(h)
+	lines, combined := scoreboardStripped(t, h)
+
+	if len(h.sbCache.windowKeys) != 5 {
+		t.Fatalf("oldest tier should cache 5 window keys, got %v", h.sbCache.windowKeys)
+	}
+	if len(lines) > 6 {
+		t.Fatalf("max-content band is %d rows, must not exceed the 6-row canvas:\n%s", len(lines), combined)
+	}
+	for _, k := range h.sbCache.windowKeys {
+		if !strings.Contains(combined, format.FormatWindowLabel(k)) {
+			t.Errorf("band missing window row %q\nfull:\n%s", k, combined)
+		}
+	}
+}
+
+func TestScoreboardNilAggregatorFallback(t *testing.T) {
+	h := newHorizontalForTest(t) // NewAppState starts with no aggregator
+	h.SetSize(240, 10)
+	enterScoreboard(h)
+	lines, combined := scoreboardStripped(t, h)
+	if len(lines) != 1 {
+		t.Fatalf("nil-aggregator page should be a single line, got %d", len(lines))
+	}
+	if !strings.Contains(combined, "stats unavailable") {
+		t.Errorf("nil-aggregator page missing fallback copy, got: %q", combined)
+	}
+}
+
+func TestScoreboardFirstSeenZeroFallback(t *testing.T) {
+	h := newHorizontalForTest(t)
+	h.SetSize(240, 10)
+	h.State().AttachAggregator(stats.New(stats.Config{})) // attached, nothing folded
+	enterScoreboard(h)
+	lines, combined := scoreboardStripped(t, h)
+	if len(lines) != 1 {
+		t.Fatalf("FirstSeen-zero page should be a single line, got %d", len(lines))
+	}
+	if !strings.Contains(combined, "no agent activity") {
+		t.Errorf("FirstSeen-zero page missing neutral copy, got: %q", combined)
+	}
+	// A fresh healthy install is also FirstSeen-zero — the upgrade
+	// hint is CLI-only and must never appear here (§3.5).
+	if strings.Contains(combined, "install.sh") || strings.Contains(combined, "upgrade") {
+		t.Errorf("FirstSeen-zero page must not carry upgrade copy, got: %q", combined)
+	}
+}
+
+func TestScoreboardEmptyBoardsRenderDash(t *testing.T) {
+	h := newHorizontalForTest(t)
+	h.SetSize(240, 10)
+	agg := stats.New(stats.Config{})
+	// One tokenless agent: MostTokensAgent / MostToolCallsAgent stay
+	// empty (zero values are excluded from leaderboards).
+	t0 := time.Now().UTC().Add(-10 * time.Minute)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStart, AgentID: "b1", AgentType: "claude",
+		SessionID: "sess2", Timestamp: t0,
+	}, 0)
+	agg.Fold(collector.GateEvent{
+		Schema: 1, Event: collector.EventAgentStop, AgentID: "b1", AgentType: "claude",
+		SessionID: "sess2", Timestamp: t0.Add(time.Minute),
+	}, 0)
+	h.State().AttachAggregator(agg)
+	enterScoreboard(h)
+	_, combined := scoreboardStripped(t, h)
+
+	if !strings.Contains(combined, "most tokens (agent)") {
+		t.Fatalf("empty board should still render its label\nfull:\n%s", combined)
+	}
+	if !strings.Contains(combined, "—") {
+		t.Errorf("empty boards should render the dash glyph\nfull:\n%s", combined)
+	}
+	// No per-board "(no records yet)" strings on the overlay (§0).
+	if strings.Contains(combined, "no records yet") {
+		t.Errorf("overlay must not use the CLI's '(no records yet)' copy\nfull:\n%s", combined)
+	}
+}
+
+// ── Scoreboard page: width adaptation ─────────────────────────
+
+func TestScoreboardWidthDropOrder(t *testing.T) {
+	h := newHorizontalForTest(t)
+	h.State().AttachAggregator(scoreboardAggFixture(t))
+	hasDist := func(s string) bool { return strings.Contains(s, "by type") }
+	hasWindows := func(s string) bool {
+		return strings.Contains(s, format.FormatWindowLabel("today"))
+	}
+	hasRecords := func(s string) bool { return strings.Contains(s, "peak concurrent") }
+
+	h.SetSize(240, 10)
+	enterScoreboard(h)
+	_, wide := scoreboardStripped(t, h)
+	if !hasDist(wide) || !hasWindows(wide) || !hasRecords(wide) {
+		t.Fatalf("all three groups should render at 240 cols:\n%s", wide)
+	}
+
+	// Sweep narrower: groups must drop in order (distributions first,
+	// then windows) and never reappear as width shrinks. Records
+	// survive down to the narrow floor. Exact breakpoints are
+	// implementation-tuned — the sweep asserts order, not columns.
+	sawRecordsOnly := false
+	prevDist, prevWindows := true, true
+	for w := 239; w >= scoreboardMinWidth; w-- {
+		h.SetSize(w, 10)
+		_, s := scoreboardStripped(t, h)
+		d, wn := hasDist(s), hasWindows(s)
+		if d && !prevDist {
+			t.Fatalf("distributions reappeared at width %d", w)
+		}
+		if wn && !prevWindows {
+			t.Fatalf("windows reappeared at width %d", w)
+		}
+		if d && !wn {
+			t.Fatalf("wrong drop order at width %d: distributions present without windows", w)
+		}
+		if !hasRecords(s) {
+			t.Fatalf("records must survive above the narrow floor, missing at width %d:\n%s", w, s)
+		}
+		if !d && !wn {
+			sawRecordsOnly = true
+		}
+		prevDist, prevWindows = d, wn
+	}
+	if !sawRecordsOnly {
+		t.Error("sweep never reached the records-only state before the narrow floor")
+	}
+
+	// Below the floor: single dim fallback line, cycle order intact.
+	h.SetSize(scoreboardMinWidth-1, 10)
+	lines, s := scoreboardStripped(t, h)
+	if len(lines) != 1 {
+		t.Fatalf("narrow fallback should be a single line, got %d:\n%s", len(lines), s)
+	}
+	if !strings.Contains(s, "wider") {
+		t.Errorf("narrow fallback should mention needing a wider window, got: %q", s)
+	}
+	if !h.IntelMode() {
+		t.Error("narrow fallback must not alter intel state")
+	}
+}
+
+func TestToggleHelpZeroesScoreboardCache(t *testing.T) {
+	h := newHorizontalForTest(t)
+	h.scoreboardSrc = newCountingSource()
+	enterScoreboard(h)
+	if h.sbCache.pulledAt.IsZero() {
+		t.Fatal("precondition: cache populated after entry")
+	}
+	h.ToggleHelp()
+	if !h.sbCache.pulledAt.IsZero() {
+		t.Error("ToggleHelp exits intel and must zero the scoreboard cache like every other exit path")
+	}
+	if h.intelPage != intelPageSession {
+		t.Errorf("ToggleHelp should reset page to session, got %d", h.intelPage)
+	}
+}
+
+func TestScoreboardZeroCachePullsOnDirectPageEntry(t *testing.T) {
+	// Entry paths that bypass ToggleIntel (the pulledAt.IsZero guard's
+	// reason to exist) must pull on first render rather than showing a
+	// zero-valued page.
+	h := newHorizontalForTest(t)
+	src := newCountingSource()
+	h.scoreboardSrc = src
+	h.intelMode = true
+	h.intelPage = intelPageScoreboard // no ToggleIntel, no eager pull
+	h.intelView()
+	if src.calls == 0 {
+		t.Error("render with a zero cache should pull from the source")
+	}
+	if h.sbCache.pulledAt.IsZero() {
+		t.Error("cache should be populated after the render-path pull")
 	}
 }

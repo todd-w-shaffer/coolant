@@ -333,3 +333,190 @@ func TestFormatRelativeTime(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowKeys(t *testing.T) {
+	cases := []struct {
+		name    string
+		visible []string
+		want    []string
+	}{
+		{"young tier carries alltime", []string{"7d", "alltime"}, []string{"today", "7d", "alltime"}},
+		{"mid tier gains lifetime tail", []string{"7d", "30d"}, []string{"today", "7d", "30d", "lifetime"}},
+		{"60d tier gains lifetime tail", []string{"7d", "30d", "60d"}, []string{"today", "7d", "30d", "60d", "lifetime"}},
+		{"oldest tier carries alltime", []string{"7d", "30d", "90d", "alltime"}, []string{"today", "7d", "30d", "90d", "alltime"}},
+		{"literal lifetime not doubled", []string{"7d", "lifetime"}, []string{"today", "7d", "lifetime"}},
+		{"empty visible still bracketed", nil, []string{"today", "lifetime"}},
+	}
+	for _, c := range cases {
+		got := WindowKeys(c.visible)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: WindowKeys(%v) = %v, want %v", c.name, c.visible, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s: WindowKeys(%v)[%d] = %q, want %q", c.name, c.visible, i, got[i], c.want[i])
+			}
+		}
+	}
+}
+
+func TestBoardsPickDistinctLists(t *testing.T) {
+	rec := stats.Records{
+		PeakConcurrent:     stats.RecordList{{Value: 1}},
+		LongestAgentS:      stats.RecordList{{Value: 2}},
+		LongestSessionS:    stats.RecordList{{Value: 3}},
+		MostAgentsSession:  stats.RecordList{{Value: 4}},
+		MostTokensAgent:    stats.RecordList{{Value: 5}},
+		MostToolCallsAgent: stats.RecordList{{Value: 6}},
+	}
+	boards := Boards()
+	if len(boards) != 6 {
+		t.Fatalf("Boards() returned %d boards, want 6", len(boards))
+	}
+	seenValues := map[int64]bool{}
+	for _, b := range boards {
+		if b.Label == "" {
+			t.Error("board with empty label")
+		}
+		rl := b.Pick(rec)
+		if len(rl) != 1 {
+			t.Fatalf("board %q picked list of len %d, want 1", b.Label, len(rl))
+		}
+		if seenValues[rl[0].Value] {
+			t.Errorf("board %q picks the same list as an earlier board", b.Label)
+		}
+		seenValues[rl[0].Value] = true
+	}
+	// Duration-valued boards must carry KindDuration so values render
+	// as time, not counts.
+	kinds := map[string]RecordKind{}
+	for _, b := range boards {
+		kinds[b.Label] = b.Kind
+	}
+	if kinds["longest agent"] != KindDuration || kinds["longest session"] != KindDuration {
+		t.Error("longest agent/session boards must be KindDuration")
+	}
+	if kinds["peak concurrent"] != KindCount {
+		t.Error("peak concurrent must be KindCount")
+	}
+	if BurstBoardLabel == "" {
+		t.Error("BurstBoardLabel must be non-empty")
+	}
+}
+
+func TestFormatWindowCounters(t *testing.T) {
+	cases := []struct {
+		name string
+		c    stats.Counters
+		want string
+	}{
+		{
+			"zero tails drop",
+			stats.Counters{AgentsStarted: 4, AgentsCompleted: 4, Sessions: 1},
+			"4 started · 4 completed · 0 orphaned · 1 sessions",
+		},
+		{
+			"transcripts and gate.cap append",
+			stats.Counters{AgentsStarted: 47, AgentsCompleted: 46, AgentsOrphaned: 1, Sessions: 12, TranscriptBytesTotal: 4404019, GateCapEvents: 3},
+			"47 started · 46 completed · 1 orphaned · 12 sessions · 4.2 MB transcripts · 3 gate.cap",
+		},
+		{
+			"gate.cap without transcripts",
+			stats.Counters{AgentsStarted: 1, GateCapEvents: 3},
+			"1 started · 0 completed · 0 orphaned · 0 sessions · 3 gate.cap",
+		},
+		{
+			"transcripts without gate.cap",
+			stats.Counters{AgentsStarted: 2, TranscriptBytesTotal: 2048},
+			"2 started · 0 completed · 0 orphaned · 0 sessions · 2.0 KB transcripts",
+		},
+	}
+	for _, c := range cases {
+		if got := FormatWindowCounters(c.c); got != c.want {
+			t.Errorf("%s: FormatWindowCounters = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestDistRows(t *testing.T) {
+	lifetime := map[string]int64{"general-purpose": 198, "Explore": 31, "__other": 31}
+	last30 := map[string]int64{"general-purpose": 87, "Plan": 5}
+	rows := DistRows(lifetime, last30)
+	wantKeys := []string{"general-purpose", "Explore", "__other", "Plan"}
+	if len(rows) != len(wantKeys) {
+		t.Fatalf("DistRows returned %d rows, want %d: %v", len(rows), len(wantKeys), rows)
+	}
+	for i, k := range wantKeys {
+		if rows[i].Key != k {
+			t.Errorf("rows[%d].Key = %q, want %q (__other sinks to its count tier, 30d-only keys trail)", i, rows[i].Key, k)
+		}
+	}
+	if rows[0].Lifetime != 198 || rows[0].Last30 != 87 {
+		t.Errorf("rows[0] counts = %d/%d, want 198/87", rows[0].Lifetime, rows[0].Last30)
+	}
+	if rows[3].Lifetime != 0 || rows[3].Last30 != 5 {
+		t.Errorf("30d-only key counts = %d/%d, want 0/5", rows[3].Lifetime, rows[3].Last30)
+	}
+}
+
+func TestFormatTop1(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	rl := stats.RecordList{{Value: 8, At: now.Add(-6 * 24 * time.Hour)}}
+	v, when := FormatTop1(KindCount, rl, now)
+	if v != "8" || when != "6d ago" {
+		t.Errorf("FormatTop1 = (%q, %q), want (\"8\", \"6d ago\")", v, when)
+	}
+	v, when = FormatTop1(KindDuration, stats.RecordList{{Value: 312, At: now.Add(-time.Hour)}}, now)
+	if v != "5m 12s" || when != "1h ago" {
+		t.Errorf("FormatTop1 duration = (%q, %q), want (\"5m 12s\", \"1h ago\")", v, when)
+	}
+	// Zero-safe: empty list → dash value, no time.
+	v, when = FormatTop1(KindCount, nil, now)
+	if v != "—" || when != "" {
+		t.Errorf("FormatTop1 empty = (%q, %q), want (\"—\", \"\")", v, when)
+	}
+	// Zero timestamp collapses to "" rather than showing the dash.
+	v, when = FormatTop1(KindCount, stats.RecordList{{Value: 3}}, now)
+	if v != "3" || when != "" {
+		t.Errorf("FormatTop1 zero-time = (%q, %q), want (\"3\", \"\")", v, when)
+	}
+}
+
+func TestFormatBurstTop1(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	v, when := FormatBurstTop1(stats.BurstRecordList{{Count: 6, WindowS: 2, At: now.Add(-30 * time.Second)}}, now)
+	if v != "6" || when != "just now" {
+		t.Errorf("FormatBurstTop1 = (%q, %q), want (\"6\", \"just now\")", v, when)
+	}
+	v, when = FormatBurstTop1(nil, now)
+	if v != "—" || when != "" {
+		t.Errorf("FormatBurstTop1 empty = (%q, %q), want (\"—\", \"\")", v, when)
+	}
+}
+
+func TestParseWindowKey(t *testing.T) {
+	cases := []struct {
+		key  string
+		kind WindowKind
+		days int
+	}{
+		{"today", WindowToday, 0},
+		{"alltime", WindowLifetime, 0},
+		{"lifetime", WindowLifetime, 0},
+		{"7d", WindowDays, 7},
+		{"30d", WindowDays, 30},
+		{"90d", WindowDays, 90},
+		{"180d", WindowDays, 180}, // future tiers parse with zero edits
+		{"0d", WindowUnknown, 0},
+		{"-3d", WindowUnknown, 0},
+		{"bogus", WindowUnknown, 0},
+		{"d", WindowUnknown, 0},
+	}
+	for _, c := range cases {
+		kind, days := ParseWindowKey(c.key)
+		if kind != c.kind || days != c.days {
+			t.Errorf("ParseWindowKey(%q) = (%v, %d), want (%v, %d)", c.key, kind, days, c.kind, c.days)
+		}
+	}
+}

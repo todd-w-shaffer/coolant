@@ -107,7 +107,7 @@ const burstWindowS = 2
 const distinctCardinalityCap = 50
 
 // otherCardinalityKey is the literal bucket name for keys that
-// arrived after the cap was hit. Sorts late under collectDist's
+// arrived after the cap was hit. Sorts late under format.DistRows'
 // alphabetical tiebreak (the `_` prefix sorts after alphanumerics in
 // Go's byte-string compare) so renderer output places it at the
 // bottom of any count tier — no special-case branch needed.
