@@ -344,6 +344,41 @@ run_gate() {
   [[ "$out" == *"--maxConcurrency 4"* ]]
 }
 
+@test "gate inserts cap flag before a pipe, not on the downstream command" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run | tail -5")
+  [[ "$out" == *"vitest run --maxConcurrency 4 | tail -5"* ]]
+}
+
+@test "gate inserts cap flag before an && chain" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run && echo done")
+  [[ "$out" == *"vitest run --maxConcurrency 4 && echo done"* ]]
+}
+
+@test "gate inserts cap flag before an output redirect" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run > out.txt")
+  [[ "$out" == *"vitest run --maxConcurrency 4 > out.txt"* ]]
+}
+
+@test "gate inserts cap flag before a semicolon" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run; echo done")
+  [[ "$out" == *"vitest run --maxConcurrency 4; echo done"* ]]
+}
+
+@test "gate ignores a pipe character inside a quoted argument" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run -t 'a|b'")
+  [[ "$out" == *"vitest run -t 'a|b' --maxConcurrency 4"* ]]
+}
+
 @test "gate inserts cargo test -j before -- separator" {
   echo "2" > "$COOLANT_COUNTER"
   local out

@@ -84,21 +84,59 @@ cap_flag() {
   esac
 }
 
-# Build the rewritten command with cap flag inserted
+# Byte offset of the first shell control operator sitting outside quotes, or the
+# string length when there is none. Quote-aware so a pipe inside an argument
+# (vitest -t 'a|b') isn't mistaken for a pipeline. Char loop, but commands are
+# short and this saves a fork on every gated Bash call.
+first_operator_offset() {
+  local cmd="$1"
+  local n=${#cmd} i=0 c q=""
+  while [ "$i" -lt "$n" ]; do
+    c="${cmd:$i:1}"
+    if [ -n "$q" ]; then
+      # Inside quotes: only the matching close quote is significant
+      if [ "$c" = "$q" ]; then q=""; fi
+    else
+      case "$c" in
+        \'|\") q="$c" ;;
+        \\)    i=$((i + 1)) ;;
+        '|'|'&'|';'|'<'|'>') printf '%s' "$i"; return ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  printf '%s' "$n"
+}
+
+# Build the rewritten command with cap flag inserted.
+# The flag belongs to the gated invocation, so it goes before any pipeline or
+# chain operator — appending to the whole line lands it on the downstream
+# command instead (vitest run | tail -5 → tail -5 --maxConcurrency N).
 apply_cap() {
   local cmd="$1" bin="$2" sub="$3" flag="$4" cap="$5"
+  local off head tail gap capped
+  off=$(first_operator_offset "$cmd")
+  head="${cmd:0:$off}"
+  tail="${cmd:$off}"
+  # Move the whitespace that preceded the operator to after the flag, so the
+  # original spacing is preserved verbatim ("run | tail" keeps its space,
+  # "run; echo" stays tight) rather than a space being invented.
+  gap=""
+  while [ "${head% }" != "$head" ]; do
+    head="${head% }"
+    gap=" ${gap}"
+  done
+
   # cargo test: insert -j N after "test" and before any "--"
-  if [ "$bin" = "cargo" ] && [ "$sub" = "test" ]; then
-    if [[ "$cmd" == *" -- "* ]]; then
-      local before="${cmd%% -- *}"
-      local after="${cmd#* -- }"
-      echo "${before} ${flag} ${cap} -- ${after}"
-    else
-      echo "${cmd} ${flag} ${cap}"
-    fi
+  if [ "$bin" = "cargo" ] && [ "$sub" = "test" ] && [[ "$head" == *" -- "* ]]; then
+    local before="${head%% -- *}"
+    local after="${head#* -- }"
+    capped="${before} ${flag} ${cap} -- ${after}"
   else
-    echo "${cmd} ${flag} ${cap}"
+    capped="${head} ${flag} ${cap}"
   fi
+
+  echo "${capped}${gap}${tail}"
 }
 
 # ── Emit functions ─────────────────────────────────────────
