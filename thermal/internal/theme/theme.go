@@ -98,9 +98,10 @@ type Theme struct {
 	IdleColor color.Color // idle state indicator and quip text
 
 	// -- Rate display colors --
-	SpawnColor color.Color // warm/spawn rate text
-	DeathColor color.Color // cool/death rate text
-	NetColor   color.Color // net rate text
+	SpawnColor  color.Color // warm/spawn rate text
+	DeathColor  color.Color // cool/death rate text
+	NetColor    color.Color // net rate text
+	TokensColor color.Color // token throughput + cache hit fragment
 
 	helpStyles help.Styles
 }

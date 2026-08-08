@@ -67,6 +67,15 @@ type model struct {
 	// Mirrors checkpointDone so process exit can't race a midflight
 	// reconcile tick or receiver shutdown.
 	ccOtelDone chan struct{}
+
+	// animating tracks whether an animation tick is currently armed. It gates
+	// the settle freeze: the tick handler stops re-arming once the dashboard is
+	// calm AND the composed frame has held byte-stable for SettleStableFrames
+	// frames (layout.FrameStableCount), and the snapshot/event handlers re-arm
+	// exactly once on the settled→active transition. The flag makes re-arm
+	// idempotent across both wake sources so they can't double-arm and double
+	// the frame rate (bubbletea ticks don't dedupe, #436).
+	animating bool
 }
 
 func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
@@ -84,6 +93,9 @@ func newModel(demoMode bool, th *theme.Theme, ap *anim.Profile) model {
 		aggregator:     agg,
 		checkpointDone: make(chan struct{}),
 		ccOtelDone:     make(chan struct{}),
+		// Init's command batch arms the first animation tick, so the model
+		// starts in the animating state.
+		animating: true,
 	}
 	m.layout.State().AttachAggregator(agg)
 	// Self-check the wire-up so a future refactor that drops the
@@ -99,7 +111,11 @@ func (m model) Init() tea.Cmd {
 	if m.demoMode {
 		go demo.RunV2(m.snapChan, m.eventChan, 250*time.Millisecond, m.done)
 	} else {
-		go collector.Run(m.snapChan, config.FastInterval, m.done)
+		// CC OTEL pipeline brought up FIRST so its adapter can fan into
+		// TokenCollector. Returns nil on bind-failure-degrade — Run
+		// falls back to transcript-only without further wiring.
+		ccAdapter := startCcOtel(m.aggregator, m.done, m.ccOtelDone)
+		go collector.Run(m.snapChan, config.FastInterval, m.done, ccAdapter)
 	}
 
 	evPath := os.Getenv("COOLANT_EVENTS")
@@ -131,10 +147,12 @@ func (m model) Init() tea.Cmd {
 		close(m.checkpointDone)
 	}
 
-	// CC OTEL pipeline (§0.1b startup ordering: findings writer FIRST,
-	// adapter, tailer, reconcile, receiver LAST so the bind-failure
-	// path goes through the same writer everyone else uses).
-	startCcOtel(m.aggregator, m.done, m.ccOtelDone)
+	// In demo mode, CC OTEL is unused (demo drives the channels
+	// directly). For live mode, startCcOtel ran above so the adapter
+	// could be passed into collector.Run.
+	if m.demoMode {
+		close(m.ccOtelDone)
+	}
 
 	cmds := []tea.Cmd{waitForSnapshot(m.snapChan), waitForEvent(m.eventChan), animTick()}
 
@@ -157,6 +175,63 @@ func animTick() tea.Cmd {
 	return tea.Tick(config.AnimInterval, func(t time.Time) tea.Msg {
 		return animTickMsg(t)
 	})
+}
+
+// settled reports whether the dashboard is fully quiescent: the data is calm
+// (IsCalm), the composed frame has held byte-stable for SettleStableFrames
+// renders, AND the data-target springs (heat bloom, LCD temperature) are at
+// rest. The third clause is what makes freeze and wake symmetric — the freeze
+// gate and the wake gate consult the same predicate, so a spring target that
+// moves after the freeze (a swap spike shifting composite heat, invisible to
+// the calm signals) makes settled() false and re-arms the tick to ease it,
+// instead of latching at a stale value. Single source of truth for "should the
+// animation tick be stopped"; the tests assert against it too.
+func (m *model) settled() bool {
+	return m.layout.State().IsCalm() &&
+		m.layout.FrameStableCount() >= config.SettleStableFrames &&
+		m.layout.EasingSpringsAtRest()
+}
+
+// armTick marks the tick armed and returns the tick command. Single owner of
+// the "arming sets the animating flag" invariant, shared by wakeCmd/forceWake.
+func (m *model) armTick() tea.Cmd {
+	m.animating = true
+	return animTick()
+}
+
+// wakeCmd arms one animation tick if the dashboard is frozen but no longer
+// settled, and returns nil otherwise. The m.animating guard makes it
+// idempotent: the snapshot and event handlers both call it every message, but
+// only the settled→unsettled edge arms a tick — so the two wake sources can't
+// spawn two concurrent timers and double the frame rate. It mutates the
+// receiver, so callers must use the returned model.
+//
+// Liveness note: even while the tick is frozen, the collector keeps pushing
+// snapshots every ~FastInterval (see Init's collector.Run / demo.RunV2), and
+// every snapshot runs Update→View, so a data change repaints within one
+// snapshot regardless of the freeze — the tick is only for sub-snapshot
+// animation. This is also the wake source: a snapshot that breaks calm or
+// moves a spring target flips settled() here. If a future change ever gates
+// snapshot delivery on activity, the freeze would lose its wake edge and could
+// latch — re-arm from an unconditional source then.
+func (m *model) wakeCmd() tea.Cmd {
+	if !m.animating && !m.settled() {
+		return m.armTick()
+	}
+	return nil
+}
+
+// forceWake arms one animation tick whenever the tick is frozen, unconditionally
+// — for UI edges settled() can't see. A keypress toggling a sparkline or a
+// resize changes what should animate (a revealed sparkline must fill, a resize
+// re-seats springs) without moving any data or spring input, so wakeCmd would
+// not re-arm. The settle logic re-freezes on the next tick if nothing actually
+// moved, so a no-op keypress costs at most one extra frame.
+func (m *model) forceWake() tea.Cmd {
+	if m.animating {
+		return nil
+	}
+	return m.armTick()
 }
 
 func waitForSnapshot(ch <-chan collector.Snapshot) tea.Cmd {
@@ -251,12 +326,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.layout.DismissIntel()
 			}
-			return m, nil
+			return m, m.forceWake()
 		}
 		// Full-help mode: any key dismisses without dispatching its action.
 		if m.layout.HelpMode() == layout.HelpFull {
 			m.layout.DismissHelp()
-			return m, nil
+			return m, m.forceWake()
 		}
 		switch {
 		case key.Matches(msg, m.keys.Quit):
@@ -280,12 +355,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if !m.layout.State().IsIdle() {
 				m.layout.ToggleIntel()
 			}
+		case key.Matches(msg, m.keys.ToggleCPU):
+			m.layout.ToggleSparklineCPU()
+		case key.Matches(msg, m.keys.ToggleMEM):
+			m.layout.ToggleSparklineMEM()
+		case key.Matches(msg, m.keys.ToggleDecomp):
+			m.layout.ToggleSparklineDecomp()
+		case key.Matches(msg, m.keys.ToggleToken):
+			m.layout.ToggleSparklineToken()
+		case key.Matches(msg, m.keys.TogglePretty):
+			m.layout.ToggleSparklinePretty()
 		}
+		// A key action may reveal or relayout animated content (a toggled-on
+		// sparkline must fill) without moving a calm signal, so force-wake.
+		return m, m.forceWake()
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.layout.SetSize(m.width, m.height)
+		return m, m.forceWake()
 
 	case snapshotMsg:
 		snap := collector.Snapshot(msg)
@@ -299,7 +388,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				Level:   appmodel.ThreatCool,
 			})
 		}
-		return m, waitForSnapshot(m.snapChan)
+		return m, tea.Batch(waitForSnapshot(m.snapChan), m.wakeCmd())
 
 	case gateEventMsg:
 		ev := collector.GateEvent(msg)
@@ -307,7 +396,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if ev.Event == collector.EventCounterReset {
 			m.layout.DismissIntel() // session stats become incoherent
 		}
-		return m, waitForEvent(m.eventChan)
+		return m, tea.Batch(waitForEvent(m.eventChan), m.wakeCmd())
 
 	case updateAvailableMsg:
 		m.layout.State().UpdateAvailable = true
@@ -343,6 +432,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case animTickMsg:
 		m.layout.AnimTick()
+		// Stop re-arming once the dashboard is settled (see settled()): calm
+		// data, the composed frame byte-stable for SettleStableFrames renders,
+		// and the data-target springs at rest. FrameStableCount is driven by
+		// RenderContent in View, so it reflects whether the rendered output is
+		// actually still — any residual motion IsCalm can't see (KITT scan over
+		// completed dots, peak-marker decay, spring tail) keeps the count low
+		// and the tick alive. The snapshot/event handlers re-arm via wakeCmd
+		// when the dashboard stops being settled.
+		if m.settled() {
+			m.animating = false
+			return m, nil
+		}
 		return m, animTick()
 	}
 
@@ -355,13 +456,11 @@ func (m model) View() tea.View {
 	if m.width == 0 || m.height == 0 {
 		return v
 	}
-	content := m.layout.View()
+	v.Content = m.layout.RenderContent(m.mouseEnabled)
 	if m.mouseEnabled {
 		v.MouseMode = tea.MouseModeAllMotion
-		v.Content = zone.Scan(content)
 	} else {
 		v.MouseMode = tea.MouseModeNone
-		v.Content = content
 	}
 	return v
 }
@@ -380,12 +479,18 @@ func (m model) View() tea.View {
 // `ccOtelDone` is closed after every CC OTEL goroutine has finished
 // its terminal flush. main() waits on it post-Run so process exit
 // can't race the receiver shutdown or a final reconcile tick.
-func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone chan<- struct{}) {
+//
+// Returns the wired adapter so the caller can pass it into
+// collector.Run for the live-throughput fan-in. Returns nil when
+// startup bails early (no HOME, receiver construction failed) — the
+// collector then runs transcript-only, matching the documented
+// degrade path.
+func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone chan<- struct{}) *cc.Adapter {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		// No HOME → no durable findings; degrade silently.
 		close(ccOtelDone)
-		return
+		return nil
 	}
 
 	findingsPath := filepath.Join(home, ".coolant", "cc-otel-findings.jsonl")
@@ -420,8 +525,14 @@ func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone 
 	})
 	if err != nil {
 		close(ccOtelDone)
-		return
+		return nil
 	}
+
+	// Wire the live-throughput fan-in seam now that both halves exist.
+	// Setters are nil-safe and survive past startCcOtel return: the
+	// adapter is shared with the long-running reconciler goroutine.
+	adapter.SetTailer(tailer)
+	adapter.SetLastReceiverPostTS(receiver.LastSuccessfulPostTS)
 
 	reconciler := cc.NewReconciler(cc.ReconcilerConfig{
 		Tailer:             tailer,
@@ -463,6 +574,7 @@ func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone 
 			}
 		}
 	}()
+	return adapter
 }
 
 // durationToNextUTCMidnight returns the time.Duration until the next

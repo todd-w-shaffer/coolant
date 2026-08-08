@@ -19,7 +19,11 @@ func OverallTemperature(s *AppState) int {
 	if s == nil || s.Current == nil {
 		return 0
 	}
-	pressure := math.Max(s.Current.System.CPUPercent, s.Current.System.MemPercent())
+	// Use the deadbanded CPU% (not raw) so sub-band jitter doesn't flip the
+	// displayed temperature integer every snapshot, which would defeat the
+	// idle frame suppression (the LCD renders the integer, and a ±2% raw-CPU
+	// wiggle can cross a temperature boundary).
+	pressure := math.Max(s.DisplayCPUPercent(), s.Current.System.MemPercent())
 	if pressure < 0 {
 		pressure = 0
 	}

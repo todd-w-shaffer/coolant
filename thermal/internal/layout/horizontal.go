@@ -4,11 +4,13 @@ package layout
 import (
 	"cmp"
 	"fmt"
+	"hash/maphash"
 	"image/color"
 	"slices"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"github.com/charmbracelet/x/ansi"
 	zone "github.com/lrstanley/bubblezone/v2"
 
@@ -49,7 +51,31 @@ type Horizontal struct {
 	focusedAgentID string // non-empty → focused-agent sub-mode within intel
 	collapsed      bool
 	theme          *theme.Theme
+	keys           keys.KeyMap
+
+	// Render cache (drives the settle-gated tick-stop and the zone.Scan memo).
+	// RenderContent composes the real frame every call (View reads live
+	// AppState, so there is no dirty flag to miss — e.g. a category-filter
+	// change applied straight on AppState is reflected because we always
+	// recompose). Two signatures, keyed on bytes, never on enumerated inputs:
+	//   - rawSig over the pre-scan frame gates the zone.Scan memo (identical raw
+	//     bytes ⇒ identical scan, so the scan is skipped).
+	//   - dispSig over the *displayed* bytes (post-scan in mouse mode, raw
+	//     otherwise) drives stableCount, the byte-stability settle signal the
+	//     model gates the tick-stop on. It must hash what reaches the terminal,
+	//     not the intermediate raw frame, so the count tracks actual on-screen
+	//     stillness.
+	rawSig      uint64
+	dispSig     uint64
+	stableCount int
+	scanCache   string
+	scanValid   bool
 }
+
+// frameHashSeed is process-local: frame signatures are only ever compared to
+// each other within one running process (the consecutive-identical-frame
+// counter), never persisted or compared across processes.
+var frameHashSeed = maphash.MakeSeed()
 
 func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizontal {
 	h := &Horizontal{
@@ -58,6 +84,7 @@ func NewHorizontal(th *theme.Theme, ap *anim.Profile, km keys.KeyMap) *Horizonta
 		gauges:   widgets.NewGauges(th, ap),
 		alerts:   widgets.NewAlerts(th),
 		theme:    th,
+		keys:     km,
 	}
 	h.rates = widgets.NewRates(th, km)
 	return h
@@ -165,6 +192,17 @@ func (h *Horizontal) IsCollapsed() bool {
 	return h.collapsed
 }
 
+// Sparkline visibility toggles — one per slot. Each delegates to
+// Gauges.ToggleVisible which enforces the MaxVisibleSparklines cap (toggle-on
+// when 3 are visible is a silent no-op). Keeping these as named methods (vs.
+// passing a slot id from dispatch) means main.go's key switch doesn't need
+// to import the widgets package.
+func (h *Horizontal) ToggleSparklineCPU()    { h.gauges.ToggleVisible(widgets.SlotCPU) }
+func (h *Horizontal) ToggleSparklineMEM()    { h.gauges.ToggleVisible(widgets.SlotMEM) }
+func (h *Horizontal) ToggleSparklineDecomp() { h.gauges.ToggleVisible(widgets.SlotDecomp) }
+func (h *Horizontal) ToggleSparklineToken()  { h.gauges.ToggleVisible(widgets.SlotToken) }
+func (h *Horizontal) ToggleSparklinePretty() { h.gauges.ToggleVisible(widgets.SlotPretty) }
+
 func (h *Horizontal) Update(state *model.AppState) {
 	h.state = state
 	if state.IsIdle() {
@@ -191,6 +229,76 @@ func (h *Horizontal) View() string {
 		return h.idleView()
 	}
 	return h.activeView()
+}
+
+// RenderContent composes the current frame and returns the content the program
+// should display: the raw frame when mouse mode is off, or the zone-scanned
+// frame when on. It is the single render entry point the model calls each
+// frame.
+//
+// It always recomposes (via View) so it can never return a stale frame — there
+// is no dirty flag for a state mutation to bypass. It then hashes the composed
+// bytes to (a) maintain the consecutive-identical-frame counter that feeds the
+// settle-gated tick-stop and (b) skip zone.Scan whenever the bytes are
+// unchanged from the last frame (an identical frame scans to an identical
+// result, so the cached scan is reused).
+func (h *Horizontal) RenderContent(mouse bool) string {
+	frame := h.View()
+	rawSig := maphash.String(frameHashSeed, frame)
+
+	// dispSig is the signature of the *displayed* bytes — what the terminal
+	// sees, which the settle counter tracks. The raw frame and the scanned
+	// output can differ (markers), so the two signatures are distinct only on
+	// the mouse-mode scan path; the redundant second hash is computed there and
+	// nowhere else.
+	var content string
+	var dispSig uint64
+	switch {
+	case !mouse:
+		// Raw frame is shown verbatim, so displayed bytes == raw bytes. The scan
+		// cache no longer reflects what's on screen — invalidate it so a later
+		// mouse-on re-scans instead of returning a stale cached scan.
+		content = frame
+		dispSig = rawSig
+		h.scanValid = false
+	case h.scanValid && rawSig == h.rawSig:
+		// Memo hit: raw bytes unchanged ⇒ zone.Scan output unchanged, so both
+		// the scanned content and its signature are exactly last frame's.
+		content = h.scanCache
+		dispSig = h.dispSig
+	default:
+		content = zone.Scan(frame)
+		h.scanCache = content
+		h.scanValid = true
+		dispSig = maphash.String(frameHashSeed, content)
+	}
+	h.rawSig = rawSig
+
+	if dispSig == h.dispSig {
+		h.stableCount++
+	} else {
+		h.stableCount = 0
+	}
+	h.dispSig = dispSig
+	return content
+}
+
+// EasingSpringsAtRest reports whether the data-target springs (heat bloom, LCD
+// temperature) have settled — the model folds this into its tick-stop. The
+// passthrough is the model's only handle on the headline (it holds *Horizontal,
+// not the widgets); see the model's settled() for the rationale.
+func (h *Horizontal) EasingSpringsAtRest() bool {
+	return h.headline.EasingSpringsAtRest()
+}
+
+// FrameStableCount reports how many consecutive RenderContent calls produced a
+// byte-identical composed frame. The model gates the animation tick-stop on
+// this (frame byte-stable for K frames AND IsCalm) so it freezes only when
+// nothing is actually moving — springs, sparkline scroll, peak decay, KITT
+// scan, breath are all captured by construction, since the count is derived
+// from the real composed bytes rather than an enumerated set of inputs.
+func (h *Horizontal) FrameStableCount() int {
+	return h.stableCount
 }
 
 func (h *Horizontal) activeView() string {
@@ -251,6 +359,10 @@ func overlayContent(help, gaugeLines []string) []string {
 	return out
 }
 
+// helpView must return ≤ 6 lines — overlayContent silently truncates
+// beyond the gauge-row height and would drop keyboard shortcuts on the
+// floor. Key-binding lines are generated from h.keys so new bindings
+// surface here without a parallel edit.
 func (h *Horizontal) helpView() []string {
 	d := h.theme.HelpColor
 	ct := ui.ColorText
@@ -258,11 +370,29 @@ func (h *Horizontal) helpView() []string {
 	sp := h.theme.SessionPhase
 
 	diamond := func(c color.Color) string { return ct(c, ui.SessionDiamondGlyph) }
+	groups := h.keys.FullHelp()
+
+	toggles := h.keys.SparklineToggles()
+	entry := func(t key.Binding, slot widgets.SparklineSlot, label string) string {
+		// Bracketed toggle key + label. Visible slots render in the help
+		// color; hidden slots dim so the user can see at a glance which
+		// keys are "on" without flipping focus to the dashboard itself.
+		text := "[" + t.Help().Key + "] " + label
+		if h.gauges.IsVisible(slot) {
+			return ct(d, text)
+		}
+		return dim(text)
+	}
+
+	var sparkParts []string
+	for slot := widgets.SparklineSlot(0); int(slot) < widgets.NumSparklineSlots; slot++ {
+		sparkParts = append(sparkParts, entry(toggles[slot], slot, widgets.SlotLongLabel(slot)))
+	}
+	sparkLine := " " + dim("sparklines") + " " + strings.Join(sparkParts, "  ") + "  " +
+		dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome")
 
 	return []string{
-		" " + dim("sparklines") + " " + ct(d, "CPU cores") + "  " + ct(d, "MEM app memory") + "  " +
-			ct(d, "SWAP compressor pressure — spikes before lockup") + "  " +
-			dim("|") + " " + dim("⊞") + " " + ct(d, "Desktop") + " " + dim("⊙") + " " + ct(d, "Chrome"),
+		sparkLine,
 		" " + dim("sessions") + " " + diamond(sp.Idle) + "  " + ct(d, "idle") + " " +
 			diamond(sp.Active) + " " + ct(d, "active") + "  " +
 			diamond(sp.Language) + " " + ct(d, "language") + "  " +
@@ -271,13 +401,26 @@ func (h *Horizontal) helpView() []string {
 		" " + dim("agents") + " " + dim(ui.AgentGlyphHollow) + dim(ui.AgentGlyphMid) + dim(ui.AgentGlyphFilled) + " " +
 			ct(d, "subagents — tidal wave, ghosts KITT-scan") + dim(" · ") +
 			ct(d, "click dot for details"),
-		" " + dim("filter") + " " + ct(d, "[ prev") + "  " + ct(d, "] next") + "  " + ct(d, "\\ clear") + "  " +
-			dim("|") + " " + ct(d, "m toggle mouse") + "  " +
+		" " + dim("filter") + " " + renderKeyGroup(groups[2], d) + "  " +
 			dim("click a headline category to filter"),
-		" " + ct(d, "i session intel") + "  " +
-			dim("|") + " " + ct(d, "x clear completed") + "  " + ct(d, "c collapse"),
+		" " + renderKeyGroup(groups[1], d),
 		" " + dim("press any key to dismiss"),
 	}
+}
+
+// renderKeyGroup turns a FullHelp group of key bindings into a space-separated
+// help fragment using each binding's registered Key/Desc labels. Single source
+// of truth: edit keys.go to change labels, helpView picks them up.
+func renderKeyGroup(group []key.Binding, c color.Color) string {
+	parts := make([]string, 0, len(group))
+	for _, b := range group {
+		help := b.Help()
+		if help.Key == "" {
+			continue
+		}
+		parts = append(parts, ui.ColorText(c, help.Key+" "+help.Desc))
+	}
+	return strings.Join(parts, "  ")
 }
 
 func (h *Horizontal) intelView() []string {
@@ -507,7 +650,9 @@ func (h *Horizontal) idleView() string {
 		snap := h.state.Current
 		memGB := snap.System.MemUsedBytes / model.GB
 		totalGB := snap.System.MemTotalBytes / model.GB
-		stats := ui.DimText(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(snap.System.CPUPercent), memGB, totalGB))
+		// Rate-limited readout CPU% (not raw) so this idle-screen readout
+		// doesn't flicker on sub-band jitter or update more than once/sec.
+		stats := ui.DimText(fmt.Sprintf(" CPU:%03d%%  MEM:%02d/%02dGB", int(h.state.ReadoutCPUPercent()), memGB, totalGB))
 		lines = append(lines, stats)
 	}
 

@@ -18,6 +18,30 @@ func newTestSegment(t *testing.T) *SegmentReadout {
 	return NewSegmentReadout(th, anim.Default())
 }
 
+func TestSegmentReadoutAtRest(t *testing.T) {
+	s := newTestSegment(t)
+	// Unseeded → at rest (nothing displayed yet).
+	if !s.AtRest() {
+		t.Fatalf("expected unseeded readout at rest")
+	}
+	// First Update seeds + snaps to target → at rest.
+	s.Update(20, 1)
+	if !s.AtRest() {
+		t.Fatalf("expected at rest right after seeding: pos=%v target=%v vel=%v", s.tempPos, s.rawTarget, s.tempVel)
+	}
+	// A new target far from the eased position → NOT at rest until it eases.
+	s.Update(80, 3)
+	if s.AtRest() {
+		t.Errorf("expected NOT at rest immediately after a target jump (pos=%v target=%v)", s.tempPos, s.rawTarget)
+	}
+	for i := 0; i < 240 && !s.AtRest(); i++ {
+		s.AnimTick()
+	}
+	if !s.AtRest() {
+		t.Errorf("expected the temp spring to settle at rest: pos=%v target=%v vel=%v", s.tempPos, s.rawTarget, s.tempVel)
+	}
+}
+
 // TestSegmentReadout_RenderShape — both rows render, contain braille runes,
 // and visible width is the constant 10.
 func TestSegmentReadout_RenderShape(t *testing.T) {

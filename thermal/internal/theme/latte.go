@@ -144,9 +144,10 @@ func Latte() *Theme {
 		// design: dying is a fade-out signal, sapphire is softer than
 		// the breathing-accent blue. NetColor uses subtext1 for neutral
 		// readability.
-		SpawnColor: laPeach,
-		DeathColor: laSapphire,
-		NetColor:   laSubtext1,
+		SpawnColor:  laPeach,
+		DeathColor:  laSapphire,
+		NetColor:    laSubtext1,
+		TokensColor: laMauve,
 
 		// Heat bloom ramp — Catppuccin accents, cool→meltdown across 4
 		// stops. All six Core/Edge stops sit at luminance 0.13–0.30

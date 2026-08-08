@@ -5,8 +5,15 @@ Pull this in when working on widgets, rendering, or animation internals. The con
 ## Keyboard shortcuts
 
 - `h` — toggle help overlay (replaces sparklines with plain-language explainers)
+- `i` — toggle session intel overlay
 - `c` — collapse/expand the notification bar (top row with [i] install, etc.)
+- `x` — purge stale agents
+- `[` / `]` / `\` — prev / next / clear category filter
+- `m` — toggle mouse capture
+- `1` / `2` / `3` / `4` / `5` — toggle CPU / MEM / SWAP / TOK / PRTY sparkline visibility. The row holds at most 3 visible at a time; toggle-on when full is a silent no-op.
 - `q` / `ctrl+c` — quit
+
+Single source of truth for all key bindings is `internal/keys/KeyMap`. The help overlay's key-binding lines (`layout/horizontal.go:helpView`) generate from `KeyMap.FullHelp()` plus `SparklineToggles()` so new bindings surface automatically.
 
 ## UI layers
 
@@ -24,7 +31,16 @@ Double-resolution braille: both columns of each character pack two time samples 
 
 ## Gauges
 
-Harmonica spring physics (critically damped, 30fps) for smooth numeric readout easing. **Sparklines scroll at animation rate (30fps)**, not collector rate: each `AnimTick` pushes the spring-interpolated value into a per-gauge `renderHistory` buffer, and sparklines render from this buffer. This decouples scroll speed from data collection. Peak per gauge tracks the visible render-history window only with fast decay (0.982/tick at 30fps, ~1.3s half-life) — spikes that scroll off screen release the scale within ~1s.
+Harmonica spring physics (critically damped, 30fps) for smooth numeric readout easing. **Sparklines scroll at animation rate (30fps)**, not collector rate: each `AnimTick` pushes the spring-interpolated value into a per-gauge `renderHistory` buffer, and sparklines render from this buffer. This decouples scroll speed from data collection.
+
+**Per-slot scale strategy** — not uniform across slots:
+- **CPU, MEM**: fixed max=100 (percentage signals).
+- **Decomp (SWAP label)**: autoscaled via `g.peaks[slot]` — visible-window peak with fast decay (0.982/tick at 30fps, ~1.3s half-life). Decomp rates span many orders of magnitude, so autoscale is the right call.
+- **Token, Pretty**: fixed max at the warn threshold (`TokenSparkThresh().Warn`, default 1000). The autoscale would shrink the scale to small bursts and re-amplify low values to full height — reads as the bar "growing" during idle when the underlying signal is flat. Heavy bursts clip past 100% but the color logic already signals red at crit so the "this is a lot" signal isn't lost.
+
+## Sparkline visibility
+
+5 slot constants (CPU, MEM, Decomp, Token, Pretty) in `widgets/gauges.go`; at most `MaxVisibleSparklines=3` render at any time. `Gauges.ToggleVisible(slot)` enforces the cap centrally. Hidden slots skip `RenderSparkline` upstream (never post-filter marker-bearing strings — bubblezone policy), but their springs + `renderHistory` keep updating so toggling on doesn't show an empty graph. Default visible set is CPU + MEM + Token; SWAP and PRTY are opt-in via the `1`-`5` keys.
 
 ## Render architecture
 

@@ -3,6 +3,7 @@
 package model
 
 import (
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -72,6 +73,7 @@ type AppState struct {
 	// Rate tracking
 	recentSpawns *RingBuffer[int]
 	recentDeaths *RingBuffer[int]
+	lastProcSeq  uint64 // ProcSeq of the last sample we computed deltas for; skips stale re-deliveries
 
 	// Pre-allocated scratch maps (cleared and reused each tick)
 	scratchPIDs map[int]bool
@@ -103,6 +105,31 @@ type AppState struct {
 	// nil-safe — HandleEvent skips Fold when unset (test paths and
 	// degraded init both run without it).
 	aggregator *stats.Aggregator
+
+	// Calm tracking — drives the idle animation freeze (see IsCalm). prevCalm
+	// holds the previous snapshot's per-frame-animated signals (the five
+	// sparkline sources) at display granularity; when they hold steady across
+	// CalmStableSnapshots consecutive snapshots — and no agents are active and
+	// the battery isn't alerting — the dashboard is "calm" and the caller stops
+	// re-arming the animation tick.
+	metricStableCount int
+	prevCalm          [5]int64
+
+	// displayCPU is the deadbanded CPU% shown by the rates readout and fed to
+	// the CPU gauge spring + calm tracking. It holds steady through sub-band
+	// jitter (see updateDisplayCPU / config.DisplayDeadbandPct) so the number
+	// doesn't flicker and the dashboard can settle into calm. cpuSeeded forces
+	// the first sample to commit so cold start shows the real value, not 0.
+	// displayCPU (deadband only) feeds the gauge spring, calm tracking, and the
+	// LCD temp — all need it responsive within the band. readoutCPU follows
+	// displayCPU but commits at most once per DisplayMinUpdateInterval, so the
+	// CPU% *text* doesn't change more than once a second; the gauge stays
+	// responsive (a rate-limited gauge would hide transient spikes).
+	displayCPU        float64
+	cpuSeeded         bool
+	readoutCPU        float64
+	readoutSeeded     bool
+	lastReadoutCommit time.Time
 }
 
 // NewAppState creates an initialized AppState.
@@ -137,6 +164,126 @@ func (s *AppState) Update(snap collector.Snapshot) {
 	s.Headroom = EstimateHeadroom(s.TypeCounts, snap.System.MemUsedBytes, snap.System.MemTotalBytes)
 	s.updateThreatAndAlerts(&snap)
 	s.updateIdleTicker()
+	s.updateDisplayCPU()
+	s.updateReadoutCPU()
+	s.updateCalmTracking()
+}
+
+// updateDisplayCPU applies the CPU% display deadband: the shown value only
+// moves when the raw sample is ≥ DisplayDeadbandPct from the currently displayed
+// value. Comparing against the displayed (not the previous raw) value means a
+// slow monotonic drift still accumulates past the band and commits, so the
+// readout can't stall indefinitely — and a value bouncing within the band stays
+// put, which is the flicker suppression we want. Runs before updateCalmTracking
+// so the deadbanded value feeds the calm signal set.
+func (s *AppState) updateDisplayCPU() {
+	raw := s.Current.System.CPUPercent
+	if !s.cpuSeeded || math.Abs(raw-s.displayCPU) >= config.DisplayDeadbandPct {
+		s.displayCPU = raw
+		s.cpuSeeded = true
+	}
+}
+
+// updateReadoutCPU tracks the deadbanded displayCPU for the text readout, but
+// commits a new shown value at most once per DisplayMinUpdateInterval (snapshot
+// wall-clock). So the CPU% number changes no more than once a second even when
+// CPU swings past the deadband repeatedly. A change after a quiet stretch
+// commits immediately (the last commit is already older than the interval).
+func (s *AppState) updateReadoutCPU() {
+	if !s.readoutSeeded {
+		s.readoutCPU = s.displayCPU
+		s.readoutSeeded = true
+		s.lastReadoutCommit = s.Current.Timestamp
+		return
+	}
+	if s.readoutCPU == s.displayCPU {
+		return
+	}
+	if s.Current.Timestamp.Sub(s.lastReadoutCommit) < config.DisplayMinUpdateInterval {
+		return
+	}
+	s.readoutCPU = s.displayCPU
+	s.lastReadoutCommit = s.Current.Timestamp
+}
+
+// DisplayCPUPercent is the deadbanded CPU% for the CPU gauge, calm tracking,
+// and the LCD temperature — responsive within the deadband.
+func (s *AppState) DisplayCPUPercent() float64 { return s.displayCPU }
+
+// ReadoutCPUPercent is the rate-limited CPU% for the text readout — the
+// deadbanded value, but updated at most once per DisplayMinUpdateInterval.
+func (s *AppState) ReadoutCPUPercent() float64 { return s.readoutCPU }
+
+// calmSignals returns the per-frame-animated signals at display granularity:
+// the five sparkline sources (widgets/gauges.go feeds CPU%, MEM%, decompression
+// delta, and the two token-per-sec rates into the spring history that scrolls
+// on every AnimTick). These are exactly the values whose sparklines lie if
+// frozen mid-stream, so the freeze must not engage while any of them is moving.
+// GPU and swap are deliberately excluded: they render as static text with no
+// per-frame scroll, so the snapshot path repaints them fine even while frozen.
+//
+// Note this set does NOT chase every spring's input. The heat-bloom and
+// LCD-temperature springs ease toward composite-heat-derived targets (which
+// include swap/spawn), but enumerating those inputs here would be the same
+// input-guessing the render-signature settle was designed to avoid. Instead the
+// model gates the tick-stop on whether those springs are actually at rest (see
+// the model's settled() / layout.EasingSpringsAtRest), which detects a target
+// move directly without re-deriving its formula.
+func (s *AppState) calmSignals() [5]int64 {
+	sys := s.Current.System
+	return [5]int64{
+		int64(s.displayCPU), // deadbanded — sub-band CPU jitter doesn't reset calm
+		int64(sys.MemPercent()),
+		sys.Decompressions,
+		int64(s.Current.Tokens.IOTokensPerSec),
+		int64(s.Current.Tokens.PrettyTokensPerSec),
+	}
+}
+
+// updateCalmTracking advances the consecutive-stable-snapshot counter that
+// IsCalm reads. Signals are compared at display granularity, so sub-unit jitter
+// that never changes the rendered output doesn't reset calm.
+func (s *AppState) updateCalmTracking() {
+	cur := s.calmSignals()
+	if cur == s.prevCalm {
+		s.metricStableCount++
+	} else {
+		s.metricStableCount = 0
+	}
+	s.prevCalm = cur
+}
+
+// IsCalm reports whether the dashboard is fully quiescent: no active agents,
+// the five sparkline sources flat for CalmStableSnapshots consecutive
+// snapshots, and the battery not in a low-charge alert pulse. When calm, the
+// caller stops re-arming the animation tick, so breathing/sparkline motion
+// freezes (still rendered) and terminal repaints drop toward zero. Any change
+// wakes it.
+func (s *AppState) IsCalm() bool {
+	if s.Current == nil {
+		return false
+	}
+	// Any active agent keeps a breathing/scanning dot on screen, so it can't be
+	// calm. Stale agents are a subset of activeRecords, so AgentCount already
+	// covers them — no separate StaleAgentCount walk (time.Now + map scan) on
+	// this hot path, which runs every animation tick.
+	if s.AgentCount() > 0 {
+		return false
+	}
+	if s.batteryAlerting() {
+		return false
+	}
+	return s.metricStableCount >= config.CalmStableSnapshots
+}
+
+// batteryAlerting is true while the battery is discharging below the critical
+// threshold — the meltdown/warn pulse (widgets/battery.go) is an alert, not
+// decoration, so calm must exclude it to keep that pulse animating.
+func (s *AppState) batteryAlerting() bool {
+	sys := s.Current.System
+	return sys.BatteryPresent &&
+		sys.BatteryState == collector.BatteryDischarging &&
+		sys.BatteryPercent < config.BatteryCritPct
 }
 
 // updateTypeCounts clears and repopulates type counts from the snapshot,
@@ -235,7 +382,20 @@ func (s *AppState) updateIdleTicker() {
 }
 
 // computePIDDeltas calculates spawn/death counts using pre-allocated maps.
+//
+// The process scan rides the 1s slow loop, so the same sample is re-delivered
+// on ~6 of every 7 150ms fast snapshots. Spawn/death are *deltas*, so a stale
+// re-delivery would push a forced zero into the rate ring (flickering warm/cool
+// to 0 between scans). Gate on ProcSeq: compute only when a fresh sample lands,
+// making each push a genuine per-second delta — which is what the "/s" label on
+// the readout always claimed. (Level-based EMAs like type counts are unaffected
+// and intentionally keep ticking every Update.)
 func (s *AppState) computePIDDeltas(snap *collector.Snapshot) {
+	if snap.ProcSeq == s.lastProcSeq {
+		return // stale re-delivery of an already-counted proc sample
+	}
+	s.lastProcSeq = snap.ProcSeq
+
 	clear(s.scratchPIDs)
 	for _, p := range snap.AllProcs {
 		s.scratchPIDs[p.PID] = true

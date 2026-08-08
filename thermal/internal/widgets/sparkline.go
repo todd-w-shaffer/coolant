@@ -3,6 +3,7 @@
 package widgets
 
 import (
+	"math"
 	"strings"
 
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
@@ -75,12 +76,26 @@ func levelSplit(level int) (bottom, top int) {
 	return 4, level - 4
 }
 
-// valueToLevel maps a value to a braille height level (0–8).
-// Values below 2% of peak render as 0 (invisible noise floor).
-// Values between 2–5% render as level 1 (faint dot, visible with dim color).
-func valueToLevel(v, peak float64) int {
-	if v <= 0 || v < peak*0.02 {
-		return 0
+// valueToLevel maps a value to a braille height level (1–8) for any present
+// sample, or 0 (blank) for an absent one. peak is the height-ratio denominator;
+// when logScale=true, the CALLER must pass math.Log1p(rawPeak) so the per-column
+// loop doesn't redo the invariant transform on every column.
+//
+// Level 0 — a blank cell — is reserved for an ABSENT sample, signalled by NaN
+// (the padding sentinel for a not-yet-full buffer). A present sample, even a
+// genuine 0 or a tiny fraction of peak, floors to level 1 (the baseline dot):
+// it's real data, not a hole. This is what stopped the "gaps flowing through"
+// the CPU sparkline — a genuinely-idle 0% reading is the baseline, not a missing
+// cell. See plans/cpu-sparkline-gaps.md.
+func valueToLevel(v, peak float64, logScale bool) int {
+	if math.IsNaN(v) {
+		return 0 // absent sample → blank cell
+	}
+	if v < 0 {
+		v = 0 // spring undershoot etc. → baseline, not blank
+	}
+	if logScale {
+		v = math.Log1p(v)
 	}
 	level := int((v / peak) * float64(maxLevels))
 	if level > maxLevels {
@@ -114,6 +129,9 @@ func SwapSparkThresh() theme.SparkThresholds {
 }
 func GPUSparkThresh() theme.SparkThresholds {
 	return theme.SparkThresholds{Warn: config.C.Sparklines.GPUWarn, Crit: config.C.Sparklines.GPUCrit}
+}
+func TokenSparkThresh() theme.SparkThresholds {
+	return theme.SparkThresholds{Warn: config.C.Sparklines.TokenWarn, Crit: config.C.Sparklines.TokenCrit}
 }
 
 // SparkBufs holds reusable interpolation buffers to avoid per-frame allocations.
@@ -162,7 +180,7 @@ func prepareSparkDataBuf(data []float64, width int, buf *SparkBufs) []float64 {
 		padded := buf.padData[:minRaw]
 		gap := minRaw - len(data)
 		for i := 0; i < gap; i++ {
-			padded[i] = 0
+			padded[i] = math.NaN() // absent sentinel — renders blank, never baseline
 		}
 		copy(padded[gap:], data)
 		src = padded
@@ -236,13 +254,26 @@ func prepareSparkMaskBuf(mask []bool, width int, buf *SparkBufs) []bool {
 // When dimmed is true, colors render via the theme's dim LUTs so the sparkline
 // recedes behind an overlay but stays visible as live motion.
 func RenderSparkline(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
-	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed)
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed, false)
+}
+
+// RenderSparklineLog renders with log1p height scaling — values spanning
+// multiple orders of magnitude stay distinguishable by height rather than
+// all clipping at the top. Color computation remains on raw values so
+// severity thresholds keep their absolute meaning (warn at warn, crit at
+// crit). Useful for signals like token throughput where a typical burst
+// (~500 io/s) and a heavy burst (~5000 io/s) both need to read as
+// "meaningful but distinguishable" rather than both pinning at full height.
+func RenderSparklineLog(data []float64, online []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
+	return renderSparklineCore(data, online, width, maxOverride, thresh, tick, buf, th, dimmed, true)
 }
 
 // renderSparklineCore is the implementation for sparkline rendering.
 // When mask is nil, all samples are treated as online (no rainbow/offline logic).
 // buf must be non-nil — callers allocate once via NewSparkBufs and reuse.
-func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed bool) SparkPair {
+// logScale controls whether per-column heights use a log1p transform;
+// colorVal stays raw so severity thresholds fire at absolute values.
+func renderSparklineCore(data []float64, mask []bool, width int, maxOverride float64, thresh *theme.SparkThresholds, tick int, buf *SparkBufs, th *theme.Theme, dimmed, logScale bool) SparkPair {
 	if width <= 0 {
 		return SparkPair{}
 	}
@@ -290,6 +321,14 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		peak = 1
 	}
 
+	// Hoist log1p(peak) out of the per-column loop — peak is invariant
+	// within a single render, no point recomputing it for every column.
+	// valueToLevel's contract under logScale=true expects this pre-transform.
+	peakForRatio := peak
+	if logScale {
+		peakForRatio = math.Log1p(peak)
+	}
+
 	var top, bot strings.Builder
 
 	for i := 0; i < len(visibleData); i += 2 {
@@ -327,19 +366,23 @@ func renderSparklineCore(data []float64, mask []bool, width int, maxOverride flo
 		colorVal := 0.0
 		var levL, levR int
 
-		if onL {
+		// NaN = absent sample (padding). valueToLevel already maps NaN→0, so the
+		// skipped block leaves levL/levR at 0 (blank) regardless; the guard here
+		// earns its keep by keeping NaN out of colorVal and the severity LUT.
+		// Don't remove either NaN check thinking it duplicates the other.
+		if onL && !math.IsNaN(vL) {
 			if vL < 0 {
 				vL = 0
 			}
-			levL = valueToLevel(vL, peak)
+			levL = valueToLevel(vL, peakForRatio, logScale)
 			colorVal = vL
 		}
 
-		if hasRight && onR {
+		if hasRight && onR && !math.IsNaN(vR) {
 			if vR < 0 {
 				vR = 0
 			}
-			levR = valueToLevel(vR, peak)
+			levR = valueToLevel(vR, peakForRatio, logScale)
 			if vR > colorVal {
 				colorVal = vR
 			}

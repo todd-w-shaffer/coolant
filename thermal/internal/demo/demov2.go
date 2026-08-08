@@ -52,6 +52,10 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 
 	var procs []collector.ProcessInfo
 
+	// Synthetic token accumulator — rate scales with totalCPU each phase.
+	var tokInput, tokOutput, tokCacheCreate, tokCacheRead int64
+	var tokRateEMA float64
+
 	// Base system stats (realistic M-series Mac).
 	baseMem := int64(6 * model.GB)
 	totalMem := int64(16 * model.GB)
@@ -291,6 +295,35 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 		battState := collector.BatteryDischarging
 		battRemaining := time.Duration(battPct/100.0*6.0) * time.Hour
 
+		// Synthetic token throughput — scales with CPU + active sessions, oscillates per-tick.
+		activeSessions := 0
+		for _, sess := range sessions {
+			if len(sess.Descendants) > 0 {
+				activeSessions++
+			}
+		}
+		var tokens collector.TokenStats
+		if activeSessions > 0 {
+			targetRate := 400.0 + cpuPct*8 + float64(rand.Intn(200))
+			tokRateEMA = 0.3*targetRate + 0.7*tokRateEMA
+			perTick := int64(targetRate * interval.Seconds())
+			tokInput += perTick / 8
+			tokOutput += perTick / 16
+			tokCacheCreate += perTick / 8
+			tokCacheRead += perTick * 6 / 10
+			tokens = collector.TokenStats{
+				InputTotal:       tokInput,
+				OutputTotal:      tokOutput,
+				CacheCreateTotal: tokCacheCreate,
+				CacheReadTotal:   tokCacheRead,
+				IOTokensPerSec:   tokRateEMA,
+				WorkTotal:        tokInput + tokOutput + tokCacheCreate,
+				BillTotal:        tokInput + tokOutput + tokCacheCreate + tokCacheRead,
+				CacheHitRatio:    float64(tokCacheRead) / float64(tokInput+tokCacheCreate+tokCacheRead),
+				ActiveSessions:   activeSessions,
+			}
+		}
+
 		snap := collector.Snapshot{
 			System: collector.SystemStats{
 				CPUPercent:           cpuPct,
@@ -309,8 +342,13 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			},
 			Sessions:  sessions,
 			AllProcs:  procs,
+			Tokens:    tokens,
 			Online:    online,
 			Timestamp: time.Now(),
+			// Each demo tick recomputes a fresh proc set, so it's a fresh proc
+			// sample — bump ProcSeq so the model's spawn/death gate (which skips
+			// stale re-deliveries from the live 1s scan) counts demo spawns.
+			ProcSeq: uint64(tick) + 1,
 		}
 
 		select {

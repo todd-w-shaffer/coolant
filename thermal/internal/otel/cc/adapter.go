@@ -69,6 +69,20 @@ type Adapter struct {
 	observedAttrKeys    map[string]bool
 	observedResourceKey map[string]bool
 	driftFired          map[string]bool // key: field_name|cc_version
+
+	// Sticky bits — set the first time each cache token type is
+	// observed by OTELTokens. Once set, the partial-cache-miss guard
+	// fires schema_drift if the type stops landing while non-cache
+	// types keep arriving. Per-type so a rename of one doesn't mask
+	// the other.
+	observedCacheCreation bool
+	observedCacheRead     bool
+
+	// Live-throughput fan-in surface. Wired post-construction via
+	// SetTailer / SetLastReceiverPostTS — nil means "OTEL token view
+	// not configured", and OTELTokens / IsOTELLive degrade to zero.
+	tailer             *MetricsTailer
+	lastReceiverPostTS func() time.Time
 }
 
 // NewAdapter constructs an Adapter with seeded schema state.
@@ -219,3 +233,148 @@ type AggregatorView interface {
 }
 
 var _ AggregatorView = (*stats.Aggregator)(nil)
+
+// OTELTokenView is the TokenCollector-facing seam for the live-throughput
+// fan-in: latest cumulative token reads, receiver liveness, and the
+// drift-observe passthrough for schema gating. *Adapter implements it;
+// tests provide their own fake to avoid booting the receiver.
+type OTELTokenView interface {
+	OTELTokens(now time.Time) (input, output, cacheCreate, cacheRead int64, ok bool)
+	IsOTELLive(now time.Time) bool
+	ObserveTokenSchemaDrift(field, ccVersion string)
+}
+
+var _ OTELTokenView = (*Adapter)(nil)
+
+// SetTailer wires the metrics tailer so OTELTokens can read latest
+// cumulative values. nil-safe: when unset, OTELTokens returns ok=false.
+func (a *Adapter) SetTailer(t *MetricsTailer) {
+	a.mu.Lock()
+	a.tailer = t
+	a.mu.Unlock()
+}
+
+// SetLastReceiverPostTS wires the receiver liveness probe so
+// IsOTELLive can debounce against cleanlyOfflineWindow. nil-safe.
+func (a *Adapter) SetLastReceiverPostTS(fn func() time.Time) {
+	a.mu.Lock()
+	a.lastReceiverPostTS = fn
+	a.mu.Unlock()
+}
+
+// otelTokenQuerySources is the full set of CC OTEL query_source values
+// the fan-in sums across. Excluding any of these would drop a slice of
+// real traffic — main misses subagent + auxiliary, subagent misses
+// main + auxiliary (the motivating gap), etc. Distinct from
+// IsSubagentTokenAttr's like-for-like filter, which serves a different
+// reconcile job and is intentionally narrower.
+var otelTokenQuerySources = []string{"main", "subagent", "auxiliary"}
+
+// OTELTokens sums the latest-cumulative values per `type` across all
+// query_source values for the current UTC day. CC OTEL emits type as
+// CamelCase ("cacheRead" / "cacheCreation"); the returned int64s are
+// the canonical quadruple the collector consumes regardless of source.
+// ok=true when at least one (type, query_source) bucket has data.
+//
+// Partial-cache-miss guard: if non-cache types are present this tick
+// AND a previously-observed cache type returns nothing, the adapter
+// fires schema_drift for the missing field(s) and returns ok=false so
+// TokenCollector falls back to the transcript baseline. Without this,
+// a CC release that renamed or dropped the `cacheRead` / `cacheCreation`
+// attributes would silently zero the cache fields — invisible under
+// the old Input+Output readout, but a visible 3-4× downward step on
+// the new billable-total readout.
+func (a *Adapter) OTELTokens(now time.Time) (input, output, cacheCreate, cacheRead int64, ok bool) {
+	a.mu.RLock()
+	tailer := a.tailer
+	a.mu.RUnlock()
+	if tailer == nil {
+		return 0, 0, 0, 0, false
+	}
+	dayKey := now.UTC().Format("2006-01-02")
+	sumWithFound := func(typeVal string) (int64, bool) {
+		var total float64
+		typeFound := false
+		for _, qs := range otelTokenQuerySources {
+			v, _, found := tailer.LatestCumulative(
+				"claude_code.token.usage",
+				map[string]string{"type": typeVal, "query_source": qs},
+				dayKey,
+			)
+			if found {
+				total += v
+				typeFound = true
+				ok = true
+			}
+		}
+		return int64(total), typeFound
+	}
+	var inputFound, outputFound, cacheCreateFound, cacheReadFound bool
+	input, inputFound = sumWithFound("input")
+	output, outputFound = sumWithFound("output")
+	cacheCreate, cacheCreateFound = sumWithFound("cacheCreation")
+	cacheRead, cacheReadFound = sumWithFound("cacheRead")
+
+	// Snapshot sticky bits under RLock — steady state (both already set)
+	// stays on the read-lock path. Only newly-observed types upgrade to a
+	// write lock. The read-then-write window is intentionally non-atomic:
+	// two concurrent ticks may both observe was=false and both flip to
+	// true, which converges fine; the worst case is one extra drift fire
+	// on a once-per-process race, which ObserveSchemaDrift dedupes anyway.
+	a.mu.RLock()
+	wasObservedCacheCreate := a.observedCacheCreation
+	wasObservedCacheRead := a.observedCacheRead
+	a.mu.RUnlock()
+	if (cacheCreateFound && !wasObservedCacheCreate) || (cacheReadFound && !wasObservedCacheRead) {
+		a.mu.Lock()
+		if cacheCreateFound {
+			a.observedCacheCreation = true
+		}
+		if cacheReadFound {
+			a.observedCacheRead = true
+		}
+		a.mu.Unlock()
+	}
+
+	nonCachePresent := inputFound || outputFound
+	missingCacheCreate := wasObservedCacheCreate && !cacheCreateFound
+	missingCacheRead := wasObservedCacheRead && !cacheReadFound
+	if nonCachePresent && (missingCacheCreate || missingCacheRead) {
+		if missingCacheCreate {
+			a.ObserveTokenSchemaDrift("cacheCreation", "")
+		}
+		if missingCacheRead {
+			a.ObserveTokenSchemaDrift("cacheRead", "")
+		}
+		return 0, 0, 0, 0, false
+	}
+	return
+}
+
+// IsOTELLive reports whether the receiver has accepted a POST within
+// cleanlyOfflineWindow. False when no liveness probe is wired or the
+// receiver has been silent for too long — the fan-in falls back to
+// transcript-only in that case.
+func (a *Adapter) IsOTELLive(now time.Time) bool {
+	a.mu.RLock()
+	fn := a.lastReceiverPostTS
+	a.mu.RUnlock()
+	if fn == nil {
+		return false
+	}
+	lastPost := fn()
+	return !lastPost.IsZero() && now.Sub(lastPost) < cleanlyOfflineWindow
+}
+
+// ObserveTokenSchemaDrift is the TokenCollector-facing wrapper over
+// ObserveSchemaDrift that supplies the "claude_code" namespace so the
+// fan-in doesn't have to depend on the namespace literal. Callers that
+// pass ccVersion="" get the adapter's own configured version (which is
+// the common case — the fan-in lives at a layer that doesn't know CC's
+// reported version directly).
+func (a *Adapter) ObserveTokenSchemaDrift(fieldName, ccVersion string) {
+	if ccVersion == "" {
+		ccVersion = a.cfg.CCVersion
+	}
+	a.ObserveSchemaDrift(fieldName, "claude_code", ccVersion)
+}

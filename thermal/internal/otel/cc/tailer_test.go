@@ -326,6 +326,82 @@ func TestTailer_DroppedOversizeLineFiresOneShot(t *testing.T) {
 	}
 }
 
+// LatestCumulative returns the most recent data-point value for a
+// (metric, attrs, dayKey) bucket — the value the fan-in needs when
+// CC emits cumulative temporality. Distinct from Sum (sum-of-cumulatives,
+// the wrong number) and from SumDay (same problem, day-scoped).
+func TestTailer_LatestCumulative_ReturnsLatestNotSum(t *testing.T) {
+	mt, path := newRunningTailer(t)
+
+	attrs := map[string]string{"query_source": "main", "type": "input"}
+	now := time.Now().UTC()
+	dayKey := now.Format("2006-01-02")
+
+	// Simulate cumulative temporality: each line carries the running total.
+	lines := []jsonlLine{
+		{Schema: 1, TS: now.Add(-2 * time.Second).Format(time.RFC3339Nano), Metric: "claude_code.token.usage", Value: 100, Attrs: attrs},
+		{Schema: 1, TS: now.Add(-1 * time.Second).Format(time.RFC3339Nano), Metric: "claude_code.token.usage", Value: 250, Attrs: attrs},
+		{Schema: 1, TS: now.Format(time.RFC3339Nano), Metric: "claude_code.token.usage", Value: 400, Attrs: attrs},
+	}
+	writeJSONLLines(t, path, lines)
+
+	waitFor(t, time.Second, func() bool {
+		return mt.Count("claude_code.token.usage", attrs) == 3
+	})
+
+	val, ts, ok := mt.LatestCumulative("claude_code.token.usage", attrs, dayKey)
+	if !ok {
+		t.Fatalf("LatestCumulative want ok=true, got false")
+	}
+	if val != 400 {
+		t.Errorf("LatestCumulative value want 400 (latest), got %v (note: Sum would be 750)", val)
+	}
+	if ts.IsZero() {
+		t.Errorf("LatestCumulative ts want non-zero, got zero")
+	}
+}
+
+func TestTailer_LatestCumulative_MissingKeyReturnsNotOK(t *testing.T) {
+	mt, _ := newRunningTailer(t)
+	dayKey := time.Now().UTC().Format("2006-01-02")
+	val, ts, ok := mt.LatestCumulative("claude_code.token.usage",
+		map[string]string{"type": "input"}, dayKey)
+	if ok {
+		t.Errorf("missing key want ok=false, got true (val=%v ts=%v)", val, ts)
+	}
+}
+
+func TestTailer_LatestCumulative_IsolatesByAttrsAndDay(t *testing.T) {
+	mt, path := newRunningTailer(t)
+
+	now := time.Now().UTC()
+	dayKey := now.Format("2006-01-02")
+	yesterdayKey := now.Add(-24 * time.Hour).Format("2006-01-02")
+
+	mainAttrs := map[string]string{"query_source": "main", "type": "input"}
+	auxAttrs := map[string]string{"query_source": "auxiliary", "type": "input"}
+
+	writeJSONLLines(t, path, []jsonlLine{
+		{Schema: 1, TS: now.Add(-24 * time.Hour).Format(time.RFC3339Nano), Metric: "claude_code.token.usage", Value: 999, Attrs: mainAttrs},
+		{Schema: 1, TS: now.Format(time.RFC3339Nano), Metric: "claude_code.token.usage", Value: 200, Attrs: mainAttrs},
+		{Schema: 1, TS: now.Format(time.RFC3339Nano), Metric: "claude_code.token.usage", Value: 50, Attrs: auxAttrs},
+	})
+	waitFor(t, time.Second, func() bool {
+		return mt.Count("claude_code.token.usage", mainAttrs) == 2 &&
+			mt.Count("claude_code.token.usage", auxAttrs) == 1
+	})
+
+	if val, _, ok := mt.LatestCumulative("claude_code.token.usage", mainAttrs, dayKey); !ok || val != 200 {
+		t.Errorf("today main want 200, got %v ok=%v", val, ok)
+	}
+	if val, _, ok := mt.LatestCumulative("claude_code.token.usage", mainAttrs, yesterdayKey); !ok || val != 999 {
+		t.Errorf("yesterday main want 999, got %v ok=%v", val, ok)
+	}
+	if val, _, ok := mt.LatestCumulative("claude_code.token.usage", auxAttrs, dayKey); !ok || val != 50 {
+		t.Errorf("today aux want 50, got %v ok=%v", val, ok)
+	}
+}
+
 func TestTailer_LinesWithoutMetricAreSkipped(t *testing.T) {
 	mt, path := newRunningTailer(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

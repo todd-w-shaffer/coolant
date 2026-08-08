@@ -292,7 +292,7 @@ func (b *BreatheDots) RenderSplit(glyphHollow, glyphMid, glyphFilled string, bg 
 // zone.Mark for click targeting (2-cell hit area). Width accounting stays
 // manual — zone markers are zero-width to lipgloss.Width but inflate len().
 func (b *BreatheDots) writeDot(buf *strings.Builder, visWidth *int, glyph string, brightness float64, bg color.Color, addSpace bool, agentID string) {
-	// Hot path (30fps): write directly to buf when no zone wrapping needed.
+	// Hot path (per frame): write directly to buf when no zone wrapping needed.
 	dst := buf
 	var local strings.Builder
 	if agentID != "" {

@@ -107,6 +107,7 @@ func buildTempState(t *testing.T, level ThreatLevel, cpu, memPct float64) *AppSt
 	s := NewAppState()
 	snap := testSnap(t, withCPU(cpu), withMem(pctToBytes(memPct), testMemTotal))
 	s.Current = &snap
+	s.updateDisplayCPU() // seed displayCPU (OverallTemperature reads the deadbanded value)
 	s.ThreatLevel = level
 	return s
 }

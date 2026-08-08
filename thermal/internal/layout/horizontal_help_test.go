@@ -72,6 +72,41 @@ func TestHelpViewMentionsClickToInspect(t *testing.T) {
 	}
 }
 
+// TestHelpViewFitsInGaugeRows guards against the silent-truncation failure
+// mode in overlayContent: if helpView returns more lines than the gauge row
+// height, the excess drops on the floor with no warning. The current gauge
+// budget is 6 lines (see Horizontal.SetSize: h.gauges.SetSize(w, 6)). When
+// adding new help rows (e.g. sparkline toggle keys), either reduce existing
+// rows or merge toggle keys into the descriptive lines.
+func TestHelpViewFitsInGaugeRows(t *testing.T) {
+	h := newHorizontalForTest(t)
+	const gaugeRows = 6
+	if got := len(h.helpView()); got > gaugeRows {
+		t.Errorf("helpView returned %d lines, exceeds gauge row budget of %d — overlayContent will truncate keyboard shortcuts silently", got, gaugeRows)
+	}
+}
+
+// TestHelpViewIncludesSparklineToggles asserts every sparkline toggle key
+// appears in the help overlay. SparklineToggles are intentionally not part of
+// FullHelp (they render inline on the sparklines line instead of as a generic
+// key group), so the existing TestHelpViewCoversAllBindings doesn't cover
+// them — this is the parallel guard.
+func TestHelpViewIncludesSparklineToggles(t *testing.T) {
+	h := newHorizontalForTest(t)
+	lines := h.helpView()
+	var combined string
+	for _, line := range lines {
+		combined += ansi.Strip(line) + " "
+	}
+	km := keys.Default()
+	for _, b := range km.SparklineToggles() {
+		help := b.Help()
+		if !strings.Contains(combined, help.Key) {
+			t.Errorf("helpView missing sparkline toggle key %q (desc: %q)", help.Key, help.Desc)
+		}
+	}
+}
+
 func TestHelpViewCoversAllBindings(t *testing.T) {
 	h := newHorizontalForTest(t)
 	lines := h.helpView()

@@ -18,6 +18,13 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 )
 
+// bloomRestEps is the heat-spring rest threshold for AtRest (applied to both
+// the position gap and the velocity). It's a heuristic, not a precise
+// render-resolution bound: the byte-stability settle gate backstops it, so it
+// only has to read false on a genuine target move (a large position gap) and
+// true once the spring has effectively converged.
+const bloomRestEps = 0.005
+
 // HeatBloom is a background-only widget with the standard coolant
 // lifecycle (SetSize, Update, AnimTick, View/BgAt). It holds no text,
 // renders nothing by itself, and does not advance state on Update alone —
@@ -75,6 +82,17 @@ func (b *HeatBloom) Update(s *model.AppState) {
 	b.setTarget(s.CompositeHeat())
 }
 
+// AtRest reports whether the heat spring has settled at its target — position
+// and velocity both within bloomRestEps. The model's tick-stop consults this:
+// once the bloom is at rest (and the breathe oscillator is frozen by calm) the
+// bloom contributes no per-tick motion, and a later Update that moves the
+// target drives AtRest false so the frozen tick wakes to ease the new heat.
+// The byte-stability gate backstops the settle side, so this only has to read
+// false on a genuine target move (a large position-vs-target gap).
+func (b *HeatBloom) AtRest() bool {
+	return math.Abs(b.heat-b.heatTarget) < bloomRestEps && math.Abs(b.heatVel) < bloomRestEps
+}
+
 // setTarget assigns the spring target, snapping heat to it on the very
 // first call so the boot frame starts at rest instead of ramping from 0.
 func (b *HeatBloom) setTarget(t float64) {
@@ -87,8 +105,10 @@ func (b *HeatBloom) setTarget(t float64) {
 }
 
 // AnimTick advances the spring toward heatTarget and steps the breathe
-// oscillator at a heat-dependent rate.
-func (b *HeatBloom) AnimTick() {
+// oscillator at a heat-dependent rate. When calm, the breathe oscillator
+// freezes in place (the heat spring still settles) — the bloom becomes static
+// decoration so the composed frame goes byte-stable and bubbletea suppresses it.
+func (b *HeatBloom) AnimTick(calm bool) {
 	b.heat, b.heatVel = b.spring.Update(b.heat, b.heatVel, b.heatTarget)
 	// Underdamped spring (BloomSpringDamping=0.9) intentionally overshoots
 	// for "alive" feel, but heat > 1 saturates bloomLUTIndex to the
@@ -99,6 +119,10 @@ func (b *HeatBloom) AnimTick() {
 		b.heat = 0
 	} else if b.heat > 1 {
 		b.heat = 1
+	}
+
+	if calm {
+		return // freeze the breathe oscillator at its current phase
 	}
 
 	periodSec := b.profile.BloomBreatheSecCool +

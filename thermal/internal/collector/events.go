@@ -1,9 +1,7 @@
 package collector
 
 import (
-	"bufio"
 	"encoding/json"
-	"io"
 	"os"
 	"strings"
 	"time"
@@ -117,64 +115,28 @@ func TailEvents(ch chan<- GateEvent, path, sessionPath string, interval time.Dur
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	handler := func(line []byte) {
+		var ev GateEvent
+		if err := json.Unmarshal(line, &ev); err != nil {
+			return // skip malformed lines
+		}
+		if !filter(ev) {
+			return
+		}
+		select {
+		case ch <- ev:
+		case <-done:
+			return
+		}
+	}
+
 	for {
 		select {
 		case <-done:
 			return
 		case <-ticker.C:
 			loadSid()
-			offset = readNewLines(ch, path, offset, done, filter)
+			offset = TailFile(path, offset, handler, done)
 		}
 	}
-}
-
-// readNewLines reads any new lines appended since offset, parses them,
-// and sends events to ch when keep returns true. Returns the updated
-// offset.
-func readNewLines(ch chan<- GateEvent, path string, offset int64, done <-chan struct{}, keep func(GateEvent) bool) int64 {
-	f, err := os.Open(path)
-	if err != nil {
-		return offset // file doesn't exist yet
-	}
-	defer f.Close()
-
-	// Handle truncation: if file shrunk, reset to beginning
-	info, err := f.Stat()
-	if err != nil {
-		return offset
-	}
-	if info.Size() < offset {
-		offset = 0
-	}
-
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return offset
-	}
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var ev GateEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue // skip malformed lines
-		}
-		if keep != nil && !keep(ev) {
-			continue
-		}
-		select {
-		case ch <- ev:
-		case <-done:
-			return offset
-		}
-	}
-
-	// Update offset to current position
-	newOffset, err := f.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return offset
-	}
-	return newOffset
 }

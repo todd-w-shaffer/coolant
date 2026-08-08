@@ -101,6 +101,25 @@ func TestParseGPUKnownOutput(t *testing.T) {
 	}
 }
 
+// TestParseGPUUnfilteredIoregBlock proves parseGPU extracts the value from the
+// full, unfiltered `ioreg -r -d 1 -c AGXAccelerator` output — i.e. the upstream
+// `| grep 'Device Utilization'` pre-filter is redundant. The real PerformanceStatistics
+// dict packs many keys onto one line, including the "Tiler Utilization %" and
+// "Renderer Utilization %" decoys that the regex must NOT match.
+func TestParseGPUUnfilteredIoregBlock(t *testing.T) {
+	raw := `+-o AGXAcceleratorG17X  <class AGXAcceleratorG17X, id 0x100000abc, registered, matched, active, busy 0 (0 ms), retain 42>
+    {
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=2779873280,"Tiler Utilization %"=0,"recoveryCount"=0,"lastRecoveryTime"=0,"Renderer Utilization %"=0,"Device Utilization %"=37,"In use system memory"=479608832}
+      "IOClass" = "AGXAcceleratorG17X"
+    }
+`
+	var stats SystemStats
+	parseGPU(raw, &stats)
+	if stats.GPUPercent != 37 {
+		t.Errorf("GPUPercent = %f, want 37 (from unfiltered ioreg block with Tiler/Renderer decoys)", stats.GPUPercent)
+	}
+}
+
 func TestParseGPUBadInput(t *testing.T) {
 	tests := []struct {
 		name  string

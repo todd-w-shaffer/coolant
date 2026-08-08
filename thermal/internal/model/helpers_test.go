@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,11 +52,24 @@ func withOnline(online bool) snapOpt {
 	return func(s *collector.Snapshot) { s.Online = online }
 }
 
+// testProcSeq hands each withProcs call a distinct, monotonically increasing
+// ProcSeq — a withProcs snapshot models a *new* process sample, which the
+// collector now tags so the model can tell a fresh sample from the ~6 stale
+// re-deliveries that ride each 150ms fast snapshot between 1s proc scans.
+var testProcSeq atomic.Uint64
+
 func withProcs(procs []collector.ProcessInfo) snapOpt {
 	return func(s *collector.Snapshot) {
 		s.AllProcs = procs
 		s.Sessions = []collector.SessionTree{{RootPID: 1, Descendants: procs}}
+		s.ProcSeq = testProcSeq.Add(1)
 	}
+}
+
+// withProcSeq overrides the ProcSeq (apply after withProcs) to simulate a stale
+// re-delivery of the same proc sample on a later fast tick.
+func withProcSeq(seq uint64) snapOpt {
+	return func(s *collector.Snapshot) { s.ProcSeq = seq }
 }
 
 func withSessions(sessions []collector.SessionTree) snapOpt {
