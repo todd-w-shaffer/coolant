@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VERSION: 0.29.0
+# VERSION: 0.30.0
 # Braille progress bar status line for Claude Code
 # Thermometer coloring on sesh: green < 50%, yellow 50-70%, red >= 70%
 # Format: context ⣿⣿⣿⣿⣦⠀⠀⠀⠀⠀⡇  sesh ⣿⣿⣦⠀⠀⡇  week ⣿⣤⠀⠀⠀⡇
