@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -107,10 +108,23 @@ func (h *Headline) SetHighScoreMode(on bool) {
 // AnimTick advances agent icon springs, the readout's ghost/flash
 // countdowns, bloom heat, and battery breath.
 func (h *Headline) AnimTick() {
+	// When calm, freeze the decorative breath oscillators (heat blooms +
+	// battery charging breath) so the composed frame goes byte-stable and
+	// bubbletea suppresses idle repaints. Sparklines/springs are untouched —
+	// they self-quiesce. Agent dots render nothing at zero agents.
+	calm := h.state != nil && h.state.IsCalm()
 	h.agents.AnimTick()
-	h.temp.AnimTick()
-	h.bloom.AnimTick()
-	h.battery.AnimTick()
+	h.temp.AnimTick() // LCD: self-quiesces (hysteresis + deadbanded temp input)
+	h.bloom.AnimTick(calm)
+	h.battery.AnimTick(calm)
+}
+
+// EasingSpringsAtRest reports whether the headline's data-target springs — the
+// heat bloom and the LCD temperature — have both settled. The model folds this
+// into its tick-stop; see the model's settled() for why these springs need a
+// rest signal the calm-signal set can't provide.
+func (h *Headline) EasingSpringsAtRest() bool {
+	return h.bloom.AtRest() && h.temp.AtRest()
 }
 
 // rowPair is a 2-row rendered fragment at a fixed visible width. visWidth
@@ -133,36 +147,46 @@ func bgPad(bg color.Color, n int) string {
 // painting each cell with the HeatBloom's BgAt contribution (falling
 // back to iconBg past the bloom's right-boundary or where alpha is zero).
 // Emits truecolor bg escapes directly and coalesces equal-color runs so
-// the 30fps left-zone repaint doesn't allocate a lipgloss.Style per cell.
+// the per-frame left-zone repaint doesn't allocate a lipgloss.Style per cell.
 func (h *Headline) bloomedBgPad(iconBg color.Color, startCol, n, row int) string {
 	if n <= 0 {
 		return ""
 	}
 	var sb strings.Builder
-	var prev string
+	var esc []byte // reused scratch for the active bg escape (no per-cell alloc)
+	var pr, pg, pb uint32
+	have := false
 	for i := 0; i < n; i++ {
 		c := h.bloom.BgAt(startCol+i, row, iconBg)
-		esc := truecolorBg(c)
-		if esc != prev {
-			if prev != "" {
+		r, g, b, _ := c.RGBA()
+		r, g, b = r>>8, g>>8, b>>8
+		if !have || r != pr || g != pg || b != pb {
+			if have {
 				sb.WriteString("\x1b[0m")
 			}
-			sb.WriteString(esc)
-			prev = esc
+			esc = appendTruecolorBg(esc[:0], r, g, b)
+			sb.Write(esc)
+			pr, pg, pb, have = r, g, b, true
 		}
 		sb.WriteByte(' ')
 	}
-	if prev != "" {
+	if have {
 		sb.WriteString("\x1b[0m")
 	}
 	return sb.String()
 }
 
-// truecolorBg emits \033[48;2;R;G;Bm for any color.Color. Kept local to
-// the bloom hot path so the 30fps repaint skips lipgloss.NewStyle allocs.
-func truecolorBg(c color.Color) string {
-	r, g, b, _ := c.RGBA()
-	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r>>8, g>>8, b>>8)
+// appendTruecolorBg appends \033[48;2;R;G;Bm (R/G/B already 0..255) to dst and
+// returns the extended slice. Manual base-10 formatting avoids the per-cell
+// fmt.Sprintf allocation on the bloom hot path; callers reuse dst as scratch.
+func appendTruecolorBg(dst []byte, r, g, b uint32) []byte {
+	dst = append(dst, "\x1b[48;2;"...)
+	dst = strconv.AppendUint(dst, uint64(r), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(g), 10)
+	dst = append(dst, ';')
+	dst = strconv.AppendUint(dst, uint64(b), 10)
+	return append(dst, 'm')
 }
 
 // renderLCDFrag wraps the segment readout as a rowPair. Returns a zero

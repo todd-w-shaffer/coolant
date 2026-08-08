@@ -26,6 +26,11 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 		{"CategoryClear", km.CategoryClear, []string{"\\"}, "\\", "clear filter"},
 		{"MouseToggle", km.MouseToggle, []string{"m"}, "m", "toggle mouse"},
 		{"Intel", km.Intel, []string{"i"}, "i", "session intel"},
+		{"ToggleCPU", km.ToggleCPU, []string{"1"}, "1", "toggle CPU"},
+		{"ToggleMEM", km.ToggleMEM, []string{"2"}, "2", "toggle MEM"},
+		{"ToggleDecomp", km.ToggleDecomp, []string{"3"}, "3", "toggle SWAP"},
+		{"ToggleToken", km.ToggleToken, []string{"4"}, "4", "toggle TKNS"},
+		{"TogglePretty", km.TogglePretty, []string{"5"}, "5", "toggle PRTY"},
 	}
 
 	for _, tt := range tests {
@@ -54,6 +59,20 @@ func TestShortHelpOrder(t *testing.T) {
 	for i := range want {
 		if short[i].Help() != want[i].Help() {
 			t.Errorf("ShortHelp()[%d] = %+v, want %+v", i, short[i].Help(), want[i].Help())
+		}
+	}
+}
+
+func TestSparklineTogglesOrder(t *testing.T) {
+	km := Default()
+	toggles := km.SparklineToggles()
+	want := []key.Binding{km.ToggleCPU, km.ToggleMEM, km.ToggleDecomp, km.ToggleToken, km.TogglePretty}
+	if len(toggles) != len(want) {
+		t.Fatalf("SparklineToggles() length = %d, want %d", len(toggles), len(want))
+	}
+	for i := range want {
+		if toggles[i].Help() != want[i].Help() {
+			t.Errorf("SparklineToggles()[%d] = %+v, want %+v", i, toggles[i].Help(), want[i].Help())
 		}
 	}
 }

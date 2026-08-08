@@ -151,13 +151,34 @@ func TestHeatBloomAnimTickClampsHeat(t *testing.T) {
 	b.heatTarget = 1.0
 	maxHeat := 0.0
 	for i := 0; i < 240; i++ {
-		b.AnimTick()
+		b.AnimTick(false)
 		if b.heat > maxHeat {
 			maxHeat = b.heat
 		}
 	}
 	if maxHeat > 1.0+1e-9 {
 		t.Errorf("heat overshot to %v; want clamped to <= 1.0", maxHeat)
+	}
+}
+
+func TestHeatBloomAtRest(t *testing.T) {
+	b := newTestBloom(t)
+	b.SetSize(40, 2)
+	// Primed at a target → at rest immediately (heat snapped to target, vel 0).
+	b.setTarget(0.3)
+	if !b.AtRest() {
+		t.Fatalf("expected at rest right after priming: heat=%v target=%v vel=%v", b.heat, b.heatTarget, b.heatVel)
+	}
+	// A target move must read NOT at rest until the spring eases there.
+	b.setTarget(0.9)
+	if b.AtRest() {
+		t.Errorf("expected NOT at rest immediately after a target move (heat=%v target=%v)", b.heat, b.heatTarget)
+	}
+	for i := 0; i < 240 && !b.AtRest(); i++ {
+		b.AnimTick(true) // calm: only the heat spring advances
+	}
+	if !b.AtRest() {
+		t.Errorf("expected the spring to settle at rest after easing: heat=%v target=%v vel=%v", b.heat, b.heatTarget, b.heatVel)
 	}
 }
 
@@ -215,5 +236,19 @@ func TestHeatBloomNoRightBleed(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestHeatBloomBreathFreezesWhenCalm(t *testing.T) {
+	b := NewHeatBloom(testTheme, testAnim)
+	b.setTarget(0.5) // some heat so the breath oscillates
+	b.AnimTick(false)
+	p1 := b.breathePhase
+	if p1 == 0 {
+		t.Fatal("breath should advance when not calm")
+	}
+	b.AnimTick(true)
+	if b.breathePhase != p1 {
+		t.Errorf("breath advanced while calm: %v -> %v", p1, b.breathePhase)
 	}
 }

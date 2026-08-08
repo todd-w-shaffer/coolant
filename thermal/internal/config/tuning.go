@@ -2,7 +2,10 @@
 // smoothing, animation parameters, and category heat levels.
 package config
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // ── Collector timing ───────────────────────────────────────
 
@@ -16,6 +19,32 @@ const (
 	ProcTimeout     = 3 * time.Second        // ps process tree collection
 	CollectTimeout  = 5 * time.Second        // overall fast-loop context deadline
 	EventInterval   = 500 * time.Millisecond // JSONL event log poll rate
+)
+
+// ── Adaptive slow-source cadence ───────────────────────────
+//
+// The slow loop ticks at SlowInterval (1s) — its floor, kept for swap/vm_stat
+// (the decompression delta needs a fixed cadence), tokens, and procs. The
+// subprocess-heavy, slow-changing sources poll on their own longer cadence
+// checked each base tick, so an idle laptop forks ioreg/pmset/net far less
+// often. "Balanced" profile: meaningful power saving, readings lag ≤~20s idle.
+const (
+	// Battery % changes once per minute at most, and pmset is the highest-latency
+	// probe (~6ms, IOKit-bound) — poll it every 20s, not every second.
+	BatteryInterval = 20 * time.Second
+
+	// GPU adapts: while utilization is flat/idle (below GPUFlatThreshold) the
+	// ioreg fork backs off to GPUIdleInterval; once a read shows real load it
+	// polls every base tick (GPUActiveInterval) to track it. A flat GPU is the
+	// common idle case, where ioreg is the heaviest probe.
+	GPUActiveInterval = 1 * time.Second
+	GPUIdleInterval   = 15 * time.Second
+	GPUFlatThreshold  = 10.0 // % Device Utilization below which GPU counts as idle
+
+	// Connectivity rarely flips. Poll every NetOnlineInterval while reachable;
+	// drop to NetFailInterval after a failure so an outage still surfaces fast.
+	NetOnlineInterval = 12 * time.Second
+	NetFailInterval   = 3 * time.Second
 )
 
 // DefaultPageSize is the fallback macOS page size when hw.pagesize is unavailable.
@@ -32,11 +61,71 @@ const AgentStaleThreshold = 3 * time.Minute
 // ── Animation ──────────────────────────────────────────────
 
 const (
-	AnimFPS          = 30                    // spring physics + sparkline scroll rate
-	AnimInterval     = time.Second / AnimFPS // ~33ms per frame
-	PeakDecayRate    = 0.982                 // per-frame decay (~1.3s half-life at 30fps)
-	MaxRenderHistory = 600                   // ~20s at 30fps
+	AnimFPS      = 15                    // spring physics + sparkline scroll rate
+	AnimInterval = time.Second / AnimFPS // ~67ms per frame
+
+	// sparkWindowSeconds is the wall-clock span shown by the sparkline
+	// scroll. MaxRenderHistory derives from it so the displayed time span
+	// and scroll speed stay invariant when AnimFPS changes.
+	sparkWindowSeconds = 20
+	MaxRenderHistory   = sparkWindowSeconds * AnimFPS // ~20s of frames
+
+	// peakDecayHalfLifeSec is the wall-clock half-life of the gauge peak
+	// marker decay; PeakDecayRate derives from it (see below) so the decay
+	// feel stays invariant to the frame rate.
+	peakDecayHalfLifeSec = 1.27
+
+	// CalmStableSnapshots is how many consecutive matching snapshots (after the
+	// baseline) must pass before the dashboard is judged "calm" and the
+	// animation tick freezes. At FastInterval ≈ 150ms that's ~5 snapshots of
+	// wall clock (baseline + 4 matches ≈ 750ms), comfortably longer than the
+	// ~0.4s gauge spring settle, so springs are at rest by the time animation
+	// stops — no gauge freezes mid-ease. See AppState.IsCalm.
+	CalmStableSnapshots = 4
+
+	// SettleStableFrames is how many consecutive byte-identical renders
+	// (counted by layout.RenderContent, which runs once per bubbletea render —
+	// animation ticks AND snapshot/event repaints alike) must pass — on top of
+	// IsCalm — before the model stops re-arming the animation tick. IsCalm gates
+	// on the data settling; this gates on the rendered *output* actually holding
+	// still, so motion IsCalm can't see (KITT scan over completed dots, residual
+	// spring/peak-decay motion) keeps the tick alive instead of freezing
+	// mid-animation. The unit is renders, not wall-clock: at 15fps active it's
+	// ≲1s, but snapshot repaints interleave so it can settle sooner. Sized to
+	// ride out short peak-decay quantization plateaus; a peak marker frozen one
+	// level high in a rare long plateau is cosmetic and self-heals on the next
+	// activity wake (e.g. CPU crossing the display deadband). See model.IsCalm +
+	// Horizontal.FrameStableCount.
+	SettleStableFrames = AnimFPS
+
+	// DisplayDeadbandPct is the minimum change (percentage points) from the
+	// last *displayed* CPU% before the readout commits a new value. Sub-band
+	// jitter is held, so the number doesn't flicker on small wiggle and the
+	// dashboard can reach calm. Comparing against the displayed value (not the
+	// last raw sample) means accumulated drift still crosses the band and
+	// commits, so there's no indefinite stall.
+	DisplayDeadbandPct = 5.0
+
+	// DisplayMinUpdateInterval rate-limits the CPU% readout: even when a move
+	// clears DisplayDeadbandPct, the displayed value commits at most once per
+	// this interval (measured against snapshot wall-clock). A first move after
+	// a quiet stretch commits immediately (last commit is already older than
+	// the interval); only rapid back-to-back swings are throttled.
+	DisplayMinUpdateInterval = 1 * time.Second
 )
+
+// PeakDecayForHalfLife returns the per-frame peak-decay multiplier that halves
+// a peak over halfLifeSec of wall-clock time at the current AnimFPS. Animation
+// profiles derive their decay from a half-life (not a raw per-frame constant)
+// so the feel — and the calm > default > intense decay ordering — stays
+// invariant to AnimFPS. A func because math.Pow can't be a const.
+func PeakDecayForHalfLife(halfLifeSec float64) float64 {
+	return math.Pow(0.5, 1.0/(halfLifeSec*float64(AnimFPS)))
+}
+
+// PeakDecayRate is the default profile's per-frame peak decay (~0.964 at 15fps,
+// matching the old hand-tuned 0.982-at-30fps feel).
+var PeakDecayRate = PeakDecayForHalfLife(peakDecayHalfLifeSec)
 
 // Spring physics parameters for gauge easing.
 const (
@@ -56,7 +145,11 @@ const (
 const (
 	BreatheMinBright = 0.25 // dimmest point of breathing cycle
 	BreatheMaxBright = 1.0  // brightest point
-	BreathePhaseStep = 0.14 // radians per AnimTick (~1.5s cycle at 30fps: 2π/45)
+	// BreathePhaseStep is radians/tick for a ~1.5s breathing cycle. Derived
+	// from AnimFPS so the wall-clock cycle stays 1.5s at any frame rate (a raw
+	// per-tick value would slow the breathing when AnimFPS drops).
+	breatheCycleSec  = 1.5
+	BreathePhaseStep = 2 * math.Pi / (breatheCycleSec * float64(AnimFPS))
 	BreatheFadeEps   = 0.01 // spring position below which a dying icon is removed
 	BreatheStaleRate = 0.3  // phase advance multiplier for stale (orphaned) dots
 	BreatheStaleDim  = 0.35 // brightness multiplier for stale dots
@@ -64,23 +157,30 @@ const (
 
 // KITT scanner (stale ghost dots / highscore completed dots).
 const (
-	KITTSweepRate    = 0.025 // sweep position advance per AnimTick
-	KITTAmbient      = 0.15  // floor brightness at sweep edges
-	KITTPeak         = 0.85  // peak contribution above ambient
-	KITTSigmaSq      = 0.8   // gaussian width (sigma²) — tighter = sharper spotlight
-	KITTSingleBright = 0.8   // brightness multiplier when only one dot (no sweep)
-	KITTMaxDots      = 12    // cap rendered completed/ghost dots to prevent overflow
+	// KITTSweepRate is sweep-position advance/tick. Derived from a per-second
+	// rate (÷AnimFPS) so the scanner sweeps at the same wall-clock speed at any
+	// frame rate. 0.75/s == the original 0.025/tick at 30fps.
+	kittSweepPerSec  = 0.75
+	KITTSweepRate    = kittSweepPerSec / float64(AnimFPS)
+	KITTAmbient      = 0.15 // floor brightness at sweep edges
+	KITTPeak         = 0.85 // peak contribution above ambient
+	KITTSigmaSq      = 0.8  // gaussian width (sigma²) — tighter = sharper spotlight
+	KITTSingleBright = 0.8  // brightness multiplier when only one dot (no sweep)
+	KITTMaxDots      = 12   // cap rendered completed/ghost dots to prevent overflow
 )
 
 // Tidal wave (active agent dots).
 const (
-	TidalPhaseStep    = 0.015 // phase advance per AnimTick (~14s per full wave)
-	TidalWaveMix      = 0.85  // tidal wave weight in brightness blend
-	TidalBreathMix    = 0.15  // individual breath weight in brightness blend
-	TidalBrightFloor  = 0.5   // minimum brightness for active dots
-	TidalPhaseSpread  = 1.5   // radians between adjacent dots (wider = clearer wave direction)
-	GlyphFilledThresh = 0.66  // wave value above which glyph shows ⬢ (filled)
-	GlyphMidThresh    = 0.33  // wave value above which glyph shows ⏣ (benzene)
+	// TidalPhaseStep is radians/tick for a ~14s full wave. Derived from AnimFPS
+	// so the wave period stays ~14s at any frame rate.
+	tidalWaveSec      = 14.0
+	TidalPhaseStep    = 2 * math.Pi / (tidalWaveSec * float64(AnimFPS))
+	TidalWaveMix      = 0.85 // tidal wave weight in brightness blend
+	TidalBreathMix    = 0.15 // individual breath weight in brightness blend
+	TidalBrightFloor  = 0.5  // minimum brightness for active dots
+	TidalPhaseSpread  = 1.5  // radians between adjacent dots (wider = clearer wave direction)
+	GlyphFilledThresh = 0.66 // wave value above which glyph shows ⬢ (filled)
+	GlyphMidThresh    = 0.33 // wave value above which glyph shows ⏣ (benzene)
 )
 
 // ── History / buffer sizes ─────────────────────────────────
@@ -180,6 +280,12 @@ const (
 	SwapSparkCrit   = 8.0  // GB — aligns with SwapHotBytes (half physical RAM)
 	GPUSparkWarn    = 60.0 // GPU Device Utilization %
 	GPUSparkCrit    = 85.0
+	// Token throughput is the raw per-tick input+output rate (cache axes
+	// excluded — see TokenStats.IOTokensPerSec). Defaults sized for typical
+	// Claude Code usage: a chunky single-agent reply lands ≈1000 io/s in
+	// a single completion tick, parallel agents stack to ≈4000+ io/s.
+	TokenSparkWarn = 1000.0
+	TokenSparkCrit = 4000.0
 )
 
 // ── Battery ───────────────────────────────────────────────
@@ -201,7 +307,7 @@ const (
 	BatteryMeltdownBreathCeil  = 1.0  // brightness ceiling for meltdown pulse
 	BatteryWarnBreathFloor     = 0.85 // subtle brightness floor for 10-20% warning breath
 	BatteryWarnBreathCeil      = 1.0  // brightness ceiling for warning breath
-	BatteryWarnBreathRate      = 0.5  // 1 cycle per 2 seconds at AnimFPS=60
+	BatteryWarnBreathRate      = 0.5  // half the meltdown rate → 1 cycle per 2 seconds (AnimFPS-invariant)
 )
 
 // ── Headroom warnings ──────────────────────────────────────

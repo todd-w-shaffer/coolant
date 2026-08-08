@@ -56,16 +56,33 @@ type SessionTree struct {
 	Descendants []ProcessInfo
 }
 
+// TokenStats holds aggregated Claude Code transcript token activity.
+// Totals are cumulative across all observed assistant messages since the
+// collector started. CacheHitRatio uses the canonical Anthropic formula
+// (cache_read / (input + cache_create + cache_read); output is excluded).
+type TokenStats struct {
+	InputTotal         int64
+	OutputTotal        int64
+	CacheCreateTotal   int64
+	CacheReadTotal     int64
+	IOTokensPerSec     float64 // raw per-tick rate of input+output tokens only (excludes cache_create + cache_read); reflects fresh model traffic, not cache pressure. Drops to 0 between bursts so the sparkline amplitude tracks current activity.
+	PrettyTokensPerSec float64 // chars÷4 estimate from transcript file byte growth — mimics CC's UI counter (which counts streamed chars locally). Lands per content-block completion, not per text chunk; the visual still steps rather than ramps, but the magnitude differs from IOTokensPerSec for multi-block turns.
+	CacheHitRatio      float64 // 0.0–1.0
+	ActiveSessions     int     // session files with mtime within ActiveSessionWindow
+}
+
 // Snapshot is the unified data model produced by the collector goroutine.
 type Snapshot struct {
 	System            SystemStats
 	Sessions          []SessionTree // one per Claude root process
 	AllProcs          []ProcessInfo // flat list of all Claude descendants
+	Tokens            TokenStats    // Claude Code transcript token activity
 	Online            bool          // can we reach the Claude API?
 	DesktopRunning    bool          // Claude Desktop (Electron) main process detected
 	ChromeHostRunning bool          // chrome-native-host (browser extension bridge) detected
 	Timestamp         time.Time
 	SlowAge           time.Duration // time since last successful slow-loop collection
+	ProcSeq           uint64        // bumps each time a fresh process scan lands; lets the model tell a new sample from the stale re-deliveries that ride every fast snapshot between 1s scans
 	CollectErrs       []string      // non-nil when collection partially failed
 }
 

@@ -142,3 +142,92 @@ func TestViewLinesNilWhenNoState(t *testing.T) {
 		t.Errorf("ViewLines with no state = %d lines, want nil", len(got))
 	}
 }
+
+// TestDefaultVisibleSparklineSet pins the cold-start visible set so a
+// future refactor that changes the default trips a clear signal. CPU,
+// MEM, Token are visible; Decomp ("SWAP") is available via toggle but
+// hidden by default.
+func TestDefaultVisibleSparklineSet(t *testing.T) {
+	g := NewGauges(testTheme, testAnim)
+	wantVisible := map[SparklineSlot]bool{
+		SlotCPU:    true,
+		SlotMEM:    true,
+		SlotDecomp: false,
+		SlotToken:  true,
+		SlotPretty: false,
+	}
+	for slot, want := range wantVisible {
+		if got := g.IsVisible(slot); got != want {
+			t.Errorf("IsVisible(%v) = %v, want %v", slot, got, want)
+		}
+	}
+	if got := g.VisibleCount(); got != MaxVisibleSparklines {
+		t.Errorf("default VisibleCount = %d, want %d", got, MaxVisibleSparklines)
+	}
+}
+
+// TestToggleOffFreesSlot verifies a visible slot can be hidden and the
+// visible count drops by one.
+func TestToggleOffFreesSlot(t *testing.T) {
+	g := NewGauges(testTheme, testAnim)
+	before := g.VisibleCount()
+	g.ToggleVisible(SlotCPU)
+	if g.IsVisible(SlotCPU) {
+		t.Fatalf("after toggle, SlotCPU still visible")
+	}
+	if got := g.VisibleCount(); got != before-1 {
+		t.Errorf("VisibleCount after toggle off = %d, want %d", got, before-1)
+	}
+}
+
+// TestToggleOnRoundTrip verifies toggle off + toggle on returns to the
+// original visible state.
+func TestToggleOnRoundTrip(t *testing.T) {
+	g := NewGauges(testTheme, testAnim)
+	g.ToggleVisible(SlotCPU)
+	g.ToggleVisible(SlotCPU)
+	if !g.IsVisible(SlotCPU) {
+		t.Errorf("after toggle-off + toggle-on, SlotCPU should be visible again")
+	}
+	if got := g.VisibleCount(); got != MaxVisibleSparklines {
+		t.Errorf("VisibleCount after round-trip = %d, want %d", got, MaxVisibleSparklines)
+	}
+}
+
+// TestToggleOnWhenFullIsNoOp is the load-bearing invariant: with 3 slots
+// visible, toggling on the 4th MUST NOT change state. The user has to
+// free a slot first.
+func TestToggleOnWhenFullIsNoOp(t *testing.T) {
+	g := NewGauges(testTheme, testAnim)
+	// Default visible set is {CPU, MEM, Token}; Decomp is hidden.
+	if g.IsVisible(SlotDecomp) {
+		t.Fatalf("test precondition: SlotDecomp should start hidden")
+	}
+	if g.VisibleCount() != MaxVisibleSparklines {
+		t.Fatalf("test precondition: VisibleCount = %d, want %d", g.VisibleCount(), MaxVisibleSparklines)
+	}
+
+	g.ToggleVisible(SlotDecomp)
+	if g.IsVisible(SlotDecomp) {
+		t.Errorf("ToggleVisible(SlotDecomp) succeeded when stage was full — invariant violated")
+	}
+	if g.VisibleCount() != MaxVisibleSparklines {
+		t.Errorf("VisibleCount after failed toggle-on = %d, want %d", g.VisibleCount(), MaxVisibleSparklines)
+	}
+}
+
+// TestToggleOutOfRangeSlotIsNoOp guards against panics on slot indices
+// outside [0, NumSparklineSlots).
+func TestToggleOutOfRangeSlotIsNoOp(t *testing.T) {
+	g := NewGauges(testTheme, testAnim)
+	before := g.VisibleCount()
+	g.ToggleVisible(SparklineSlot(-1))
+	g.ToggleVisible(SparklineSlot(NumSparklineSlots))
+	g.ToggleVisible(SparklineSlot(99))
+	if g.VisibleCount() != before {
+		t.Errorf("out-of-range toggles changed VisibleCount: %d → %d", before, g.VisibleCount())
+	}
+	if g.IsVisible(SparklineSlot(-1)) || g.IsVisible(SparklineSlot(99)) {
+		t.Errorf("IsVisible should return false for out-of-range slots")
+	}
+}

@@ -120,6 +120,8 @@ type SparklineConfig struct {
 	SwapCritGB float64 // default 8.0
 	GPUWarn    float64 // default 60
 	GPUCrit    float64 // default 85
+	TokenWarn  float64 // tok/sec — default 500
+	TokenCrit  float64 // default 2000
 }
 
 // UpdatesConfig controls automatic update checking behavior.
@@ -202,6 +204,8 @@ func Defaults() *UserConfig {
 			SwapCritGB: SwapSparkCrit,
 			GPUWarn:    GPUSparkWarn,
 			GPUCrit:    GPUSparkCrit,
+			TokenWarn:  TokenSparkWarn,
+			TokenCrit:  TokenSparkCrit,
 		},
 		Categories: CategoryConfig{
 			Thresholds:     cats,
@@ -301,6 +305,8 @@ func merge(dst *UserConfig, raw map[string]any) {
 		coerceFloat(&dst.Sparklines.SwapCritGB, sl, "swap_crit_gb")
 		coerceFloat(&dst.Sparklines.GPUWarn, sl, "gpu_warn")
 		coerceFloat(&dst.Sparklines.GPUCrit, sl, "gpu_crit")
+		coerceFloat(&dst.Sparklines.TokenWarn, sl, "token_warn")
+		coerceFloat(&dst.Sparklines.TokenCrit, sl, "token_crit")
 	}
 	if u, ok := section(raw, "updates"); ok {
 		coerceInt(&dst.Updates.CheckIntervalSec, u, "check_interval")

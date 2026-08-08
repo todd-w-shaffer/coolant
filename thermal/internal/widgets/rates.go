@@ -10,9 +10,28 @@ import (
 	"github.com/toddwshaffer/coolant/thermal/internal/config"
 	"github.com/toddwshaffer/coolant/thermal/internal/keys"
 	"github.com/toddwshaffer/coolant/thermal/internal/model"
+	"github.com/toddwshaffer/coolant/thermal/internal/stats/format"
 	"github.com/toddwshaffer/coolant/thermal/internal/theme"
 	"github.com/toddwshaffer/coolant/thermal/internal/ui"
 )
+
+// humanizeRate formats a per-second rate compactly: 47 → "47", 1234 → "1.2k",
+// 1_500_000 → "1.5M". Negative or NaN values render as "0".
+func humanizeRate(v float64) string {
+	if v != v || v < 0 { // NaN or negative
+		return "0"
+	}
+	switch {
+	case v < 1000:
+		return fmt.Sprintf("%d", int(v+0.5))
+	case v < 1_000_000:
+		return fmt.Sprintf("%.1fk", v/1000)
+	case v < 1_000_000_000:
+		return fmt.Sprintf("%.1fM", v/1_000_000)
+	default:
+		return fmt.Sprintf("%.1fG", v/1_000_000_000)
+	}
+}
 
 type Rates struct {
 	width int
@@ -60,8 +79,9 @@ func (r *Rates) View() string {
 	netVal := int(s.NetRate)
 	netStr := fmt.Sprintf("net:%+04d/s", netVal)
 
-	// System stats — fixed width
-	cpuPct := int(snap.System.CPUPercent)
+	// System stats — fixed width. CPU uses the rate-limited readout value:
+	// deadbanded (no sub-band flicker) AND updated at most once/sec.
+	cpuPct := int(s.ReadoutCPUPercent())
 	memUsedGB := float64(snap.System.MemUsedBytes) / float64(model.GB)
 	memTotalGB := snap.System.MemTotalBytes / model.GB
 	memPct := snap.System.MemPercent()
@@ -76,7 +96,7 @@ func (r *Rates) View() string {
 	sb.WriteString(r.theme.GaugeDots[0].Formatted)
 	sb.WriteString("CPU:")
 	cpuTh := CPUSparkThresh()
-	sb.WriteString(r.theme.SeverityColor(snap.System.CPUPercent, &cpuTh))
+	sb.WriteString(r.theme.SeverityColor(s.ReadoutCPUPercent(), &cpuTh))
 	sb.WriteString(fmt.Sprintf("%03d%%", cpuPct))
 	sb.WriteString(sparkReset)
 
@@ -113,6 +133,32 @@ func (r *Rates) View() string {
 	sb.WriteString(ui.ColorText(r.theme.DeathColor, deathStr))
 	sb.WriteString("  ")
 	sb.WriteString(ui.ColorText(r.theme.NetColor, netStr))
+
+	// Two cumulative token readouts since thermo launched:
+	//
+	//   tok N   — Input + Output + CacheCreate. The "unique work" view:
+	//             tokens written or generated for the first time. Doesn't
+	//             multiply by turn count — CacheCreate is one-time per
+	//             prefix, Input is the fresh input slice not satisfied by
+	//             cache, Output is model generation.
+	//
+	//   bill N  — adds CacheReadTotal. The all-in billable since launch.
+	//             Cache reads are billed (at 0.1× the base rate, not
+	//             free), so this is the number that drives the API bill;
+	//             on a long cache-heavy session it can run 10-100× tok
+	//             because every turn re-reads the cached prefix and pays
+	//             again.
+	//
+	// Showing both lets `bill ≫ tok` itself disclose the cache mix —
+	// hence no separate `cache X%` readout. The TKNS sparkline next door
+	// stays as a rate of Input+Output only (fresh model traffic; drops
+	// to 0 between bursts).
+	tok := snap.Tokens
+	tokWork := tok.InputTotal + tok.OutputTotal + tok.CacheCreateTotal
+	tokBill := tokWork + tok.CacheReadTotal
+	sb.WriteString("  ")
+	sb.WriteString(ui.ColorText(r.theme.TokensColor,
+		fmt.Sprintf("tok %s · bill %s", format.FormatCount(tokWork), format.FormatCount(tokBill))))
 
 	// Static indicators: Desktop, Chrome
 	if snap.DesktopRunning {

@@ -331,7 +331,7 @@ func TestBattery_ChargedShowsSolidBolt(t *testing.T) {
 	}
 
 	// Phase should not advance on AnimTick for charged state.
-	b.AnimTick()
+	b.AnimTick(false)
 	if b.phase != 0 {
 		t.Errorf("charged: phase advanced to %v, want 0", b.phase)
 	}
@@ -344,7 +344,7 @@ func TestBattery_ChargingAnimTickAdvancesPhase(t *testing.T) {
 		BatteryPercent: 85,
 		BatteryState:   collector.BatteryCharging,
 	})
-	b.AnimTick()
+	b.AnimTick(false)
 	if b.phase == 0 {
 		t.Error("charging: AnimTick did not advance phase")
 	}
@@ -369,7 +369,7 @@ func TestBattery_ChargingBrightnessOscillates(t *testing.T) {
 		brightness := config.BatteryChargeBreathFloor +
 			(config.BatteryChargeBreathCeil-config.BatteryChargeBreathFloor)*sinNorm(b.phase)
 		values = append(values, brightness)
-		b.AnimTick()
+		b.AnimTick(false)
 	}
 
 	minV, maxV := values[0], values[0]
@@ -457,7 +457,7 @@ func TestBattery_MeltdownPulseAtCrit(t *testing.T) {
 	var phases []float64
 	for i := 0; i < 30; i++ {
 		phases = append(phases, b.meltdownPhase)
-		b.AnimTick()
+		b.AnimTick(false)
 	}
 
 	// At 5% discharging, meltdown phase must advance.
@@ -489,7 +489,7 @@ func TestBattery_MeltdownPulseAtCrit(t *testing.T) {
 		BatteryState:   collector.BatteryDischarging,
 	})
 	for i := 0; i < 30; i++ {
-		b2.AnimTick()
+		b2.AnimTick(false)
 	}
 	if b2.meltdownPhase == 0 {
 		t.Error("12%% discharging: warning breath should be active")
@@ -503,7 +503,7 @@ func TestBattery_MeltdownPulseAtCrit(t *testing.T) {
 		BatteryState:   collector.BatteryDischarging,
 	})
 	for i := 0; i < 30; i++ {
-		b3.AnimTick()
+		b3.AnimTick(false)
 	}
 	if b3.meltdownPhase != 0 {
 		t.Errorf("25%% discharging: meltdown phase = %v, want 0", b3.meltdownPhase)
@@ -518,9 +518,9 @@ func TestBattery_MeltdownPulseIndependentOfHeadline(t *testing.T) {
 		BatteryState:   collector.BatteryDischarging,
 	})
 
-	b.AnimTick()
+	b.AnimTick(false)
 	p1 := b.meltdownPhase
-	b.AnimTick()
+	b.AnimTick(false)
 	p2 := b.meltdownPhase
 
 	if p2 <= p1 {
@@ -613,7 +613,7 @@ func TestBattery_WarnBreathAt15Pct(t *testing.T) {
 
 	// Phase must advance (warning breath active).
 	for i := 0; i < 30; i++ {
-		b.AnimTick()
+		b.AnimTick(false)
 	}
 	if b.meltdownPhase == 0 {
 		t.Error("15%% discharging: meltdown phase did not advance (warning breath should be active)")
@@ -626,7 +626,7 @@ func TestBattery_WarnBreathAt15Pct(t *testing.T) {
 		brightness := config.BatteryWarnBreathFloor +
 			(config.BatteryWarnBreathCeil-config.BatteryWarnBreathFloor)*sinNorm(b.meltdownPhase)
 		values = append(values, brightness)
-		b.AnimTick()
+		b.AnimTick(false)
 	}
 	minV, maxV := values[0], values[0]
 	for _, v := range values {
@@ -650,9 +650,32 @@ func TestBattery_ChargingAboveCritDoesNotPulse(t *testing.T) {
 		BatteryState:   collector.BatteryCharging,
 	})
 	for i := 0; i < 30; i++ {
-		b.AnimTick()
+		b.AnimTick(false)
 	}
 	if b.meltdownPhase != 0 {
 		t.Errorf("8%% charging: meltdown phase = %v, want 0 (charging suppresses crit pulse)", b.meltdownPhase)
+	}
+}
+
+func TestBatteryChargingBreathFreezesWhenCalm(t *testing.T) {
+	b := NewBattery(testTheme, testAnim)
+	b.Update(collector.SystemStats{BatteryPresent: true, BatteryState: collector.BatteryCharging, BatteryPercent: 50})
+	b.AnimTick(false)
+	advanced := b.phase
+	if advanced == 0 {
+		t.Fatal("charging breath should advance when not calm")
+	}
+	b.AnimTick(true)
+	if b.phase != advanced {
+		t.Errorf("charging breath advanced while calm: %v -> %v", advanced, b.phase)
+	}
+}
+
+func TestBatteryAlertPulseAdvancesRegardlessOfCalm(t *testing.T) {
+	b := NewBattery(testTheme, testAnim)
+	b.Update(collector.SystemStats{BatteryPresent: true, BatteryState: collector.BatteryDischarging, BatteryPercent: 3})
+	b.AnimTick(true) // alert must advance even if calm is mistakenly passed
+	if b.meltdownPhase == 0 {
+		t.Error("discharging low-battery alert pulse must advance regardless of calm")
 	}
 }

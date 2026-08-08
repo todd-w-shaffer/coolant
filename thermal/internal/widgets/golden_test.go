@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +127,10 @@ func TestCaptureGoldenFiles(t *testing.T) {
 		writeGolden(t, "gauges", captureGauges())
 	})
 
+	t.Run("gauges_alt_visible", func(t *testing.T) {
+		writeGolden(t, "gauges_alt_visible", captureGaugesAltVisible())
+	})
+
 	t.Run("headline_rails_idle", func(t *testing.T) {
 		writeGolden(t, "headline_rails_idle", captureHeadlineRails(0, 0, 0))
 	})
@@ -159,6 +164,7 @@ func TestClassicMatchesGolden(t *testing.T) {
 		{"alerts_line", captureAlertsLine},
 		{"breathedots", captureBreatheDots},
 		{"gauges", captureGauges},
+		{"gauges_alt_visible", captureGaugesAltVisible},
 		{"headline_rails_idle", func() string { return captureHeadlineRails(0, 0, 0) }},
 		{"headline_rails_warm", func() string { return captureHeadlineRails(2, 0, 0) }},
 		{"headline_rails_critical", func() string { return captureHeadlineRails(9, 4, 0) }},
@@ -212,7 +218,8 @@ func captureBreatheDots() string {
 	return sb.String()
 }
 
-// captureGauges renders Gauges.View() with the fixture snapshot.
+// captureGauges renders Gauges.View() with the fixture snapshot at the
+// default visible set (CPU + MEM + Token).
 func captureGauges() string {
 	th := testTheme
 	ap := testAnim
@@ -227,6 +234,27 @@ func captureGauges() string {
 		g.AnimTick()
 	}
 
+	return g.View() + "\n"
+}
+
+// captureGaugesAltVisible exercises the visibility-mask path: toggle off
+// Token and toggle on Decomp so the rendered set is {CPU, MEM, Decomp} —
+// the pre-token "classic" three-up arrangement. Catches regressions where
+// toggling drops or duplicates rows.
+func captureGaugesAltVisible() string {
+	th := testTheme
+	ap := testAnim
+	g := NewGauges(th, ap)
+	g.SetSize(60, 6)
+
+	state := fixtureState()
+	g.Update(state)
+	for i := 0; i < 90; i++ {
+		g.AnimTick()
+	}
+
+	g.ToggleVisible(SlotToken)  // 3→2 visible
+	g.ToggleVisible(SlotDecomp) // 2→3 visible (Decomp now in)
 	return g.View() + "\n"
 }
 
@@ -305,6 +333,14 @@ func captureHeadlineRailsEmber() string {
 	return fmt.Sprintf("TOP:%s\nBOT:%s\n", rp.top, rp.bot)
 }
 
+// zoneMarkerRE matches bubblezone's marker escape (ESC [ <n> z). The numeric
+// ID comes from a process-global atomic counter (bubblezone manager.go
+// markerCounter), so its value depends on how many Mark calls ran before this
+// one — which differs between an isolated test run and the full suite. We
+// normalize it to a fixed token so the golden stays stable; the presence of
+// the zone wrapper itself is asserted separately in headline_test.go.
+var zoneMarkerRE = regexp.MustCompile("\x1b\\[\\d+z")
+
 // captureThermalLevels renders renderCatCell for "build" at counts 0, 1, 3, 5, 10.
 func captureThermalLevels() string {
 	th := testTheme
@@ -314,6 +350,7 @@ func captureThermalLevels() string {
 	for _, count := range counts {
 		smoothed := map[string]float64{"build": float64(count)}
 		cell := renderCatCell(cat, smoothed, fixedCellWidth, th, "")
+		cell = zoneMarkerRE.ReplaceAllString(cell, "\x1b[Zz")
 		sb.WriteString(fmt.Sprintf("count=%02d:%s\n", count, cell))
 	}
 	return sb.String()

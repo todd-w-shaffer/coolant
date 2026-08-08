@@ -45,10 +45,15 @@ func (b *Battery) Update(stats collector.SystemStats) {
 
 // AnimTick advances the appropriate phase accumulator for the current
 // battery state: charging breath, discharging meltdown pulse, or neither.
-func (b *Battery) AnimTick() {
+// When calm, the charging breath freezes (decoration) — but the discharging
+// low-battery meltdown/warn pulse is an alert and always advances (calm is
+// already false whenever the battery is alerting, so this is belt-and-braces).
+func (b *Battery) AnimTick(calm bool) {
 	switch b.stats.BatteryState {
 	case collector.BatteryCharging, collector.BatteryFinishing:
-		b.phase += b.anim.BreathePhaseStep * config.BatteryBreathRate
+		if !calm {
+			b.phase += b.anim.BreathePhaseStep * config.BatteryBreathRate
+		}
 		b.meltdownPhase = 0
 	case collector.BatteryDischarging:
 		b.phase = 0

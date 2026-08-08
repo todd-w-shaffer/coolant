@@ -122,9 +122,10 @@ func Frappe() *Theme {
 		IdleColor: frSapphire, // cool accent for idle state
 
 		// Rate display
-		SpawnColor: frPeach,    // warm = spawning
-		DeathColor: frSapphire, // cool = dying
-		NetColor:   frText,     // neutral
+		SpawnColor:  frPeach,    // warm = spawning
+		DeathColor:  frSapphire, // cool = dying
+		NetColor:    frText,     // neutral
+		TokensColor: frMauve,    // token throughput accent
 
 		// Heat bloom ramp — Catppuccin accents, cool→hot across 4 stops.
 		BloomRamp: [4]BloomRampStop{

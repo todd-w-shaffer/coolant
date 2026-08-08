@@ -88,9 +88,10 @@ func Classic() *Theme {
 		IdleColor: lipgloss.Color("6"),   // cyan — cool/idle accent
 
 		// Rate display
-		SpawnColor: lipgloss.Color("208"), // orange
-		DeathColor: lipgloss.Color("6"),   // cyan
-		NetColor:   lipgloss.Color("7"),   // white
+		SpawnColor:  lipgloss.Color("208"), // orange
+		DeathColor:  lipgloss.Color("6"),   // cyan
+		NetColor:    lipgloss.Color("7"),   // white
+		TokensColor: lipgloss.Color("5"),   // magenta — distinct from process-flow rates
 
 		// Heat bloom ramp — traffic-light aesthetic, Classic palette.
 		BloomRamp: [4]BloomRampStop{

@@ -410,3 +410,191 @@ func TestQuitConsumedInIntelMode(t *testing.T) {
 	default:
 	}
 }
+
+// calmActiveSnap is an active-but-quiescent snapshot: one session, no active
+// agents, flat low metrics, a charging battery (so the battery cell renders
+// without alerting). Drives the dashboard into the active calm state.
+func calmActiveSnap() collector.Snapshot {
+	return collector.Snapshot{
+		System: collector.SystemStats{
+			CPUPercent:     5,
+			MemUsedBytes:   8 << 30,
+			MemTotalBytes:  16 << 30,
+			NCPUs:          8,
+			BatteryPresent: true,
+			BatteryState:   collector.BatteryCharging,
+			BatteryPercent: 80,
+		},
+		Sessions:  []collector.SessionTree{{RootPID: 1, RootComm: "claude"}},
+		Online:    true,
+		Timestamp: time.Now(),
+	}
+}
+
+// TestSettleStopsTickThenWakesOnActivity is the Phase 4+5 behavioral contract:
+// once the dashboard is calm AND the composed frame has been byte-stable for
+// SettleStableFrames frames, an animTick stops re-arming (nil cmd, animating
+// false); then an activity snapshot that breaks calm re-arms the tick via
+// wakeCmd (animating true again).
+func TestSettleStopsTickThenWakesOnActivity(t *testing.T) {
+	m := newTestModel(t)
+	// WindowSizeMsg sets the model's width/height (View short-circuits to empty
+	// content without them) and propagates to the layout.
+	out0, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	m = out0.(model)
+
+	// Fill render history, settle springs, latch calm, and let the frame go
+	// byte-stable for well over SettleStableFrames. View() drives RenderContent
+	// (the frame-stability counter) exactly as the bubbletea loop does.
+	warmup := config.MaxRenderHistory + config.CalmStableSnapshots + config.SettleStableFrames + 10
+	for i := 0; i < warmup; i++ {
+		out, _ := m.Update(snapshotMsg(calmActiveSnap()))
+		m = out.(model)
+		out, _ = m.Update(animTickMsg(time.Now()))
+		m = out.(model)
+		_ = m.View()
+	}
+	if !m.layout.State().IsCalm() {
+		t.Fatalf("expected calm after warmup")
+	}
+	if got := m.layout.FrameStableCount(); got < config.SettleStableFrames {
+		t.Fatalf("expected frame byte-stable ≥ %d, got %d", config.SettleStableFrames, got)
+	}
+
+	// A tick now must stop the loop.
+	out, cmd := m.Update(animTickMsg(time.Now()))
+	m = out.(model)
+	if cmd != nil {
+		t.Errorf("settled: animTick should stop re-arming (nil cmd), got non-nil")
+	}
+	if m.animating {
+		t.Errorf("settled: animating should be false")
+	}
+
+	// Activity breaks calm and must wake the loop (IOTokensPerSec is a calm
+	// signal, so the burst resets metric stability → IsCalm false → wakeCmd).
+	burst := calmActiveSnap()
+	burst.Tokens.IOTokensPerSec = 1500
+	out, _ = m.Update(snapshotMsg(burst))
+	m = out.(model)
+	if m.layout.State().IsCalm() {
+		t.Fatalf("expected activity to break calm")
+	}
+	if !m.animating {
+		t.Errorf("after activity: wakeCmd should re-arm the tick (animating true)")
+	}
+}
+
+// settleModel drives a fresh model to the frozen/settled state and returns it.
+func settleModel(t *testing.T) model {
+	t.Helper()
+	m := newTestModel(t)
+	out, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 10})
+	m = out.(model)
+	warmup := config.MaxRenderHistory + config.CalmStableSnapshots + config.SettleStableFrames + 10
+	for i := 0; i < warmup; i++ {
+		out, _ := m.Update(snapshotMsg(calmActiveSnap()))
+		m = out.(model)
+		out, _ = m.Update(animTickMsg(time.Now()))
+		m = out.(model)
+		_ = m.View()
+	}
+	out, cmd := m.Update(animTickMsg(time.Now()))
+	m = out.(model)
+	if cmd != nil || m.animating {
+		t.Fatalf("settleModel: expected the model to freeze (nil cmd, animating false)")
+	}
+	return m
+}
+
+// TestSettleWakesOnHeatTargetMove guards the spring-latch the review found: the
+// heat-bloom and LCD-temperature springs ease toward composite-heat-derived
+// targets (mem/cpu/SWAP/spawn). A swap spike moves those targets WITHOUT moving
+// any sparkline calm signal, so IsCalm stays true — yet the frozen tick must
+// wake so the springs can ease, or they latch at a stale heat. The wake is
+// driven by the springs reporting they are no longer at rest, not by enumerating
+// swap/spawn into the calm-signal set.
+func TestSettleWakesOnHeatTargetMove(t *testing.T) {
+	m := settleModel(t)
+	hot := calmActiveSnap()
+	hot.System.SwapUsedBytes = 24 << 30 // meltdown swap → composite heat jumps
+	out, _ := m.Update(snapshotMsg(hot))
+	m = out.(model)
+	if !m.layout.State().IsCalm() {
+		t.Fatalf("swap is not a sparkline calm signal — IsCalm should still read calm (test premise)")
+	}
+	if !m.animating {
+		t.Errorf("a heat-target move while settled must wake the tick so the bloom/LCD springs can ease (animating true)")
+	}
+}
+
+// TestUIToggleWakesWhenSettled guards the second latch class the review found:
+// a keypress that changes what should animate (e.g. revealing a sparkline) does
+// NOT move a calm signal, so IsCalm stays true and wakeCmd would not re-arm.
+// Such UI actions must force a wake directly, or the toggled-on element renders
+// frozen (half-revealed) until unrelated activity breaks calm.
+func TestUIToggleWakesWhenSettled(t *testing.T) {
+	m := settleModel(t)
+	// Toggle a sparkline via its key. Calm is unaffected (no data moved), so the
+	// wake must come from the keypress path itself.
+	m, cmd := pressKey(t, m, "1")
+	if !m.layout.State().IsCalm() {
+		t.Fatalf("toggling a sparkline must not break calm (no data changed) — test premise broken")
+	}
+	if cmd == nil || !m.animating {
+		t.Errorf("a UI keypress while settled must force-wake the tick (animating true, non-nil cmd)")
+	}
+}
+
+// TestResizeWakesWhenSettled: a window resize re-lays-out and re-seats springs
+// without touching a calm signal, so it too must force a wake.
+func TestResizeWakesWhenSettled(t *testing.T) {
+	m := settleModel(t)
+	out, cmd := m.Update(tea.WindowSizeMsg{Width: 160, Height: 12})
+	m = out.(model)
+	if cmd == nil || !m.animating {
+		t.Errorf("a resize while settled must force-wake the tick (animating true, non-nil cmd)")
+	}
+}
+
+// TestWakeIsIdempotentWhileAnimating guards the #436 double-arm bug: while a
+// tick is already armed, neither wake path may arm a second concurrent tick.
+func TestWakeIsIdempotentWhileAnimating(t *testing.T) {
+	m := newTestModel(t) // fresh model starts animating (Init arms the first tick)
+	if !m.animating {
+		t.Fatalf("a fresh model should start animating")
+	}
+	if cmd := m.wakeCmd(); cmd != nil {
+		t.Errorf("wakeCmd while already animating must return nil (no double-arm)")
+	}
+	if cmd := m.forceWake(); cmd != nil {
+		t.Errorf("forceWake while already animating must return nil (no double-arm)")
+	}
+}
+
+// TestReFreezesAfterWake proves the steady-state cycle: after a force-wake on a
+// no-op UI action, the model must settle and freeze AGAIN once the frame
+// re-stabilizes — otherwise a single wake would defeat the power saving.
+func TestReFreezesAfterWake(t *testing.T) {
+	m := settleModel(t)
+	// Force-wake via a no-op keypress (mouse toggle changes nothing animated).
+	m, cmd := pressKey(t, m, "m")
+	if cmd == nil || !m.animating {
+		t.Fatalf("expected the keypress to force-wake")
+	}
+	// Drive ticks with steady calm input; it must re-freeze within a bounded
+	// number of frames (one settle window plus slack).
+	froze := false
+	for i := 0; i < config.SettleStableFrames*3; i++ {
+		out, c := m.Update(animTickMsg(time.Now()))
+		m = out.(model)
+		_ = m.View()
+		if c == nil && !m.animating {
+			froze = true
+			break
+		}
+	}
+	if !froze {
+		t.Errorf("model did not re-freeze after a wake — the freeze→wake→freeze cycle is broken")
+	}
+}
