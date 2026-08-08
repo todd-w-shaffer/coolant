@@ -17,7 +17,7 @@ State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log,
 
 ## Gate system
 
-`gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always throttled with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are blocked when user opts in via `/coolant`. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes). See `docs/gate-system-report.md`.
+`gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always throttled with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are blocked when user opts in via `/coolant`. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes). The cap flag attaches to the **gated invocation**, not the end of the command line — `apply_cap` splits at the first unquoted shell control operator (`first_operator_offset`) so `vitest run | tail -5` caps vitest rather than handing `--maxConcurrency N` to `tail`. Keep that split quote-aware; an operator inside an argument (`-t 'a|b'`) is not a pipeline. See `docs/gate-system-report.md`.
 
 ### Terminology mapping
 
