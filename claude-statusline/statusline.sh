@@ -64,15 +64,20 @@ build_thermo_bar() {
 #
 # Input counts cache reads and cache writes, matching how
 # context_window.total_input_tokens is defined.
+#
+# Streams with `inputs` rather than slurping with -s: a transcript grows
+# without bound, and -s buffers the whole parsed array before summing
+# (~144MB resident on a 28MB transcript, against a flat ~2.5MB here).
 sum_session_tokens() {
   local tp="$1" out
   [ -n "$tp" ] && [ -r "$tp" ] || { printf '0 0'; return; }
-  out=$(jq -s -r '
-    map(select(.message.usage) | .message.usage)
-    | { i: (map((.input_tokens // 0)
-              + (.cache_creation_input_tokens // 0)
-              + (.cache_read_input_tokens // 0)) | add // 0),
-        o: (map(.output_tokens // 0) | add // 0) }
+  out=$(jq -n -r '
+    reduce (inputs | select(.message.usage) | .message.usage) as $u
+      ({i: 0, o: 0};
+        {i: (.i + ($u.input_tokens // 0)
+                + ($u.cache_creation_input_tokens // 0)
+                + ($u.cache_read_input_tokens // 0)),
+         o: (.o + ($u.output_tokens // 0))})
     | "\(.i) \(.o)"' "$tp" 2>/dev/null)
   # A truncated or half-written transcript must not blank the display.
   case "$out" in
@@ -84,32 +89,50 @@ sum_session_tokens() {
 input=$(cat)
 
 # One jq pass for the whole payload — the status line re-renders on
-# every keystroke, so seven interpreter spawns per frame is real cost.
+# every keystroke, so each interpreter spawn per frame is real cost.
 #
 # has_limits: rate_limits is a Claude.ai Pro/Max subscription signal. It
 # never arrives on Bedrock, Vertex, or plain API-key auth, so the two
 # bars and the reset countdown that describe it are dropped wholesale
 # rather than rendered permanently empty.
-read -r ctx_pct five_pct week_pct resets_at has_limits cwd <<<"$(
-  echo "$input" | jq -r '
-    [ (.context_window.used_percentage // 0),
-      (.rate_limits.five_hour.used_percentage // 0),
-      (.rate_limits.seven_day.used_percentage // 0),
-      (.rate_limits.five_hour.resets_at // 0),
-      (if .rate_limits then 1 else 0 end),
-      (.cwd // ".") ] | @tsv' 2>/dev/null)"
-: "${ctx_pct:=0}" "${five_pct:=0}" "${week_pct:=0}" "${resets_at:=0}" "${has_limits:=0}" "${cwd:=.}"
+#
+# One field per line, one `read` each, rather than a single split. A
+# delimited line cannot survive an empty field here: transcript_path is
+# absent off-subscription, and bash collapses runs of any IFS character
+# that is also whitespace — tab included, even when IFS is set to tab
+# alone — which would slide cwd into transcript and leave cwd empty.
+# Line-per-field sidesteps that, and keeps paths containing spaces
+# intact. Line reads are used rather than mapfile for bash 3.2.
+{
+  read -r ctx_pct
+  read -r five_pct
+  read -r week_pct
+  read -r resets_at
+  read -r has_limits
+  read -r transcript
+  read -r cwd
+} <<EOF
+$(echo "$input" | jq -r '
+    (.context_window.used_percentage // 0),
+    (.rate_limits.five_hour.used_percentage // 0),
+    (.rate_limits.seven_day.used_percentage // 0),
+    (.rate_limits.five_hour.resets_at // 0),
+    (if .rate_limits then 1 else 0 end),
+    (.transcript_path // ""),
+    (.cwd // ".")' 2>/dev/null)
+EOF
+: "${cwd:=.}"
 
-transcript=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null)
 read -r in_tok out_tok <<<"$(sum_session_tokens "$transcript")"
 
-# Format tokens as k/m
+# Format tokens as k/m. Integer arithmetic rather than awk: this runs
+# twice per render and a fork costs more than the formatting.
 fmt_tok() {
   local t="$1"
   if (( t >= 1000000 )); then
-    awk "BEGIN { printf \"%.1fm\", $t / 1000000 }"
+    printf '%d.%dm' $(( t / 1000000 )) $(( (t / 100000) % 10 ))
   elif (( t >= 1000 )); then
-    awk "BEGIN { printf \"%.0fk\", $t / 1000 }"
+    printf '%dk' $(( (t + 500) / 1000 ))
   else
     printf '%d' "$t"
   fi
@@ -149,12 +172,13 @@ if [ "$has_limits" = "1" ]; then
   sesh_bar=$(build_thermo_bar "$five_pct" 5)
   week_bar=$(build_thermo_bar "$week_pct" 5)
   countdown=$(fmt_countdown "$resets_at")
-  limits_seg=$(printf 'sesh %s%b  week %s%b  ' "$sesh_bar" "$cap" "$week_bar" "$cap")
-  limits_seg+=$(printf '%b⟳  %s %b│ ' "$dim" "$countdown" "$rst$dim")
+  limits_seg=$(printf 'sesh %s%b  week %s%b  %b⟳  %s %b│ ' \
+    "$sesh_bar" "$cap" "$week_bar" "$cap" "$dim" "$countdown" "$rst$dim")
 fi
 
 cols=$(tput cols 2>/dev/null || echo 80)
-sep=$(printf '─%.0s' $(seq 1 "$cols"))
+printf -v sep '%*s' "$cols" ''
+sep=${sep// /─}
 
 # ↓/↑ are cumulative session totals from the transcript, not the current
 # context window — they only ever climb.

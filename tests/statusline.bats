@@ -23,18 +23,8 @@ teardown() {
 # mid-body is ignored and only the LAST command decides pass/fail. Every
 # assertion therefore has to propagate its own failure with `|| return 1`
 # — a bare `[[ ]]` on any line but the last is inert.
-has() {
-  case "$output" in
-    *"$1"*) return 0 ;;
-    *) echo "expected output to contain: $1" >&2; return 1 ;;
-  esac
-}
-lacks() {
-  case "$output" in
-    *"$1"*) echo "expected output NOT to contain: $1" >&2; return 1 ;;
-    *) return 0 ;;
-  esac
-}
+has()   { [[ "$output" == *"$1"* ]] || { echo "expected output to contain: $1" >&2; return 1; }; }
+lacks() { [[ "$output" != *"$1"* ]] || { echo "expected output NOT to contain: $1" >&2; return 1; }; }
 
 # Render the statusline with $1 as stdin JSON, into $output/$status.
 render() {
@@ -168,11 +158,27 @@ JSONL
 @test "survives a transcript with no usage records at all" {
   # Bedrock may return responses without usage. Totals should read 0,
   # not crash and not print an empty field.
-  tp="$TEST_TMPDIR/t.jsonl"
-  printf '%s\n' '{"type":"user","message":{"content":"hi"}}' > "$tp"
+  tp="$TESTS_DIR/fixtures/agent-transcript-empty.jsonl"
 
   render "$(printf '{"context_window":{"used_percentage":10,"total_input_tokens":0,"total_output_tokens":0},"transcript_path":"%s","cwd":"."}' "$tp")"
 
   [ "$status" -eq 0 ] || return 1
   has "0" || return 1
+}
+
+@test "an absent transcript_path does not shift cwd out of position" {
+  # The payload fields arrive as one @tsv line. An absent
+  # transcript_path yields an empty field, and under default IFS the
+  # adjacent tabs collapse, sliding cwd into transcript and leaving cwd
+  # empty. `git -C ""` quietly falls back to the process working
+  # directory, so the corruption is invisible whenever the test happens
+  # to run inside a repo — hence a non-repo cwd, where the branch must
+  # read as an em dash rather than inheriting this checkout's branch.
+  nonrepo="$TEST_TMPDIR/not-a-repo"
+  mkdir -p "$nonrepo"
+
+  render "$(printf '{"context_window":{"used_percentage":10},"cwd":"%s"}' "$nonrepo")"
+
+  has "—" || return 1
+  lacks "main" || return 1
 }
