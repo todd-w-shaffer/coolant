@@ -1,9 +1,17 @@
 Claude Code Status Line — Braille Progress Bars
 ================================================
 
-Shows context window usage as a braille progress bar with thermometer
-coloring (green → yellow → red), plus cumulative session token counts
-and the git branch.
+Shows the current model, context window usage as a braille progress bar
+with thermometer coloring (green → yellow → red), a session cost
+estimate, cumulative session token counts, and the git branch.
+
+The model leads the line, deliberately far from the cost figure: the
+model is a right-now value while cost and tokens are cumulative across
+the session, and cost is priced per message from each message's own
+model. Placing them adjacent would imply the whole session ran on
+whatever model is current, which is not true of any session that used
+subagents. Effort level is not shown — Claude Code already surfaces it
+in the terminal chrome outside the status line.
 
 On a Claude.ai Pro/Max subscription it additionally shows 5-hour
 ("sesh") and weekly ("week") rate-limit bars and a countdown to the

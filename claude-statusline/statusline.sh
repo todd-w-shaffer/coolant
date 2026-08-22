@@ -152,6 +152,7 @@ input=$(cat)
   read -r has_limits
   read -r transcript
   read -r cwd
+  read -r model
 } <<EOF
 $(echo "$input" | jq -r '
     (.context_window.used_percentage // 0),
@@ -160,7 +161,8 @@ $(echo "$input" | jq -r '
     (.rate_limits.five_hour.resets_at // 0),
     (if .rate_limits then 1 else 0 end),
     (.transcript_path // ""),
-    (.cwd // ".")' 2>/dev/null)
+    (.cwd // "."),
+    (.model.display_name // .model.id // "")' 2>/dev/null)
 EOF
 : "${cwd:=.}"
 
@@ -212,6 +214,22 @@ grn_bold='\033[1;32m'
 red_bold='\033[1;31m'
 rst='\033[0m'
 
+# Model leads the line as its subject. Deliberately placed away from the
+# cost figure: the model is a right-now value while cost and tokens are
+# session-cumulative, and cost is priced per message from each message's
+# own model — a session mixes them, since subagents and auxiliary calls
+# run on cheaper ones. Adjacency would imply the whole session ran on
+# whatever model is current, which is false.
+#
+# Effort is not shown here; Claude Code already surfaces it in the
+# terminal chrome outside the status line.
+model_seg=""
+model_cols=0
+if [ -n "$model" ]; then
+  model_seg=$(printf '%b%s %b│ ' "$dim" "$model" "$rst$dim")
+  model_cols=$(( ${#model} + 3 ))
+fi
+
 # Money is framed by what it actually means on each provider. Off
 # subscription it approximates a real marginal bill at public list rates
 # (an org's negotiated Bedrock rate will differ), so it reads as an
@@ -229,6 +247,9 @@ else
   money_min=58
   money_glyph='≈$'
 fi
+# The model segment eats into the same budget, so the threshold has to
+# move with it rather than being a bare constant.
+money_min=$(( money_min + model_cols ))
 if (( cols >= money_min )); then
   money_seg=$(printf '%b%s%s %b│ ' "$dim" "$money_glyph" "$(fmt_money "$cents")" "$rst$dim")
 fi
@@ -250,6 +271,6 @@ sep=${sep// /─}
 
 # ↓/↑ are cumulative session totals from the transcript, not the current
 # context window — they only ever climb.
-printf 'context %s%b  %s%s%b%b↓%b %s │ %b↑%b %s │  %s%b\n\033[2m%s\033[0m' \
-  "$ctx_bar" "$cap" "$limits_seg" "$money_seg" \
+printf '%scontext %s%b  %s%s%b%b↓%b %s │ %b↑%b %s │  %s%b\n\033[2m%s\033[0m' \
+  "$model_seg" "$ctx_bar" "$cap" "$limits_seg" "$money_seg" \
   "$dim" "$grn_bold" "$rst$dim" "$in_fmt" "$red_bold" "$rst$dim" "$out_fmt" " $branch" "$rst" "$sep"

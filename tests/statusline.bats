@@ -294,3 +294,52 @@ JSONL
   [ "$wide" -gt "$narrow" ] || return 1
   [ $(( wide - narrow )) -eq 140 ] || return 1
 }
+
+# ── model name (leading identity) ───────────────────────────────────
+#
+# Placed at the head of the line, away from the cost figure. The model
+# is a right-now value while cost and tokens are session-cumulative,
+# and cost is priced per message from each message's own model — a
+# session mixes them. Adjacency would imply the whole session ran on
+# whatever model happens to be current, which is false.
+#
+# Effort is deliberately NOT shown: Claude Code already surfaces it in
+# the terminal chrome outside the status line.
+
+@test "model display name leads the line" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_transcript "$tp"
+
+  render_at 200 "$(printf '{"model":{"id":"claude-opus-5","display_name":"Opus 5"},"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has 'Opus 5' || return 1
+  # Leading: the model precedes the context bar.
+  [[ "${lines[0]}" == *"Opus 5"*"context"* ]] || return 1
+}
+
+@test "model falls back to the id when no display name is given" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_transcript "$tp"
+
+  render_at 200 "$(printf '{"model":{"id":"claude-opus-5"},"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has 'claude-opus-5' || return 1
+}
+
+@test "no model segment at all when the payload omits it" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_transcript "$tp"
+
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  # The line must begin with the context bar, not a stray separator.
+  [[ "${lines[0]}" == context* ]] || return 1
+}
+
+@test "the money width gate accounts for the model segment" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  # At 60 columns the estimate fits on its own, but not once the model
+  # has taken its ~9. Model wins: it is the line's subject.
+  render_at 60 "$(printf '{"model":{"display_name":"Opus 5"},"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has 'Opus 5' || return 1
+  lacks '≈$' || return 1
+}
