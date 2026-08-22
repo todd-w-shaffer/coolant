@@ -182,3 +182,115 @@ JSONL
   has "—" || return 1
   lacks "main" || return 1
 }
+
+# ── money (cache-aware, provider-framed, width-gated) ───────────────
+
+# Render with an explicit terminal width in $1, stdin JSON in $2.
+render_at() {
+  run bash -c "COLUMNS=$1 printf '%s' '$2' | COLUMNS=$1 bash '$PROJECT_ROOT/claude-statusline/statusline.sh' 2>&1"
+}
+
+# 1M cache-read tokens on Opus. Naive pricing bills those at the $5/MTok
+# input rate ($5.00); they actually bill at 0.1x ($0.50).
+make_cache_heavy_transcript() {
+  cat > "$1" <<'JSONL'
+{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":0,"cache_read_input_tokens":1000000,"output_tokens":0}}}
+JSONL
+}
+
+@test "cost prices cache reads at the cache rate, not the input rate" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has '0.50' || return 1
+  lacks '5.00' || return 1
+}
+
+@test "cost prices cache writes by TTL" {
+  # 1M 1-hour cache-write tokens bill at 2x input = $10 on Opus, not
+  # the 1.25x 5-minute rate ($6.25). At or above $10 the figure renders
+  # as whole dollars, so the 5-minute rate would still show its cents.
+  tp="$TEST_TMPDIR/t.jsonl"
+  cat > "$tp" <<'JSONL'
+{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":0,"output_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":1000000}}}}
+JSONL
+
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has '$10' || return 1
+  lacks '6.25' || return 1
+}
+
+@test "cost is priced per message model, not one flat rate" {
+  # 1M fresh input on Haiku is $1.00; on Opus it would be $5.00.
+  tp="$TEST_TMPDIR/t.jsonl"
+  cat > "$tp" <<'JSONL'
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","usage":{"input_tokens":1000000,"output_tokens":0}}}
+JSONL
+
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has '1.00' || return 1
+  lacks '5.00' || return 1
+}
+
+@test "off subscription the figure is framed as an estimate" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  # Bedrock/API-key: real marginal spend, at public list rates, so it is
+  # an approximation of a real bill.
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has '≈$' || return 1
+  lacks '+$' || return 1
+}
+
+@test "on subscription the figure is framed as value gained" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  # Pro/Max is flat-rate: the number is what the session was worth
+  # against the fee, not a bill. '+' says gained, not owed.
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":0},"seven_day":{"used_percentage":30}},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has '+$' || return 1
+  lacks '≈$' || return 1
+}
+
+@test "money is dropped rather than wrapped on a narrow terminal" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  # Pro/Max already runs 83 columns before money is added.
+  render_at 80 "$(printf '{"context_window":{"used_percentage":10},"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":0},"seven_day":{"used_percentage":30}},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  lacks '$' || return 1
+  has 'sesh' || return 1
+}
+
+@test "money still shows on a narrow terminal off subscription" {
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  # Without the sesh/week/countdown segment there is ~33 columns spare
+  # at 80, so the estimate fits.
+  render_at 80 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+
+  has '≈$' || return 1
+}
+
+@test "rendered width tracks the declared terminal width" {
+  # Guards the money gate, which keys off the same value. Note this does
+  # not distinguish $COLUMNS from `tput cols` — tput honours $COLUMNS
+  # too — it asserts the width is honoured at all.
+  tp="$TEST_TMPDIR/t.jsonl"; make_cache_heavy_transcript "$tp"
+
+  render_at 200 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+  wide="${#lines[1]}"
+
+  render_at 60 "$(printf '{"context_window":{"used_percentage":10},"transcript_path":"%s","cwd":"."}' "$tp")"
+  narrow="${#lines[1]}"
+
+  # The separator rule tracks the declared width. If the script fell
+  # back to tput both renders would come out the same length.
+  [ "$wide" -gt "$narrow" ] || return 1
+  [ $(( wide - narrow )) -eq 140 ] || return 1
+}

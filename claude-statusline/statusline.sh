@@ -52,7 +52,8 @@ build_thermo_bar() {
 }
 
 # sum_session_tokens <transcript_path>
-# Echoes "<input> <output>": cumulative tokens for the whole session.
+# Echoes "<input> <output> <cents>": cumulative tokens and cost for the
+# whole session.
 #
 # The statusline payload has no session-cumulative token field —
 # context_window.total_* describe the CURRENT context window from the
@@ -68,22 +69,62 @@ build_thermo_bar() {
 # Streams with `inputs` rather than slurping with -s: a transcript grows
 # without bound, and -s buffers the whole parsed array before summing
 # (~144MB resident on a 28MB transcript, against a flat ~2.5MB here).
+#
+# Cost is public list price per MTok, priced per message from that
+# message's own model — a session mixes models, since subagents and
+# auxiliary calls run on cheaper ones. The cache multipliers are the
+# reason this cannot be done from the displayed input total: cache reads
+# bill at 0.1x and dominate a long session, so pricing the combined
+# input figure at the fresh-input rate overstates by ~8x in practice.
+# Cache writes bill 1.25x at 5-minute TTL and 2x at 1-hour.
 sum_session_tokens() {
   local tp="$1" out
-  [ -n "$tp" ] && [ -r "$tp" ] || { printf '0 0'; return; }
+  [ -n "$tp" ] && [ -r "$tp" ] || { printf '0 0 0'; return; }
   out=$(jq -n -r '
-    reduce (inputs | select(.message.usage) | .message.usage) as $u
-      ({i: 0, o: 0};
-        {i: (.i + ($u.input_tokens // 0)
-                + ($u.cache_creation_input_tokens // 0)
-                + ($u.cache_read_input_tokens // 0)),
-         o: (.o + ($u.output_tokens // 0))})
-    | "\(.i) \(.o)"' "$tp" 2>/dev/null)
+    def rate:
+      if test("haiku") then {i: 1, o: 5}
+      elif test("sonnet") then {i: 3, o: 15}
+      elif test("fable") or test("mythos") then {i: 10, o: 50}
+      else {i: 5, o: 25} end;
+    reduce (inputs | select(.message.usage)) as $m
+      ({i: 0, o: 0, c: 0};
+        ($m.message.usage) as $u
+        | (($m.message.model // "opus") | rate) as $r
+        | ($u.input_tokens // 0) as $fresh
+        | ($u.cache_read_input_tokens // 0) as $read
+        | ($u.output_tokens // 0) as $out
+        # Older entries carry a flat cache_creation_input_tokens with no
+        # TTL breakdown; treat those as the 5-minute rate.
+        | ($u.cache_creation.ephemeral_5m_input_tokens
+            // (if $u.cache_creation then 0
+                else ($u.cache_creation_input_tokens // 0) end)) as $w5m
+        | ($u.cache_creation.ephemeral_1h_input_tokens // 0) as $w1h
+        | {i: (.i + $fresh + $w5m + $w1h + $read),
+           o: (.o + $out),
+           c: (.c + $fresh * $r.i
+                  + $w5m * $r.i * 1.25
+                  + $w1h * $r.i * 2
+                  + $read * $r.i * 0.1
+                  + $out * $r.o)})
+    # $/MTok against raw token counts, expressed as whole cents.
+    | "\(.i) \(.o) \((.c / 10000) | round)"' "$tp" 2>/dev/null)
   # A truncated or half-written transcript must not blank the display.
   case "$out" in
-    [0-9]*\ [0-9]*) printf '%s' "$out" ;;
-    *) printf '0 0' ;;
+    [0-9]*\ [0-9]*\ [0-9]*) printf '%s' "$out" ;;
+    *) printf '0 0 0' ;;
   esac
+}
+
+# fmt_money <cents>
+# Cents below $10, whole dollars above — the status line is width-bound
+# and the trailing cents on a three-figure sum are dead digits.
+fmt_money() {
+  local c="$1"
+  if (( c < 1000 )); then
+    printf '%d.%02d' $(( c / 100 )) $(( c % 100 ))
+  else
+    printf '%d' $(( (c + 50) / 100 ))
+  fi
 }
 
 input=$(cat)
@@ -123,7 +164,7 @@ $(echo "$input" | jq -r '
 EOF
 : "${cwd:=.}"
 
-read -r in_tok out_tok <<<"$(sum_session_tokens "$transcript")"
+read -r in_tok out_tok cents <<<"$(sum_session_tokens "$transcript")"
 
 # Format tokens as k/m. Integer arithmetic rather than awk: this runs
 # twice per render and a fork costs more than the formatting.
@@ -151,6 +192,12 @@ fmt_countdown() {
   printf '%d:%02d' "$hrs" "$mins"
 }
 
+# Claude Code captures this script's stdout, so there is no controlling
+# terminal to query; $COLUMNS is the documented source for the width.
+# `tput cols` also honours $COLUMNS, so it is kept only as the fallback
+# for a direct invocation outside Claude Code.
+cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+
 in_fmt=$(fmt_tok "$in_tok")
 out_fmt=$(fmt_tok "$out_tok")
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '—')
@@ -160,9 +207,31 @@ ctx_bar=$(build_thermo_bar "$ctx_pct" 10)
 dim='\033[2m'
 cap="${dim}⡇\033[0m"
 
+
 grn_bold='\033[1;32m'
 red_bold='\033[1;31m'
 rst='\033[0m'
+
+# Money is framed by what it actually means on each provider. Off
+# subscription it approximates a real marginal bill at public list rates
+# (an org's negotiated Bedrock rate will differ), so it reads as an
+# estimate. On Pro/Max nothing is being billed — the fee is flat — so the
+# figure is value drawn against that fee, not a budget to stay under.
+#
+# Width-gated rather than wrapped: the subscription layout already runs
+# ~83 columns before money, so on a narrow terminal the figure is
+# dropped instead of pushing the line onto a second row.
+money_seg=""
+if [ "$has_limits" = "1" ]; then
+  money_min=95
+  money_glyph='+$'
+else
+  money_min=58
+  money_glyph='≈$'
+fi
+if (( cols >= money_min )); then
+  money_seg=$(printf '%b%s%s %b│ ' "$dim" "$money_glyph" "$(fmt_money "$cents")" "$rst$dim")
+fi
 
 # Subscription segment: rendered only when the payload actually carries
 # rate_limits. Both bars and the reset countdown live or die together,
@@ -176,12 +245,11 @@ if [ "$has_limits" = "1" ]; then
     "$sesh_bar" "$cap" "$week_bar" "$cap" "$dim" "$countdown" "$rst$dim")
 fi
 
-cols=$(tput cols 2>/dev/null || echo 80)
 printf -v sep '%*s' "$cols" ''
 sep=${sep// /─}
 
 # ↓/↑ are cumulative session totals from the transcript, not the current
 # context window — they only ever climb.
-printf 'context %s%b  %s%b%b↓%b %s │ %b↑%b %s │  %s%b\n\033[2m%s\033[0m' \
-  "$ctx_bar" "$cap" "$limits_seg" \
+printf 'context %s%b  %s%s%b%b↓%b %s │ %b↑%b %s │  %s%b\n\033[2m%s\033[0m' \
+  "$ctx_bar" "$cap" "$limits_seg" "$money_seg" \
   "$dim" "$grn_bold" "$rst$dim" "$in_fmt" "$red_bold" "$rst$dim" "$out_fmt" " $branch" "$rst" "$sep"

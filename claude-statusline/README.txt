@@ -28,6 +28,34 @@ Note that ↓ counts cache reads and cache writes alongside fresh input,
 matching how Claude Code defines total_input_tokens. On a long session
 cache reads dominate, so ↓ will be far larger than ↑.
 
+MONEY
+-----
+The dollar figure is computed locally from the transcript at public
+list prices, per message, using that message's own model — a session
+mixes models, since subagents and auxiliary calls run on cheaper ones.
+
+It is priced per billing bucket, not from the ↓ figure above. Cache
+reads bill at 0.1x the input rate and cache writes at 1.25x (5-minute
+TTL) or 2x (1-hour). Because cache reads dominate a long session,
+pricing the combined input total at the fresh-input rate overstates
+cost by roughly 8x — on a real 5MB session here, $948 against an
+actual $113.
+
+The framing differs by provider because the number means different
+things:
+
+  ≈$113   off subscription: an estimate of real marginal spend. Public
+          list rates — an organisation's negotiated Bedrock rate will
+          differ, hence the approximation sign.
+
+  +$113   on Pro/Max: value drawn against a flat fee, not a bill. The
+          plan is flat-rate, so this is not a budget and cannot be
+          overrun; the sesh/week bars are the constraint that binds.
+
+Below $10 the figure carries cents; above it, whole dollars. On a
+narrow terminal the money segment is dropped rather than wrapped —
+the subscription layout already runs ~83 columns without it.
+
 INSTALL
 -------
 1. Copy statusline.sh to ~/.claude/statusline.sh
