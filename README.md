@@ -26,6 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/todd-w-shaffer/coolant/main/install
 thermo --demo
 ```
 
+The dashboard installer also offers to set up the status line and patch `~/.claude/settings.json` for you. To update both later, run `install.sh --upgrade`.
+
 ![thermal dashboard — classic theme](assets/thermal-classic.gif)
 
 ![thermal dashboard — iron theme](assets/thermal-iron.gif)
@@ -47,6 +49,23 @@ A single bottom-strip panel designed for a tmux split alongside your Claude Code
 
 Keyboard shortcuts: `h` help overlay, `q` quit.
 
+## The statusline
+
+The installer also offers a status line for Claude Code itself -- a single row under your prompt, rendered in every session.
+
+```
+Opus 5 │ context ⣿⣿⣿⣷⠀⠀⠀⠀⠀⠀⡇  sesh ⣿⣿⣧⠀⠀⡇  week ⣿⣿⣿⣷⠀⡇  ⟳ 2:00 │ +$113 │ ↓ 187.4m │ ↑ 444k │  main
+```
+
+- **What model am I on?** -- leads the line, so a silent switch or a fallback is obvious at a glance.
+- **How full is the context?** -- braille bar with the same thermometer coloring as the dashboard.
+- **What has this session used?** -- cumulative tokens in and out, and a cost figure computed from the transcript.
+- **How much plan headroom is left?** -- 5-hour and weekly bars plus a countdown to the next reset.
+
+That last one -- the `sesh` and `week` bars and the reset countdown -- is a Claude.ai Pro/Max signal, and simply isn't sent on Amazon Bedrock, Vertex AI, or plain API-key auth. Rather than show two bars that can never fill, the status line detects that and drops them, so it stays useful on every provider.
+
+The cost figure is computed locally at public list prices, priced per message from each message's own model and per billing bucket -- cache reads bill at a tenth of the input rate and dominate any long session, so pricing the combined token total instead overstates by roughly 8x. It reads `≈$` off subscription, where it estimates real marginal spend, and `+$` on Pro/Max, where the fee is flat and the number is value drawn against it rather than a bill.
+
 ## Hooks
 
 Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes fighting for the same cores. Coolant's hooks prevent that automatically:
@@ -61,6 +80,7 @@ Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes 
 | PreToolUse | `gate.sh` | Caps test runners by agent count, suppresses build tools in parallel mode |
 | SubagentStart | `agent-start.sh` | Increments agent counter, emits JSONL event |
 | SubagentStop | `agent-stop.sh` | Decrements counter, auto-disengages parallel mode when agents finish |
+| SessionEnd | `session-end.sh` | Emits a session-end event so session duration is measured, not inferred |
 
 <details>
 <summary>How the gate works</summary>
@@ -76,6 +96,7 @@ Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runne
 
 - **macOS** -- the dashboard uses native system APIs (mach kernel, vm_stat, sysctl). Prebuilt binaries for Apple Silicon and Intel.
 - **bash 3.2+** -- hooks only, ships with macOS
+- **jq** -- required by the status line; the hooks and dashboard work without it
 - **tmux** -- optional, for running the dashboard in a bottom split pane. Enable `set -g mouse on` in `~/.tmux.conf` for headline click-to-filter. Use Option-drag (macOS) to copy text while mouse capture is active, or press `m` to toggle mouse mode off.
 
 Hooks work on any platform with bash. The thermal dashboard is macOS-only.
@@ -89,11 +110,14 @@ Hooks work on any platform with bash. The thermal dashboard is macOS-only.
 ## Project structure
 
 ```
-hooks/          # bash hook definitions
-scripts/        # hook implementations + shared config
-thermal/        # Go thermal dashboard (bubbletea)
-skills/         # /coolant skill
-tests/          # bats test suite
+hooks/              # bash hook definitions
+scripts/            # hook implementations + shared config
+thermal/            # Go thermal dashboard (bubbletea)
+claude-statusline/  # braille status line for Claude Code
+skills/             # /coolant skill
+tests/              # bats test suite
+docs/               # design docs and backlog specs
+assets/             # VHS tapes + demo GIFs
 ```
 
 ## License

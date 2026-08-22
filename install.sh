@@ -242,8 +242,9 @@ printf "  ${GREEN}${BAR3}${RESET}\n"
 printf "  ${BOLD}3/3${RESET} ${DIM}statusline${RESET}\n"
 echo ""
 
-echo "  coolant includes a statusline for Claude Code — context usage,"
-echo "  session usage, weekly quota, plan refresh timer, and git branch."
+echo "  coolant includes a statusline for Claude Code — current model,"
+echo "  context usage, session tokens and cost, and git branch. On a"
+echo "  Pro/Max plan it also shows 5-hour and weekly quota bars."
 printf "  install it? [Y/n]: "
 prompt_yn INSTALL_SL
 
