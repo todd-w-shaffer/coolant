@@ -93,9 +93,11 @@ gate that must precede promotion).
 Coolant has two distinct surfaces with non-overlapping scopes:
 
 - **`thermal/` (thermo)** — the **system-wide** knowledge surface. Every machine-level signal (battery, GPU, swap, network, overall thermal, agent activity) lives here. Bottom tmux strip; one instance per machine.
-- **`claude-statusline/`** — the **per-session** surface. Token usage, model name, update glyph. Rendered in every session chrome.
+- **`claude-statusline/`** — the **per-session** surface. Context window, cumulative session token totals, git branch. Rendered in every session chrome.
 
-System-wide signals belong only in thermo — do not propose adding them to statusline even when a cell would technically fit. Statusline crowding duplicates information thermo already shows and makes the per-session surface noisy.
+System-wide signals belong only in thermo — do not propose adding them to statusline even when a cell would technically fit. Statusline crowding duplicates information thermo already shows and makes the per-session surface noisy. A rolling multi-day token total is a system-wide signal by this rule, not a statusline cell.
+
+The statusline payload is provider-dependent, and this shapes what it can show. `rate_limits` (the sesh/week bars) is a Claude.ai Pro/Max subscription signal — absent on Bedrock, Vertex, and API-key auth, where the statusline drops that segment rather than rendering empty bars. `cost.total_cost_usd` is likewise unavailable off the first-party API. The payload has **no** session-cumulative token field at all: `context_window.total_*` describe the current context window from the most recent response, so session totals are summed from the transcript at `.transcript_path`, which is the one provider-agnostic source.
 
 ## Quick reference
 
