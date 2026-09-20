@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"net"
 	"net/http"
@@ -403,5 +405,49 @@ func TestReceiver_NaNInfDropped(t *testing.T) {
 	}
 	if v, _ := lines[0]["value"].(float64); v != 42 {
 		t.Errorf("expected value 42 (the only finite point), got %v", v)
+	}
+}
+
+// The raw sink had no rotation, no cap and no TTL — only the findings writer
+// did. Left running it reached 9.5 GiB, and because the tailer reads from
+// byte 0 on its first poll, that became a 9.5 GiB scan at every thermo start.
+func TestReceiver_RotatesJSONLAtSizeCap(t *testing.T) {
+	r, jsonl := newTestReceiver(t)
+	r.RotationSizeBytes = 4 * 1024
+	if err := r.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	body := sampleRequest()
+	for i := 0; i < 60; i++ {
+		resp, _ := postProto(t, r.Addr(), body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("post %d: status %d", i, resp.StatusCode)
+		}
+	}
+
+	info, err := os.Stat(jsonl)
+	if err != nil {
+		t.Fatalf("primary: %v", err)
+	}
+	if info.Size() > 4*1024+1024 {
+		t.Errorf("primary should be near cap after rotation, got %d bytes", info.Size())
+	}
+	if _, err := os.Stat(jsonl + ".1"); err != nil {
+		t.Errorf("rotated sibling missing: %v", err)
+	}
+}
+
+func TestReceiver_ZeroRotationSizeDisablesRotation(t *testing.T) {
+	r, jsonl := newTestReceiver(t)
+	r.RotationSizeBytes = 0
+	if err := r.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	body := sampleRequest()
+	for i := 0; i < 60; i++ {
+		postProto(t, r.Addr(), body)
+	}
+	if _, err := os.Stat(jsonl + ".1"); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("rotation should be disabled at zero, got err=%v", err)
 	}
 }

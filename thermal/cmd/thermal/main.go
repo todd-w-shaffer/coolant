@@ -422,6 +422,10 @@ func startCcOtel(aggregator cc.AggregatorView, done <-chan struct{}, ccOtelDone 
 		close(ccOtelDone)
 		return
 	}
+	// Rotation must not look like an external recreation to the tailer, or
+	// the day window zeroes mid-window and reconcile files a spurious
+	// value_mismatch every tick until UTC midnight.
+	receiver.OnRotate = tailer.NoteRotation
 
 	reconciler := cc.NewReconciler(cc.ReconcilerConfig{
 		Tailer:             tailer,

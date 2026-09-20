@@ -342,3 +342,58 @@ func TestTailer_LinesWithoutMetricAreSkipped(t *testing.T) {
 		return mt.Count("x", map[string]string{"a": "b"}) == 1
 	})
 }
+
+// Rotation is not an external recreation: the bytes moved to the ".1"
+// sibling were already absorbed, so the day window must carry forward.
+// Resetting here would zero `observed` while coolant's own TokensInTotal
+// keeps climbing, and compareTokens would file a value_mismatch on every
+// reconcile tick for the rest of the UTC day.
+func TestTailer_SelfRotationPreservesAggregate(t *testing.T) {
+	mt, path := newRunningTailer(t)
+	attrs := map[string]string{"query_source": "subagent", "type": "input"}
+
+	writeJSONLLines(t, path, []jsonlLine{makeLine("claude_code.token.usage", 100, attrs)})
+	waitFor(t, time.Second, func() bool {
+		return mt.Sum("claude_code.token.usage", attrs) == 100
+	})
+
+	mt.NoteRotation()
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	writeJSONLLines(t, path, []jsonlLine{makeLine("claude_code.token.usage", 25, attrs)})
+
+	waitFor(t, time.Second, func() bool {
+		return mt.Sum("claude_code.token.usage", attrs) == 125
+	})
+}
+
+// A rotation flag is consumed by the rotation it describes; the next
+// unannounced inode change is still an external recreation and resets.
+func TestTailer_RotationFlagDoesNotLeakToNextRecreation(t *testing.T) {
+	mt, path := newRunningTailer(t)
+	attrs := map[string]string{"query_source": "subagent", "type": "input"}
+
+	writeJSONLLines(t, path, []jsonlLine{makeLine("claude_code.token.usage", 100, attrs)})
+	waitFor(t, time.Second, func() bool {
+		return mt.Sum("claude_code.token.usage", attrs) == 100
+	})
+
+	mt.NoteRotation()
+	if err := os.Rename(path, path+".1"); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	writeJSONLLines(t, path, []jsonlLine{makeLine("claude_code.token.usage", 25, attrs)})
+	waitFor(t, time.Second, func() bool {
+		return mt.Sum("claude_code.token.usage", attrs) == 125
+	})
+
+	// Unannounced recreation — must reset.
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	writeJSONLLines(t, path, []jsonlLine{makeLine("claude_code.token.usage", 7, attrs)})
+	waitFor(t, time.Second, func() bool {
+		return mt.Sum("claude_code.token.usage", attrs) == 7
+	})
+}

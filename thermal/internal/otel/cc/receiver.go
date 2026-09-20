@@ -48,10 +48,13 @@ var dataPointAttrAllowlist = map[string]bool{
 }
 
 const (
-	defaultBodyCapBytes  int64 = 1 * 1024 * 1024
-	defaultJSONLRateCap  int64 = 10 * 1024 * 1024
-	defaultRateWindow          = time.Minute
-	defaultShutdownGrace       = 2 * time.Second
+	defaultBodyCapBytes int64 = 1 * 1024 * 1024
+	defaultJSONLRateCap int64 = 10 * 1024 * 1024
+	// Cap on the raw sink itself, distinct from defaultJSONLRateCap above,
+	// which meters inbound protobuf bytes and bounds nothing on disk.
+	defaultJSONLRotationBytes int64 = 10 * 1024 * 1024
+	defaultRateWindow               = time.Minute
+	defaultShutdownGrace            = 2 * time.Second
 )
 
 // ReceiverConfig configures the embedded OTLP HTTP receiver.
@@ -86,6 +89,15 @@ type Receiver struct {
 	emailFlagMu          sync.RWMutex
 	hasEmailFlag         bool
 	lastSuccessfulPostTS time.Time
+
+	// OnRotate, when set, fires immediately before the sink is renamed so
+	// the tailer can tell our rotation from an external recreation.
+	OnRotate func()
+
+	// RotationSizeBytes caps the raw JSONL sink, rotating to a single
+	// ".1" sibling exactly as the findings Writer does. Zero disables.
+	// Exported so tests can shrink it; nothing else bounds this file.
+	RotationSizeBytes int64
 }
 
 // NewReceiver constructs a Receiver — does not start it. Start binds
@@ -103,7 +115,7 @@ func NewReceiver(cfg ReceiverConfig) (*Receiver, error) {
 	if cfg.Findings == nil {
 		return nil, errors.New("receiver: Findings writer required")
 	}
-	return &Receiver{cfg: cfg}, nil
+	return &Receiver{cfg: cfg, RotationSizeBytes: defaultJSONLRotationBytes}, nil
 }
 
 // Addr returns the bind address (post-Start, includes the actual port
@@ -288,6 +300,22 @@ type jsonlLine struct {
 func (r *Receiver) writeJSONL(data *metricsv1.MetricsData) error {
 	r.jsonlMu.Lock()
 	defer r.jsonlMu.Unlock()
+
+	// One stat per request, not per data point. The single reader already
+	// survives this: MetricsTailer.poll resets offset and aggregate on an
+	// inode change (tailer.go), so the rotated content simply leaves the
+	// sliding window rather than being double-counted.
+	if r.RotationSizeBytes > 0 {
+		if info, err := os.Stat(r.cfg.JSONLPath); err == nil && info.Size() >= r.RotationSizeBytes {
+			// Signal before the rename, never after: the tailer polls on its
+			// own clock and must never observe the new inode without knowing
+			// why it changed.
+			if r.OnRotate != nil {
+				r.OnRotate()
+			}
+			_ = os.Rename(r.cfg.JSONLPath, r.cfg.JSONLPath+".1")
+		}
+	}
 
 	fh, err := os.OpenFile(r.cfg.JSONLPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {

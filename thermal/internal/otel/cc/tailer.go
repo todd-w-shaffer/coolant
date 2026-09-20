@@ -48,6 +48,7 @@ type MetricsTailer struct {
 	aggregate map[AggregateKey]*AggregateValue
 	offset    int64
 	inode     uint64
+	rotated   bool
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -93,6 +94,16 @@ func (mt *MetricsTailer) run() {
 	}
 }
 
+// NoteRotation tells the tailer that the next inode change on this path is
+// a rotation performed by this process, not an external recreation. The
+// receiver calls it immediately before renaming, so the flag is always set
+// before the poll that observes the swap.
+func (mt *MetricsTailer) NoteRotation() {
+	mt.mu.Lock()
+	mt.rotated = true
+	mt.mu.Unlock()
+}
+
 func (mt *MetricsTailer) poll() {
 	fh, err := os.Open(mt.JSONLPath)
 	if err != nil {
@@ -111,10 +122,20 @@ func (mt *MetricsTailer) poll() {
 	curInode := inodeOf(info)
 	mt.mu.Lock()
 	if mt.inode != 0 && curInode != mt.inode {
-		// File was recreated; reset aggregate so we don't double-count
-		// across re-read of surviving lines.
-		mt.aggregate = map[AggregateKey]*AggregateValue{}
-		mt.offset = 0
+		if mt.rotated {
+			// Our own rotation: the bytes now in the ".1" sibling were
+			// already absorbed, so the window carries forward and only
+			// the read position restarts. Resetting here would zero the
+			// day bucket and make compareTokens file a value_mismatch
+			// on every tick for the rest of the UTC day.
+			mt.rotated = false
+			mt.offset = 0
+		} else {
+			// File was recreated; reset aggregate so we don't double-count
+			// across re-read of surviving lines.
+			mt.aggregate = map[AggregateKey]*AggregateValue{}
+			mt.offset = 0
+		}
 	} else if info.Size() < mt.offset {
 		// Truncation.
 		mt.aggregate = map[AggregateKey]*AggregateValue{}
