@@ -85,7 +85,7 @@ Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes 
 <details>
 <summary>How the gate works</summary>
 
-Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runners (vitest, jest, cargo test, go test, pytest) are always capped. Build tools, type checkers, and linters (tsc, eslint, cargo build, go vet, mypy, etc.) are suppressed entirely during parallel mode. Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes. Agent counts are reconciled against the JSONL event log to prevent stale counters from orphaned agents.
+Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runners (vitest, jest, cargo test, go test, pytest) are capped whether or not parallel mode is engaged. Build tools, type checkers, and linters (tsc, eslint, cargo build, go vet, mypy, etc.) are suppressed entirely during parallel mode. Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes, and the wrapper is preserved in the rewritten command. The cap flag is inserted into the runner's own segment rather than the end of the line, so `vitest run 2>&1 | tail -4` caps vitest instead of handing the flag to `tail`. Where the command uses shell the gate won't parse — command substitution, subshells, backslashes — it declines to cap rather than risk corrupting the run. Agent counts are reconciled against the JSONL event log to prevent stale counters from orphaned agents.
 </details>
 
 ## Skills
