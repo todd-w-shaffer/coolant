@@ -31,16 +31,26 @@ binary="${command%% *}"
 binary="${binary##*/}"
 
 # Skip transparent command wrappers (npx, env, command, nice, time, etc.)
-# and re-extract the actual binary
+# and re-extract the actual binary. The wrapper is remembered rather than
+# discarded: it has to go back onto the rewritten command, or updatedInput
+# hands Claude Code a command missing its launcher (npx vitest → vitest).
+original_command="$command"
+wrapper_prefix=""
 case "$binary" in
   npx|env|command|nice|time|sudo)
     rest="${command#* }"
-    # Skip any flags (e.g., env -S, nice -n 5)
+    # Skip any flags (e.g., env -S, nice -n 5). "${rest#* }" is a no-op once
+    # rest holds no space, so a bare-flag wrapper ("sudo -v") would spin here
+    # forever and hang the hook — stop when there is nothing left to strip.
     while [[ "$rest" == -* ]]; do
-      rest="${rest#* }"
+      case "$rest" in
+        *" "*) rest="${rest#* }" ;;
+        *)     break ;;
+      esac
     done
     binary="${rest%% *}"
     binary="${binary##*/}"
+    wrapper_prefix="${command%"$rest"}"
     command="$rest"
     ;;
 esac
@@ -84,13 +94,14 @@ cap_flag() {
   esac
 }
 
-# Byte offset of the first shell control operator sitting outside quotes, or the
+# Offset of the first shell control operator sitting outside quotes, or the
 # string length when there is none. Quote-aware so a pipe inside an argument
-# (vitest -t 'a|b') isn't mistaken for a pipeline. Char loop, but commands are
+# (vitest -t 'a|b') isn't mistaken for a pipeline, and fd-aware so the digits
+# of a redirect (2>&1) stay with the operator. Char loop, but commands are
 # short and this saves a fork on every gated Bash call.
 first_operator_offset() {
   local cmd="$1"
-  local n=${#cmd} i=0 c q=""
+  local n=${#cmd} i=0 j c q=""
   while [ "$i" -lt "$n" ]; do
     c="${cmd:$i:1}"
     if [ -n "$q" ]; then
@@ -100,12 +111,66 @@ first_operator_offset() {
       case "$c" in
         \'|\") q="$c" ;;
         \\)    i=$((i + 1)) ;;
-        '|'|'&'|';'|'<'|'>') printf '%s' "$i"; return ;;
+        '<'|'>')
+          # An fd-prefixed redirect (2>&1) binds its digits to the operator,
+          # not to the preceding word — split before them so the digits stay
+          # with the redirect. Only when the digit run starts a word, since
+          # "f1>out" is the word f1 followed by >out.
+          j=$i
+          while [ "$j" -gt 0 ] && case "${cmd:$((j - 1)):1}" in [0-9]) true ;; *) false ;; esac; do
+            j=$((j - 1))
+          done
+          if [ "$j" -eq 0 ] || [ "${cmd:$((j - 1)):1}" = " " ] || [ "${cmd:$((j - 1)):1}" = "	" ]; then
+            printf '%s' "$j"
+          else
+            printf '%s' "$i"
+          fi
+          return
+          ;;
+        '|'|'&'|';') printf '%s' "$i"; return ;;
       esac
     fi
     i=$((i + 1))
   done
   printf '%s' "$n"
+}
+
+# Whether apply_cap can be trusted with this command. The scanner understands
+# quoting and fd-prefixed redirects; nothing else. Command substitution,
+# subshells and process substitution all hide operators the split would land
+# inside of, and a truncated command (trailing backslash, unbalanced quote —
+# _nested_command stops at the first escaped quote) isn't the real command at
+# all. Capping any of these corrupts the run silently, and a silent corruption
+# costs more than a skipped cap, so decline instead.
+cap_parseable() {
+  local cmd="$1"
+  # shellcheck disable=SC2016  # matching a literal $( , not expanding it
+  case "$cmd" in
+    *'$('*|*'`'*|*'('*) return 1 ;;
+  esac
+  [[ "$cmd" != *$'\n'* ]] || return 1
+  # Any backslash at all: _nested_command hands us the raw JSON string
+  # without unescaping and emit_cap re-escapes it, so "a\.b" would come back
+  # as "a\\.b" with the selector it belonged to silently broken.
+  case "$cmd" in
+    *\\*) return 1 ;;
+  esac
+
+  # Unbalanced quote — the command reached us truncated.
+  local n=${#cmd} i=0 c q=""
+  while [ "$i" -lt "$n" ]; do
+    c="${cmd:$i:1}"
+    if [ -n "$q" ]; then
+      if [ "$c" = "$q" ]; then q=""; fi
+    else
+      case "$c" in
+        \'|\") q="$c" ;;
+        \\)   i=$((i + 1)) ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  [ -z "$q" ]
 }
 
 # Build the rewritten command with cap flag inserted.
@@ -126,6 +191,14 @@ apply_cap() {
     head="${head% }"
     gap=" ${gap}"
   done
+  # The cap value ends in a digit, so a redirect butted straight up against it
+  # would be read as an fd number ("vitest run>out" → "--maxConcurrency 4>out",
+  # redirecting fd 4 and leaving the flag without a value). Separate them.
+  if [ -z "$gap" ]; then
+    case "$tail" in
+      '<'*|'>'*) gap=" " ;;
+    esac
+  fi
 
   # cargo test: insert -j N after "test" and before any "--"
   if [ "$bin" = "cargo" ] && [ "$sub" = "test" ] && [[ "$head" == *" -- "* ]]; then
@@ -165,10 +238,11 @@ emit_cap() {
 # ── Gate entry points ──────────────────────────────────────
 
 # Suppress target: deny during parallel mode, allow otherwise
+# Reports $original_command, not the wrapper-stripped form, so the deny
+# surface names what was actually typed — same fidelity as the cap path.
 gate_suppress() {
-  local cmd="$1"
   if [ -f "$COOLANT_LOCKFILE" ]; then
-    emit_deny "$cmd"
+    emit_deny "$original_command"
     exit 0
   fi
   exit 0
@@ -182,16 +256,24 @@ gate_cap() {
   if [ -z "$flag" ]; then
     exit 0
   fi
+  if ! cap_parseable "$cmd"; then
+    coolant_log "uncapped: $original_command (unparseable shell)"
+    exit 0
+  fi
   # Don't override if flag already present (word-boundary match avoids
-  # false positives on paths like tests/test-n-gram.py matching "-n")
-  case " $cmd " in
+  # false positives on paths like tests/test-n-gram.py matching "-n").
+  # Scoped to the gated invocation: a downstream "grep -n" is not our flag.
+  local off head
+  off=$(first_operator_offset "$cmd")
+  head="${cmd:0:$off}"
+  case " $head " in
     *" $flag "*|*" $flag="*) exit 0 ;;
   esac
   local cap
   cap=$(compute_cap)
   local rewritten
-  rewritten=$(apply_cap "$cmd" "$bin" "$sub" "$flag" "$cap")
-  emit_cap "$cmd" "$rewritten"
+  rewritten="${wrapper_prefix}$(apply_cap "$cmd" "$bin" "$sub" "$flag" "$cap")"
+  emit_cap "$original_command" "$rewritten"
   exit 0
 }
 
@@ -204,44 +286,44 @@ case "$binary" in
     ;;
   # Suppress targets (type checkers, linters, build tools)
   tsc|eslint|prettier|webpack|esbuild)
-    gate_suppress "$command"
+    gate_suppress
     ;;
   # Multi-word: route by subcommand
   cargo)
     case "$subcommand" in
       test)              gate_cap "$command" "$binary" "$subcommand" ;;
-      build|clippy|check) gate_suppress "$command" ;;
+      build|clippy|check) gate_suppress ;;
     esac
     ;;
   go)
     case "$subcommand" in
       test)       gate_cap "$command" "$binary" "$subcommand" ;;
-      build|vet)  gate_suppress "$command" ;;
+      build|vet)  gate_suppress ;;
     esac
     ;;
   # Multi-word: Swift
   swift)
     case "$subcommand" in
       test)       gate_cap "$command" "$binary" "$subcommand" ;;
-      build)      gate_suppress "$command" ;;
+      build)      gate_suppress ;;
     esac
     ;;
   xcodebuild)
     case "$subcommand" in
       test)                   gate_cap "$command" "$binary" "$subcommand" ;;
-      build|archive|analyze)  gate_suppress "$command" ;;
+      build|archive|analyze)  gate_suppress ;;
     esac
     ;;
   # Suppress-only targets
   swiftlint|mypy|pylint|ruff)
-    gate_suppress "$command"
+    gate_suppress
     ;;
   gradle|mvn|javac)
-    gate_suppress "$command"
+    gate_suppress
     ;;
   vite)
     if [ "$subcommand" = "build" ]; then
-      gate_suppress "$command"
+      gate_suppress
     fi
     ;;
 esac

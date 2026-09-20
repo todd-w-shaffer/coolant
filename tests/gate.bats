@@ -379,6 +379,99 @@ run_gate() {
   [[ "$out" == *"vitest run -t 'a|b' --maxConcurrency 4"* ]]
 }
 
+# ── Shell shapes the scanner must get right ────────────────
+
+@test "gate inserts cap flag before an fd-prefixed redirect" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run test/a.test.ts 2>&1 | tail -4")
+  [[ "$out" == *"vitest run test/a.test.ts --maxConcurrency 4 2>&1 | tail -4"* ]]
+}
+
+@test "gate inserts go test -parallel before an fd-prefixed redirect" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "go test ./... 2>&1 | tail -20")
+  [[ "$out" == *"go test ./... -parallel 4 2>&1 | tail -20"* ]]
+}
+
+@test "gate keeps a trailing digit attached to its word before a redirect" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run f1>out.txt")
+  [[ "$out" == *"vitest run f1 --maxConcurrency 4 >out.txt"* ]]
+}
+
+@test "gate separates the cap value from an abutting redirect" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run>out.txt")
+  [[ "$out" == *"vitest run --maxConcurrency 4 >out.txt"* ]]
+}
+
+@test "gate keeps a space-separated digit argument before a redirect" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run 2 > out.txt")
+  [[ "$out" == *"vitest run 2 --maxConcurrency 4 > out.txt"* ]]
+}
+
+@test "gate refuses to cap a command containing command substitution" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "vitest run \$(ls src | head -1)" || true)
+  [ -z "$out" ]
+}
+
+@test "gate caps when the flag appears only on a downstream command" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "pytest tests/ | grep -n foo")
+  [[ "$out" == *"pytest tests/ -n 4 | grep -n foo"* ]]
+}
+
+@test "gate preserves the npx wrapper in the rewritten command" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "npx vitest run f.test.ts | tail -15")
+  [[ "$out" == *"npx vitest run f.test.ts --maxConcurrency 4 | tail -15"* ]]
+}
+
+# ── Wrapper and fidelity guards ────────────────────────────
+
+# "${rest#* }" is a no-op once rest has no space, so the flag-skip loop
+# spun forever and hung the PreToolUse hook on any bare-flag wrapper call.
+@test "gate terminates on a wrapper invoked with only a flag" {
+  local rc=0
+  make_pre_tool_use Bash "sudo -v" \
+    | perl -e 'alarm 5; exec @ARGV' bash "$PROJECT_ROOT/scripts/gate.sh" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 142 ]
+}
+
+@test "gate terminates on npx invoked with only a flag" {
+  local rc=0
+  make_pre_tool_use Bash "npx -y" \
+    | perl -e 'alarm 5; exec @ARGV' bash "$PROJECT_ROOT/scripts/gate.sh" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 142 ]
+}
+
+# _nested_command extracts the raw JSON string without unescaping and
+# emit_cap re-escapes it, so an interior backslash comes back doubled and
+# the selector it belonged to no longer matches anything.
+@test "gate refuses to cap a command containing an interior backslash" {
+  echo "2" > "$COOLANT_COUNTER"
+  local out
+  out=$(run_gate Bash "pytest -k 'a\\.b' tests/" || true)
+  [ -z "$out" ]
+}
+
+@test "gate reports the wrapper-prefixed command when suppressing" {
+  touch "$COOLANT_LOCKFILE"
+  local out
+  out=$(run_gate Bash "npx tsc --noEmit")
+  [[ "$out" == *"blocked: npx tsc --noEmit"* ]]
+}
+
 @test "gate inserts cargo test -j before -- separator" {
   echo "2" > "$COOLANT_COUNTER"
   local out
