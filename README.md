@@ -8,7 +8,7 @@ A resource management layer for Claude Code -- prevents machines from melting wh
 
 Run five Claude Code agents in parallel and your machine will try to compile, test, and lint everything at once. CPU pins, memory fills, the compressor spikes, and your whole system locks up. Coolant stops that.
 
-The **dashboard** gives you a real-time read on system pressure. Each Claude Code session gets its own diamond, color-coded by escalation phase: idle (gray), language runtime spinning up (yellow), build tools running (orange), or full shell explosion (red, 30+ processes). Active subagents show as breathing hexagons on the headline bar. Spawn and death rates scroll through the display so you can see churn, not just snapshots. You see the state of your machine at a glance, not after the freeze. The **hooks** handle the rest: always capping concurrent test runners, and — when you opt in with `/coolant` — suppressing build tools entirely during parallel work. You get the throughput of parallel agents without the meltdown.
+The **dashboard** gives you a real-time read on system pressure. Each Claude Code session gets its own diamond, color-coded by escalation phase: idle (gray), language runtime spinning up (yellow), build tools running (orange), or full shell explosion (red, 30+ processes). Active subagents show as breathing hexagons on the headline bar. Spawn and death rates scroll through the display so you can see churn, not just snapshots. You see the state of your machine at a glance, not after the freeze. The **work queue** handles the rest: every test suite, typecheck, lint and build on the machine goes through one door, so parallel sessions take turns instead of all running at once and each running three times slower. You get the throughput of parallel agents without the meltdown.
 
 ## Quick start
 
@@ -68,29 +68,30 @@ The cost figure is computed locally at public list prices, priced per message fr
 
 ## Hooks
 
-Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes fighting for the same cores. Coolant's hooks prevent that automatically:
+Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes fighting for the same cores. Two whole test suites side by side take longer than the same two run back to back. Coolant prevents that with one machine-wide work queue:
 
-- **Test runners are always capped.** Each agent gets a fair share of your CPU — one agent runs freely, five agents each get throttled proportionally. No configuration needed.
-- **Build tools are suppressed on demand.** Run `/coolant` and type checkers, linters, and compilers are blocked during parallel work, then restored when agents finish.
+- **One door for heavy work.** `coolant run --class <suite|files|typecheck|lint|check|build> -- <command>` runs a job through the queue and answers its exit status. Scripts, git hooks and test configs call it directly; commands typed into Claude Code are routed into it by the gate.
+- **Interactive first, then first come, first served.** Your own session goes to the front of the waiting line; launcher-driven sessions marked with `COOLANT_LANE` wait their turn. A running job is never stopped, and no wait has a timeout — a wait ends when the work ahead ends.
+- **Observe, then enforce.** The queue ships in observe mode: every job is recorded (`~/.coolant/runs.jsonl` — wall time, CPU, peak memory of the whole process tree, load) and nothing waits. Switch `[queue] mode = "enforce"` in `~/.config/coolant/config.toml` once the records show your budget. `coolant queue` shows what is running and waiting, with estimates. Interface: [`docs/work-queue.md`](docs/work-queue.md).
 - **Agent lifecycles are tracked.** Hooks fire on spawn and death, feeding the dashboard and keeping concurrency limits accurate. Stale counters from crashed agents are reconciled automatically.
 
 | Hook | Script | What it does |
 |------|--------|--------------|
 | SessionStart | `preflight.sh` | Warns about missing worktree exclusions |
-| PreToolUse | `gate.sh` | Caps test runners by agent count, suppresses build tools in parallel mode |
+| PreToolUse | `gate.sh` | Routes typed test runners, type checkers, linters and builds into the work queue |
 | SubagentStart | `agent-start.sh` | Increments agent counter, emits JSONL event |
-| SubagentStop | `agent-stop.sh` | Decrements counter, auto-disengages parallel mode when agents finish |
+| SubagentStop | `agent-stop.sh` | Decrements counter, emits per-agent telemetry |
 | SessionEnd | `session-end.sh` | Emits a session-end event so session duration is measured, not inferred |
 
 <details>
 <summary>How the gate works</summary>
 
-Adaptive concurrency: `cap = floor((cores - 2) / agents)`, minimum 1. Test runners (vitest, jest, cargo test, go test, pytest) are capped whether or not parallel mode is engaged. Build tools, type checkers, and linters (tsc, eslint, cargo build, go vet, mypy, etc.) are suppressed entirely during parallel mode. Commands are matched regardless of wrappers (`npx tsc`, `env vitest`) or path prefixes, and the wrapper is preserved in the rewritten command. The cap flag is inserted into the runner's own segment rather than the end of the line, so `vitest run 2>&1 | tail -4` caps vitest instead of handing the flag to `tail`. Where the command uses shell the gate won't parse — command substitution, subshells, backslashes — it declines to cap rather than risk corrupting the run. Agent counts are reconciled against the JSONL event log to prevent stale counters from orphaned agents.
+The gate rewrites a typed heavy command to `coolant run --class <class> -- <command>`. Test runners go to `suite`, or `files` when the command names test files; `tsc`/`mypy` go to `typecheck`; linters to `lint`; bundlers and compilers to `build`. The door is a prefix, so `vitest run 2>&1 | tail -4` queues vitest and leaves the pipe as typed. Wrappers (`npx tsc`, `env vitest`) and path prefixes are recognized and kept. Where the command uses shell the gate won't parse — command substitution, subshells, backslashes — it leaves the command alone rather than risk running something other than what was typed.
 </details>
 
 ## Skills
 
-`/coolant` -- Toggle build suppression for multi-agent work. Commands: `on` (default), `off`, `status`. When enough agents are active to trigger the threshold, you'll get a nudge suggesting you engage `/coolant` to suppress builds — it's opt-in, never automatic.
+`/coolant` -- Show the work queue: what is running, what is waiting and in what order, with estimates from past runs.
 
 ## Requirements
 

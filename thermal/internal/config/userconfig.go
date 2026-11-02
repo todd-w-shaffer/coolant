@@ -57,6 +57,7 @@ type UserConfig struct {
 	Sparklines SparklineConfig
 	Categories CategoryConfig
 	Updates    UpdatesConfig
+	Queue      QueueConfig
 }
 
 // MemoryConfig controls when RAM usage triggers threat escalation.
@@ -212,6 +213,7 @@ func Defaults() *UserConfig {
 			CheckIntervalSec: 86400,
 			Disabled:         false,
 		},
+		Queue: defaultQueue(),
 	}
 }
 
@@ -305,6 +307,9 @@ func merge(dst *UserConfig, raw map[string]any) {
 	if u, ok := section(raw, "updates"); ok {
 		coerceInt(&dst.Updates.CheckIntervalSec, u, "check_interval")
 		coerceBool(&dst.Updates.Disabled, u, "disabled")
+	}
+	if q, ok := section(raw, "queue"); ok {
+		mergeQueue(&dst.Queue, q)
 	}
 	if cat, ok := section(raw, "categories"); ok {
 		for name := range CatThresholds {
@@ -508,6 +513,10 @@ func validate(c *UserConfig) error {
 	}
 	if c.Spawn.RateEscalation < 0 {
 		return fmt.Errorf("spawn: rate_escalation must be non-negative")
+	}
+
+	if err := validateQueue(c.Queue); err != nil {
+		return err
 	}
 
 	return nil

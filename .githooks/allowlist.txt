@@ -34,3 +34,4 @@ docs/event-schema.md
 docs/gate-system-report.md
 docs/go-design.md
 docs/session-agent-icons-and-categories.md
+docs/work-queue.md

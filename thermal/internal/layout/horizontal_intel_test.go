@@ -49,10 +49,10 @@ func intelFixture(t *testing.T) *Horizontal {
 		Event: collector.EventAgentStart, AgentID: "eee555", AgentType: "Plan", Timestamp: t0.Add(6 * time.Minute),
 	})
 
-	// 10 gate caps
+	// 10 gate routes
 	for i := 0; i < 10; i++ {
 		state.HandleEvent(collector.GateEvent{
-			Event: collector.EventGateCap, Command: "vitest", Rewritten: "vitest --maxConcurrency=2",
+			Event: collector.EventGateRoute, Command: "vitest", Class: "suite",
 			Timestamp: t0.Add(time.Duration(i) * time.Second),
 		})
 	}
@@ -79,7 +79,7 @@ func TestIntelViewContentBaseline(t *testing.T) {
 		"2 active", "3 completed", "peak",
 		"general-purpose", "Explore",
 		"avg", "longest",
-		"10 throttled", "0 blocked",
+		"10 routed",
 		"0 orphans",
 	}
 	for _, want := range checks {
@@ -149,8 +149,8 @@ func TestActiveViewRendersIntelOverlay(t *testing.T) {
 	if !strings.Contains(stripped, "completed") {
 		t.Error("intel overlay should contain 'completed' in active view")
 	}
-	if !strings.Contains(stripped, "throttled") {
-		t.Error("intel overlay should contain 'throttled' in active view")
+	if !strings.Contains(stripped, "routed") {
+		t.Error("intel overlay should contain 'routed' in active view")
 	}
 }
 
@@ -685,7 +685,7 @@ func TestIntelViewEmptyState(t *testing.T) {
 	checks := []string{
 		"0 active", "0 completed",
 		"no completions yet",
-		"0 throttled",
+		"0 routed",
 	}
 	for _, want := range checks {
 		if !strings.Contains(combined, want) {

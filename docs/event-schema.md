@@ -22,7 +22,7 @@ specific Claude Code session:
 | Scope | Events | Filter behavior |
 |-------|--------|----------------|
 | Session-scoped | `agent.start`, `agent.stop`, `session.start`, `session.end`, `counter.underflow` | Filtered to the current session's `session_id` by both the bash awk reconciler and the Go tailer (`isSessionScoped` in `internal/collector/events.go`) |
-| Global | `gate.suppress`, `gate.cap`, `parallel.engaged`, `parallel.disengaged`, `counter.reset`, `preflight.warn` | Pass-through; consumed regardless of session |
+| Global | `gate.route`, `gate.suppress`, `gate.cap`, `parallel.engaged`, `parallel.disengaged`, `counter.reset`, `preflight.warn` | Pass-through; consumed regardless of session |
 
 The current session id is written to `$TMPDIR/coolant-$USER.session`
 by `preflight.sh` on `SessionStart` and read by both filters. When
@@ -97,9 +97,20 @@ Emitted by `SubagentStop` hook when a subagent terminates.
 
 The three telemetry fields (`tokens_in` / `tokens_out` / `tool_call_count`) are emitted as a unit — either all three appear (parse succeeded) or none do (parse failed: missing transcript, unreadable, or awk error). Cap on transcript bytes parsed is `5 MiB` to keep the SubagentStop 5s hook budget bounded.
 
+### `gate.route`
+
+Emitted when `gate.sh` rewrites a typed heavy command into the work queue's door (`coolant run --class <class> -- <command>`). See `docs/work-queue.md`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tool` | string | Always `Bash` |
+| `command` | string | The command as typed (leading assignments included) |
+| `class` | string | Work-queue class: `suite`, `files`, `typecheck`, `lint`, `build` |
+| `rewritten` | string | The command handed back to Claude Code |
+
 ### `gate.suppress`
 
-Emitted when a build/lint tool is blocked during parallel mode (`/coolant` engaged).
+**Retired 2026-11-02** (replaced by the work queue; no longer emitted, still parsed). Emitted when a build/lint tool was blocked during parallel mode (`/coolant` engaged).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -109,7 +120,7 @@ Emitted when a build/lint tool is blocked during parallel mode (`/coolant` engag
 
 ### `gate.cap`
 
-Emitted when a test runner's concurrency is capped based on active agent count.
+**Retired 2026-11-02** (replaced by the work queue; no longer emitted, still parsed). Emitted when a test runner's concurrency was capped based on active agent count.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -169,7 +180,7 @@ no-op by the aggregator and consumed only via JSONL inspection.
 
 ### `parallel.disengaged`
 
-Emitted when the last agent stops and the parallel mode lockfile is auto-removed.
+**Retired 2026-11-02** (no longer emitted, still parsed). Emitted when the last agent stopped and the parallel mode lockfile was auto-removed.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -196,8 +207,8 @@ The schema supports these analytical cuts without any code changes:
 | Agents per project | Group `agent.start` by `project` |
 | Agent type distribution | Group `agent.start` by `agent_type` |
 | Peak concurrency | Max `agent_count` across all `agent.start` events |
-| Throttle frequency | Count `gate.cap` events per day |
-| Suppressed builds | Count `gate.suppress` events |
+| Routed commands | Count `gate.route` events per day, by `class` |
+| Job timings, CPU, memory, waits | `~/.coolant/runs.jsonl` (work-queue records, `docs/work-queue.md`) |
 | Permission mode usage | Group by `permission_mode` |
 | Ghost ratio | `agent.stop` count with no matching `agent.start` (orphan stops) |
 | Agent transcript lookup | Use `transcript_path` from `agent.stop` to read the full conversation |

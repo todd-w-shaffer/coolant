@@ -21,14 +21,12 @@ COOLANT_REVIEW_AUDIT="${COOLANT_REVIEW_AUDIT:-${_COOLANT_DIR}coolant-${USER}.rev
 # every SessionStart (startup|resume|clear). Read by _reconcile_counter
 # and the Go tailer to scope per-session counters and event consumption.
 COOLANT_SESSION_FILE="${COOLANT_SESSION_FILE:-${_COOLANT_DIR}coolant-${USER}.session}"
-COOLANT_THRESHOLD="${COOLANT_THRESHOLD:-3}"
 # Maximum bytes of a per-agent transcript that `_parse_agent_telemetry`
 # will read. 5 MiB sits well above any realistic agent run (tens of
 # thousands of messages); the cap exists to keep the SubagentStop 5s
 # hook budget bounded against pathological transcripts. Override for
 # very-high-message-count workloads.
 COOLANT_TRANSCRIPT_CAP_BYTES="${COOLANT_TRANSCRIPT_CAP_BYTES:-5242880}"
-_COOLANT_NCPU="${_COOLANT_NCPU:-$(sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
 
 coolant_log() {
   echo "$(date '+%H:%M:%S')  $1" >> "$COOLANT_LOG"

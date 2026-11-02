@@ -160,7 +160,7 @@ Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visual
 **Repo-level layout:**
 
 - `VERSION` — root-level semver stamp, updated by auto-release workflow.
-- `hooks/`, `scripts/` — bash plumbing (see `scripts/CLAUDE.md`).
+- `hooks/`, `scripts/` — bash plumbing, including the work-queue door `scripts/coolant` (see `scripts/CLAUDE.md`).
 - `thermal/` — Go thermal dashboard (see `thermal/CLAUDE.md`).
 - `.claude-plugin/`, `install.sh`, `claude-statusline/` — plugin manifest, installer, and the braille statusline.
 - `docs/` — design docs, theming plans, backlog specs.
@@ -189,6 +189,10 @@ Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`co
 Every line carries `"schema":1` (envelope shape contract — bumps on rename or removal, additive optional fields stay at 1). Writes are serialized via the non-reentrant `coolant_lock` mkdir-mutex so parallel hooks emitting >PIPE_BUF payloads can't splice. Lock-acquisition timeout falls through to an unsynchronized write and bumps `$COOLANT_DEGRADED_COUNT` (out-of-band counter, truncated on cold-start SessionStart — resume/clear skip it so a continued session's bus isn't reset). The Go schema gate at `internal/stats` filters pre-versioning events at parse time — old and new envelopes coexist in the same JSONL ("virtual chop").
 
 A second JSONL bus carries Claude Code's beta OTEL emissions: thermo embeds an OTLP/HTTP receiver on `127.0.0.1:4318`, writes parsed metric data points to `$TMPDIR/coolant-$USER.cc-otel.jsonl`, and an in-process tailer feeds the cc-otel reconcile loop in `internal/otel/cc/`. The raw sink rotates to a single `.1` sibling at 10 MB (checked per request inside the write mutex, mirroring the findings writer) — without it the file is unbounded, and `$TMPDIR` is not a safety net: macOS only sweeps entries untouched for ~3 days and this one is written every 10 seconds. Rotation is signalled in-process (`Receiver.OnRotate` → `MetricsTailer.NoteRotation`, wired in `startCcOtel`) and fires **before** the rename, because the tailer polls on its own clock: an inode change it can't attribute is an external recreation and resets the aggregate, whereas a rotation it was told about carries the day window forward and restarts only the read offset. Without that signal the window zeroes mid-day while coolant's own `TokensInTotal` keeps climbing, and `compareTokens` files a `value_mismatch` every reconcile tick until UTC midnight. Note the receiver never reads OTLP `AggregationTemporality`, so a `cumulative` emitter re-sends the whole accumulated metric set every interval and every copy is appended; `delta` reduces the volume but bounds nothing. The reconciliation surface is read-only against CC OTEL — drift surfaces as filing-grade findings written to the durable `~/.coolant/cc-otel-findings.jsonl`. Review via `thermo cc-findings`; enable via `scripts/enable-cc-otel.sh`. The findings file persists `session.id`, `user.account_uuid`, and `organization.id` for triage; `user.email` is stripped at the receiver before reaching disk.
+
+## Work queue
+
+One machine-wide queue for CPU- and memory-heavy jobs, every repo and session. The door is `scripts/coolant` (`coolant run --class <c> -- <cmd>`, `coolant queue [--json]`), a bash shim over `thermo run|queue` (Go, `thermal/internal/workq`). It replaced the per-subagent cap and `/coolant` suppression outright (2026-11-02). Ships in **observe** mode (record every job to `~/.coolant/runs.jsonl`, hold none); **enforce** admits against a core budget and memory ceiling in `[queue]` of `~/.config/coolant/config.toml`. Interactive callers jump the waiting line, lanes (`COOLANT_LANE`) wait FIFO, nothing has a clock, nested runs pass through on a live ancestor's `COOLANT_TICKET`, and every failure to use the queue degrades to running the command with one warning. Caller contract (flags, env, exit codes, records): `docs/work-queue.md`.
 
 ## Distribution
 

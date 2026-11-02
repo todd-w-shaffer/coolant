@@ -1,4 +1,7 @@
 #!/usr/bin/env bats
+# gate.sh routes typed heavy commands into the work queue's door
+# (`coolant run --class <c> -- <command>`). It never caps and never
+# denies; a command it cannot parse safely is left alone.
 
 load test_helper
 
@@ -7,437 +10,221 @@ run_gate() {
   make_pre_tool_use "$1" "$2" | bash "$PROJECT_ROOT/scripts/gate.sh" 2>/dev/null
 }
 
+# The rewritten command as Claude Code will run it (JSON-unescaped).
+routed() {
+  run_gate Bash "$1" | sed -n 's/.*"updatedInput":{"command":"\(.*\)"}}}$/\1/p' | sed 's/\\"/"/g'
+}
+
+DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "$1"; }
+
 # ── Command extraction ──────────────────────────────────────
 
 @test "gate ignores non-Bash tool_name" {
   local out
-  out=$(run_gate Edit "something") || true
+  out=$(run_gate Edit "vitest run") || true
   [ -z "$out" ]
 }
 
-@test "gate extracts command from PreToolUse stdin" {
+@test "gate allows unrecognized command silently" {
+  local out
+  out=$(run_gate Bash "ls -la")
+  [ -z "$out" ]
+}
+
+@test "gate allows a rewritten command through" {
+  local out
+  out=$(run_gate Bash "tsc --noEmit")
+  [[ "$out" == *'"permissionDecision":"allow"'* ]]
+}
+
+@test "gate never denies" {
   touch "$COOLANT_LOCKFILE"
   local out
   out=$(run_gate Bash "tsc --noEmit")
-  echo "$out" | grep -q "tsc"
-}
-
-# ── Pattern matching: TypeScript/Node ───────────────────────
-
-@test "gate recognizes tsc" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "tsc")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate caps vitest (not deny)" {
-  touch "$COOLANT_LOCKFILE"
-  echo "3" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
-}
-
-@test "gate caps jest (not deny)" {
-  touch "$COOLANT_LOCKFILE"
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "jest")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
-}
-
-@test "gate recognizes eslint" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "eslint src/")
-  [[ "$out" == *"deny"* ]]
-}
-
-# ── Pattern matching: Rust ──────────────────────────────────
-
-@test "gate recognizes cargo build" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "cargo build")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate caps cargo test (not deny)" {
-  touch "$COOLANT_LOCKFILE"
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "cargo test")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
-}
-
-@test "gate recognizes cargo clippy" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "cargo clippy")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate allows cargo without gated subcommand" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "cargo fmt") || true
   [[ "$out" != *"deny"* ]]
 }
 
-# ── Pattern matching: Go ────────────────────────────────────
+# ── Classes ─────────────────────────────────────────────────
 
-@test "gate caps go test (not deny)" {
-  touch "$COOLANT_LOCKFILE"
-  echo "2" > "$COOLANT_COUNTER"
+@test "gate routes bare vitest run as a whole suite" {
+  [ "$(routed "vitest run")" = "$(DOOR_PREFIX suite)vitest run" ]
+}
+
+@test "gate routes vitest over a directory as a whole suite" {
+  [ "$(routed "vitest run test/")" = "$(DOOR_PREFIX suite)vitest run test/" ]
+}
+
+@test "gate routes vitest naming test files as files" {
+  [ "$(routed "vitest run test/a.test.ts test/b.test.ts")" = "$(DOOR_PREFIX files)vitest run test/a.test.ts test/b.test.ts" ]
+}
+
+@test "gate routes jest naming a spec file as files" {
+  [ "$(routed "jest src/x.spec.js")" = "$(DOOR_PREFIX files)jest src/x.spec.js" ]
+}
+
+@test "gate does not read a -t name as a file" {
+  [ "$(routed "vitest run -t parses")" = "$(DOOR_PREFIX suite)vitest run -t parses" ]
+}
+
+@test "gate routes pytest naming a .py file as files" {
+  [ "$(routed "pytest tests/test_a.py")" = "$(DOOR_PREFIX files)pytest tests/test_a.py" ]
+}
+
+@test "gate routes go test as a suite" {
+  [ "$(routed "go test ./...")" = "$(DOOR_PREFIX suite)go test ./..." ]
+}
+
+@test "gate routes cargo test as a suite" {
+  [ "$(routed "cargo test")" = "$(DOOR_PREFIX suite)cargo test" ]
+}
+
+@test "gate routes swift test as a suite" {
+  [ "$(routed "swift test")" = "$(DOOR_PREFIX suite)swift test" ]
+}
+
+@test "gate routes xcodebuild test as a suite" {
+  [ "$(routed "xcodebuild test")" = "$(DOOR_PREFIX suite)xcodebuild test" ]
+}
+
+@test "gate routes tsc as typecheck" {
+  [ "$(routed "tsc --noEmit")" = "$(DOOR_PREFIX typecheck)tsc --noEmit" ]
+}
+
+@test "gate routes mypy as typecheck" {
+  [ "$(routed "mypy src")" = "$(DOOR_PREFIX typecheck)mypy src" ]
+}
+
+@test "gate routes eslint as lint" {
+  [ "$(routed "eslint src/")" = "$(DOOR_PREFIX lint)eslint src/" ]
+}
+
+@test "gate routes cargo clippy as lint" {
+  [ "$(routed "cargo clippy")" = "$(DOOR_PREFIX lint)cargo clippy" ]
+}
+
+@test "gate routes go vet as lint" {
+  [ "$(routed "go vet ./...")" = "$(DOOR_PREFIX lint)go vet ./..." ]
+}
+
+@test "gate routes esbuild as build" {
+  [ "$(routed "esbuild src/app.ts --bundle")" = "$(DOOR_PREFIX build)esbuild src/app.ts --bundle" ]
+}
+
+@test "gate routes tailwindcss as build" {
+  [ "$(routed "tailwindcss -i in.css -o out.css")" = "$(DOOR_PREFIX build)tailwindcss -i in.css -o out.css" ]
+}
+
+@test "gate routes vite build as build" {
+  [ "$(routed "vite build")" = "$(DOOR_PREFIX build)vite build" ]
+}
+
+@test "gate routes go build as build" {
+  [ "$(routed "go build ./cmd/x")" = "$(DOOR_PREFIX build)go build ./cmd/x" ]
+}
+
+@test "gate routes cargo build as build" {
+  [ "$(routed "cargo build")" = "$(DOOR_PREFIX build)cargo build" ]
+}
+
+@test "gate routes gradle as build" {
+  [ "$(routed "gradle assemble")" = "$(DOOR_PREFIX build)gradle assemble" ]
+}
+
+@test "gate leaves vite dev alone" {
+  [ -z "$(run_gate Bash "vite dev")" ]
+}
+
+@test "gate leaves bare vite alone" {
+  [ -z "$(run_gate Bash "vite")" ]
+}
+
+@test "gate leaves cargo without a heavy subcommand alone" {
+  [ -z "$(run_gate Bash "cargo fmt")" ]
+}
+
+@test "gate leaves swift without a heavy subcommand alone" {
+  [ -z "$(run_gate Bash "swift --version")" ]
+}
+
+@test "gate no longer gates prettier" {
+  [ -z "$(run_gate Bash "prettier --write .")" ]
+}
+
+# ── Wrappers and shell shape stay outside the door ─────────
+
+@test "gate keeps the npx wrapper inside the door" {
+  [ "$(routed "npx vitest run")" = "$(DOOR_PREFIX suite)npx vitest run" ]
+}
+
+@test "gate keeps an env wrapper inside the door" {
+  [ "$(routed "env CI=1 vitest run")" = "$(DOOR_PREFIX suite)env CI=1 vitest run" ]
+}
+
+# The door applies leading NAME=value words the way env(1) does, so the
+# gate hands the typed command over whole.
+@test "gate hands leading assignments to the door" {
+  [ "$(routed "CI=1 NODE_ENV=test vitest run")" = "$(DOOR_PREFIX suite)CI=1 NODE_ENV=test vitest run" ]
+}
+
+@test "gate leaves a quoted leading assignment alone" {
+  [ -z "$(run_gate Bash "FOO='a b' vitest run" || true)" ]
+}
+
+@test "gate classifies through a path prefix" {
+  [ "$(routed "./node_modules/.bin/tsc -p .")" = "$(DOOR_PREFIX typecheck)./node_modules/.bin/tsc -p ." ]
+}
+
+@test "gate leaves a pipeline outside the door" {
+  [ "$(routed "vitest run | tail -5")" = "$(DOOR_PREFIX suite)vitest run | tail -5" ]
+}
+
+@test "gate leaves a redirect and chain outside the door" {
+  [ "$(routed "tsc --noEmit 2>&1 && echo ok")" = "$(DOOR_PREFIX typecheck)tsc --noEmit 2>&1 && echo ok" ]
+}
+
+@test "gate scopes the files check to the gated segment" {
+  [ "$(routed "vitest run | grep a.test.ts")" = "$(DOOR_PREFIX suite)vitest run | grep a.test.ts" ]
+}
+
+@test "gate keeps a quoted argument intact" {
+  [ "$(routed "vitest run -t 'a|b'")" = "$(DOOR_PREFIX suite)vitest run -t 'a|b'" ]
+}
+
+# _nested_command stops at the first escaped quote, so a double-quoted
+# argument arrives truncated (ending in a backslash) and is declined.
+@test "gate declines a double-quoted argument it only sees truncated" {
+  [ -z "$(run_gate Bash 'vitest run -t "parses dates"' || true)" ]
+}
+
+@test "gate quotes a door path holding a space" {
   local out
-  out=$(run_gate Bash "go test ./...")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
+  out=$(make_pre_tool_use Bash "tsc" | COOLANT_DOOR="/a b/coolant" bash "$PROJECT_ROOT/scripts/gate.sh")
+  [[ "$out" == *"\"command\":\"'/a b/coolant' run --class typecheck -- tsc\""* ]]
 }
 
-@test "gate recognizes go build" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "go build ./cmd/thermal/")
-  [[ "$out" == *"deny"* ]]
+# ── Parse refusals: decline rather than guess ──────────────
+
+@test "gate declines command substitution" {
+  [ -z "$(run_gate Bash "vitest run \$(ls src | head -1)" || true)" ]
 }
 
-@test "gate recognizes go vet" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "go vet ./...")
-  [[ "$out" == *"deny"* ]]
+@test "gate declines backticks" {
+  # shellcheck disable=SC2016  # the backticks are the payload
+  [ -z "$(run_gate Bash 'tsc `cat files`' || true)" ]
 }
 
-# ── Pattern matching: Python ────────────────────────────────
-
-@test "gate caps pytest (not deny)" {
-  touch "$COOLANT_LOCKFILE"
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "pytest")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
+@test "gate declines a subshell" {
+  [ -z "$(run_gate Bash "(tsc --noEmit)" || true)" ]
 }
 
-@test "gate recognizes mypy" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "mypy src/")
-  [[ "$out" == *"deny"* ]]
+@test "gate declines an interior backslash" {
+  [ -z "$(run_gate Bash "pytest -k 'a\\.b' tests/" || true)" ]
 }
 
-# ── Pattern matching: Java ──────────────────────────────────
-
-@test "gate recognizes gradle" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "gradle build")
-  [[ "$out" == *"deny"* ]]
+@test "gate logs a declined command" {
+  run_gate Bash "vitest run \$(ls)" || true
+  grep -q "unrouted: vitest run" "$COOLANT_LOG"
 }
-
-@test "gate recognizes mvn" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "mvn compile")
-  [[ "$out" == *"deny"* ]]
-}
-
-# ── Pattern matching: vite edge case ────────────────────────
-
-@test "gate suppresses vite build" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "vite build")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate allows vite dev" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "vite dev") || true
-  [[ "$out" != *"deny"* ]]
-}
-
-@test "gate allows bare vite" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "vite") || true
-  [[ "$out" != *"deny"* ]]
-}
-
-# ── Allow/deny behavior ────────────────────────────────────
-
-@test "gate allows unrecognized command" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "ls -la") || true
-  [ -z "$out" ]
-}
-
-@test "gate allows gated command when no lockfile" {
-  local out
-  out=$(run_gate Bash "tsc") || true
-  [ -z "$out" ]
-}
-
-@test "gate returns deny JSON when suppressing" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "tsc")
-  echo "$out" | grep -q '"permissionDecision":"deny"'
-}
-
-@test "gate emits JSONL gate.suppress event when suppressing" {
-  touch "$COOLANT_LOCKFILE"
-  run_gate Bash "tsc" > /dev/null
-  grep -q '"event":"gate.suppress"' "$COOLANT_EVENTS"
-}
-
-@test "gate handles command with flags" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "tsc --noEmit --strict")
-  [[ "$out" == *"deny"* ]]
-}
-
-# ── Wrapper prefix handling ─────────────────────────────────
-
-@test "gate recognizes npx tsc" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "npx tsc --noEmit")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate caps env vitest (wrapper + cap)" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "env vitest run")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"maxConcurrency"* ]]
-}
-
-@test "gate recognizes command cargo build" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "command cargo build")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate strips path prefix from binary" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "/usr/local/bin/tsc")
-  [[ "$out" == *"deny"* ]]
-}
-
-# ── Concurrency capping: cap value via vitest output ──────
-
-@test "gate computes cap 8 for 1 agent on 10 cores" {
-  echo "1" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"--maxConcurrency 8"* ]]
-}
-
-@test "gate computes cap 2 for 3 agents on 10 cores" {
-  echo "3" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"--maxConcurrency 2"* ]]
-}
-
-@test "gate computes cap 1 minimum for 100 agents" {
-  echo "100" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"--maxConcurrency 1"* ]]
-}
-
-@test "gate defaults to cap 8 when counter missing" {
-  rm -f "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"--maxConcurrency 8"* ]]
-}
-
-@test "gate defaults to cap 8 when counter is 0" {
-  echo "0" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"--maxConcurrency 8"* ]]
-}
-
-# ── Concurrency capping: per-ecosystem flags ──────────────
-
-@test "gate caps vitest even in parallel mode" {
-  touch "$COOLANT_LOCKFILE"
-  echo "3" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"--maxConcurrency 2"* ]]
-}
-
-@test "gate caps jest with --maxWorkers" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "jest --verbose")
-  [[ "$out" == *"--maxWorkers 4"* ]]
-}
-
-@test "gate caps cargo test with -j" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "cargo test")
-  [[ "$out" == *"-j 4"* ]]
-}
-
-@test "gate caps go test with -parallel" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "go test ./...")
-  [[ "$out" == *"-parallel 4"* ]]
-}
-
-@test "gate caps pytest with -n" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "pytest tests/")
-  [[ "$out" == *"-n 4"* ]]
-}
-
-# ── Concurrency capping: output format ────────────────────
-
-@test "gate returns allow with updatedInput JSON when capping" {
-  echo "1" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  echo "$out" | grep -q '"permissionDecision":"allow"'
-  echo "$out" | grep -q '"updatedInput"'
-}
-
-@test "gate emits gate.cap JSONL event when capping" {
-  echo "1" > "$COOLANT_COUNTER"
-  run_gate Bash "vitest run" > /dev/null
-  grep -q '"event":"gate.cap"' "$COOLANT_EVENTS"
-}
-
-# ── Concurrency capping: edge cases ──────────────────────
-
-@test "gate doesn't double-add --maxConcurrency if already present" {
-  echo "3" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run --maxConcurrency 1") || true
-  [[ "$out" != *"--maxConcurrency 2"* ]]
-}
-
-@test "gate caps npx vitest (wrapper + cap)" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "npx vitest run")
-  [[ "$out" == *"--maxConcurrency 4"* ]]
-}
-
-@test "gate inserts cap flag before a pipe, not on the downstream command" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run | tail -5")
-  [[ "$out" == *"vitest run --maxConcurrency 4 | tail -5"* ]]
-}
-
-@test "gate inserts cap flag before an && chain" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run && echo done")
-  [[ "$out" == *"vitest run --maxConcurrency 4 && echo done"* ]]
-}
-
-@test "gate inserts cap flag before an output redirect" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run > out.txt")
-  [[ "$out" == *"vitest run --maxConcurrency 4 > out.txt"* ]]
-}
-
-@test "gate inserts cap flag before a semicolon" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run; echo done")
-  [[ "$out" == *"vitest run --maxConcurrency 4; echo done"* ]]
-}
-
-@test "gate ignores a pipe character inside a quoted argument" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run -t 'a|b'")
-  [[ "$out" == *"vitest run -t 'a|b' --maxConcurrency 4"* ]]
-}
-
-# ── Shell shapes the scanner must get right ────────────────
-
-@test "gate inserts cap flag before an fd-prefixed redirect" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run test/a.test.ts 2>&1 | tail -4")
-  [[ "$out" == *"vitest run test/a.test.ts --maxConcurrency 4 2>&1 | tail -4"* ]]
-}
-
-@test "gate inserts go test -parallel before an fd-prefixed redirect" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "go test ./... 2>&1 | tail -20")
-  [[ "$out" == *"go test ./... -parallel 4 2>&1 | tail -20"* ]]
-}
-
-@test "gate keeps a trailing digit attached to its word before a redirect" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run f1>out.txt")
-  [[ "$out" == *"vitest run f1 --maxConcurrency 4 >out.txt"* ]]
-}
-
-@test "gate separates the cap value from an abutting redirect" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run>out.txt")
-  [[ "$out" == *"vitest run --maxConcurrency 4 >out.txt"* ]]
-}
-
-@test "gate keeps a space-separated digit argument before a redirect" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run 2 > out.txt")
-  [[ "$out" == *"vitest run 2 --maxConcurrency 4 > out.txt"* ]]
-}
-
-@test "gate refuses to cap a command containing command substitution" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run \$(ls src | head -1)" || true)
-  [ -z "$out" ]
-}
-
-@test "gate caps when the flag appears only on a downstream command" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "pytest tests/ | grep -n foo")
-  [[ "$out" == *"pytest tests/ -n 4 | grep -n foo"* ]]
-}
-
-@test "gate preserves the npx wrapper in the rewritten command" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "npx vitest run f.test.ts | tail -15")
-  [[ "$out" == *"npx vitest run f.test.ts --maxConcurrency 4 | tail -15"* ]]
-}
-
-# ── Wrapper and fidelity guards ────────────────────────────
 
 # "${rest#* }" is a no-op once rest has no space, so the flag-skip loop
 # spun forever and hung the PreToolUse hook on any bare-flag wrapper call.
@@ -455,119 +242,17 @@ run_gate() {
   [ "$rc" -ne 142 ]
 }
 
-# _nested_command extracts the raw JSON string without unescaping and
-# emit_cap re-escapes it, so an interior backslash comes back doubled and
-# the selector it belonged to no longer matches anything.
-@test "gate refuses to cap a command containing an interior backslash" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "pytest -k 'a\\.b' tests/" || true)
-  [ -z "$out" ]
+# ── Event bus ───────────────────────────────────────────────
+
+@test "gate emits a gate.route event naming the class" {
+  run_gate Bash "npx tsc --noEmit" >/dev/null
+  grep -q '"event":"gate.route","tool":"Bash","command":"npx tsc --noEmit","class":"typecheck"' "$COOLANT_EVENTS"
 }
 
-@test "gate reports the wrapper-prefixed command when suppressing" {
+@test "gate emits no gate.cap or gate.suppress events" {
   touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "npx tsc --noEmit")
-  [[ "$out" == *"blocked: npx tsc --noEmit"* ]]
-}
-
-@test "gate inserts cargo test -j before -- separator" {
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "cargo test -- specific_test")
-  [[ "$out" == *"-j 4"* ]]
-  [[ "$out" == *"-- specific_test"* ]]
-}
-
-# ── Suppress targets unchanged ────────────────────────────
-
-@test "gate handles non-numeric counter gracefully" {
-  echo "abc" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "vitest run")
-  [[ "$out" == *"--maxConcurrency"* ]]
-}
-
-@test "gate still suppresses tsc in parallel mode" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "tsc --noEmit")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate still allows tsc outside parallel mode" {
-  local out
-  out=$(run_gate Bash "tsc --noEmit") || true
-  [ -z "$out" ]
-}
-
-# ── Pattern matching: Swift ────────────────────────────────
-
-@test "gate caps swift test (not deny)" {
-  touch "$COOLANT_LOCKFILE"
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "swift test")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
-}
-
-@test "gate recognizes swift build" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "swift build")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate recognizes xcodebuild build" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "xcodebuild build")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate recognizes xcodebuild test with cap" {
-  touch "$COOLANT_LOCKFILE"
-  echo "2" > "$COOLANT_COUNTER"
-  local out
-  out=$(run_gate Bash "xcodebuild test")
-  [[ "$out" == *"allow"* ]]
-  [[ "$out" == *"updatedInput"* ]]
-}
-
-@test "gate recognizes swiftlint" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "swiftlint")
-  [[ "$out" == *"deny"* ]]
-}
-
-@test "gate allows swift without gated subcommand" {
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "swift package resolve") || true
-  [[ "$out" != *"deny"* ]]
-}
-
-# ── JSONL reconciliation ─────────────────────────────────────
-
-@test "gate reconciles stale counter for cap calculation" {
-  echo "0" > "$COOLANT_COUNTER"
-  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  printf '{"ts":"2025-01-01T00:00:01Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  touch "$COOLANT_LOCKFILE"
-  local out
-  out=$(run_gate Bash "vitest run")
-  # JSONL-derived count is 2: cap = (10-2)/2 = 4
-  [[ "$out" == *"--maxConcurrency 4"* ]]
-}
-
-@test "gate reconciles inflated counter from orphaned agents" {
-  echo "10" > "$COOLANT_COUNTER"
-  printf '{"ts":"2025-01-01T00:00:00Z","event":"agent.start","session_id":"s1"}\n' >> "$COOLANT_EVENTS"
-  local out
-  out=$(run_gate Bash "vitest run")
-  # JSONL-derived count is 1: cap = (10-2)/1 = 8
-  [[ "$out" == *"--maxConcurrency 8"* ]]
+  run_gate Bash "vitest run" >/dev/null
+  run_gate Bash "tsc" >/dev/null
+  run grep -c 'gate.cap\|gate.suppress' "$COOLANT_EVENTS"
+  [ "$output" = "0" ]
 }

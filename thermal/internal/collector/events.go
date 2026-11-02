@@ -13,6 +13,7 @@ import (
 const (
 	EventGateSuppress       = "gate.suppress"
 	EventGateCap            = "gate.cap"
+	EventGateRoute          = "gate.route"
 	EventAgentStart         = "agent.start"
 	EventAgentStop          = "agent.stop"
 	EventParallelEngaged    = "parallel.engaged"
@@ -47,6 +48,8 @@ type GateEvent struct {
 	Threshold      int    `json:"threshold,omitempty"`
 	Original       string `json:"original,omitempty"`
 	Rewritten      string `json:"rewritten,omitempty"`
+	// Class is the work-queue class gate.route sent a command to.
+	Class string `json:"class,omitempty"`
 	// Per-agent telemetry parsed from the subagent transcript on
 	// agent.stop. omitempty because pre-deploy events never carry
 	// these fields; the bash emission discipline guarantees that

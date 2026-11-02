@@ -21,8 +21,6 @@ setup() {
   # will see those events DROPPED by the awk filter; either use s1 or
   # explicitly `unset COOLANT_SESSION_ID` to disable filtering.
   export COOLANT_SESSION_ID="s1"
-  export COOLANT_THRESHOLD=3
-  export _COOLANT_NCPU=10
 }
 
 # Build a PreToolUse stdin JSON payload for testing gate.sh and

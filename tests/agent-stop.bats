@@ -25,25 +25,21 @@ _AS_STDIN='{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}'
   grep -q "agent stopped" "$COOLANT_LOG"
 }
 
-@test "agent-stop auto-disengages when counter reaches zero" {
+# The queue replaced /coolant suppression (2026-11-02): the last agent
+# stopping has nothing to disengage.
+@test "agent-stop prints nothing when the last agent stops" {
   echo "1" > "$COOLANT_COUNTER"
   touch "$COOLANT_LOCKFILE"
   run bash -c 'echo "$1" | bash "$2"' _ "$_AS_STDIN" "$PROJECT_ROOT/scripts/agent-stop.sh"
-  [ ! -f "$COOLANT_LOCKFILE" ]
+  [ -z "$output" ]
 }
 
-@test "agent-stop emits systemMessage on auto-disengage" {
+@test "agent-stop emits no parallel.disengaged event" {
   echo "1" > "$COOLANT_COUNTER"
   touch "$COOLANT_LOCKFILE"
-  run bash -c 'echo "$1" | bash "$2"' _ "$_AS_STDIN" "$PROJECT_ROOT/scripts/agent-stop.sh"
-  [[ "${output}" == *"auto-disengaged"* ]]
-}
-
-@test "agent-stop does not disengage when agents remain" {
-  echo "3" > "$COOLANT_COUNTER"
-  touch "$COOLANT_LOCKFILE"
-  run bash -c 'echo "$1" | bash "$2"' _ "$_AS_STDIN" "$PROJECT_ROOT/scripts/agent-stop.sh"
-  [ -f "$COOLANT_LOCKFILE" ]
+  echo "$_AS_STDIN" | bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
+  run grep -c '"event":"parallel.disengaged"' "$COOLANT_EVENTS"
+  [ "$output" = "0" ]
 }
 
 @test "agent-stop emits JSONL agent.stop event" {
@@ -118,14 +114,6 @@ _AS_STDIN='{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}'
     bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
   ! grep -q "^stale	" "$COOLANT_AGENT_STARTS"
   grep   -q "^fresh	" "$COOLANT_AGENT_STARTS"
-}
-
-@test "agent-stop emits parallel.disengaged JSONL on auto-disengage" {
-  echo "1" > "$COOLANT_COUNTER"
-  touch "$COOLANT_LOCKFILE"
-  echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
-    bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
-  grep -q '"event":"parallel.disengaged"' "$COOLANT_EVENTS"
 }
 
 @test "agent-stop JSONL includes cwd" {

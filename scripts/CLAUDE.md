@@ -1,11 +1,11 @@
 # scripts/ — Bash hooks and plumbing
 
-Bash layer: SessionStart / PreToolUse / Subagent hooks, reconciled counters, JSONL event emission, `upgrade.sh`. The bash↔Go seam is a JSONL event log — see "JSONL event bus" in root `CLAUDE.md`.
+Bash layer: SessionStart / PreToolUse / Subagent hooks, the work-queue door shim (`coolant`), reconciled counters, JSONL event emission, `upgrade.sh`. The bash↔Go seam is a JSONL event log — see "JSONL event bus" in root `CLAUDE.md`.
 
 ## Conventions
 
 - All scripts must be bash 3.2 compatible (macOS system bash). No `mapfile`, no associative arrays, no `|&`.
-- All scripts source `scripts/common.sh` for shared config paths (`COOLANT_LOCKFILE`, `COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_EVENTS`, `COOLANT_AGENT_STARTS`, `COOLANT_DEGRADED_COUNT`, `COOLANT_THRESHOLD`).
+- All scripts source `scripts/common.sh` for shared config paths (`COOLANT_COUNTER`, `COOLANT_LOG`, `COOLANT_EVENTS`, `COOLANT_AGENT_STARTS`, `COOLANT_DEGRADED_COUNT`; `COOLANT_LOCKFILE` survives only for the retired `toggle.sh`).
 - Hook scripts log human-readable events via `coolant_log "message"` and structured JSONL via `coolant_event '"key":"value"'`. `coolant_event` injects `"schema":1` into every envelope and serializes `>>` appends behind `coolant_lock` (mkdir-mutex). The lock is **NOT reentrant** — callers already holding `coolant_lock` MUST release it before invoking `coolant_event`, or they deadlock for ~1s and fall through to an unsynchronized write that bumps `$COOLANT_DEGRADED_COUNT`.
 - JSON field extraction from hook stdin uses `_json_field` (top-level), `_nested_command` (tool_input.command), and `_extract_escaped` (extract + escape for re-emission into JSONL) — no jq dependency.
 - Values interpolated into JSONL must pass through `_json_escape` to handle backslashes and quotes. Agent metadata extraction uses `_extract_agent_fields`, which calls `_extract_escaped` for each field.
@@ -13,26 +13,29 @@ Bash layer: SessionStart / PreToolUse / Subagent hooks, reconciled counters, JSO
 
 ## State files
 
-State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log, agent-starts tsv (agent_id<TAB>epoch_s for duration_s computation on stop; 24h entries self-prune), version cache, `coolant-$USER.session` (the session-id sidecar written by `preflight.sh` on `SessionStart` and read by `_reconcile_counter` + Go's `TailEvents` to scope per-session counters), and `coolant-$USER.cc-otel.jsonl` (raw metric data points from thermo's embedded OTLP receiver — sibling to events.jsonl, consumed by `internal/otel/cc/` reconciliation). No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks. Durable state — cross-session aggregates and CC OTEL drift findings — lives in `~/.coolant/` (`stats.json`, `cc-otel-findings.jsonl`).
+State lives in `$TMPDIR/coolant-$USER.*` files — lockfile, counter, event log, agent-starts tsv (agent_id<TAB>epoch_s for duration_s computation on stop; 24h entries self-prune), version cache, `coolant-$USER.session` (the session-id sidecar written by `preflight.sh` on `SessionStart` and read by `_reconcile_counter` + Go's `TailEvents` to scope per-session counters), and `coolant-$USER.cc-otel.jsonl` (raw metric data points from thermo's embedded OTLP receiver — sibling to events.jsonl, consumed by `internal/otel/cc/` reconciliation). No databases, no config files at runtime. `$TMPDIR` is per-user on macOS (`/var/folders/.../T/`), avoiding `/tmp` symlink attacks. Durable state — cross-session aggregates and CC OTEL drift findings — lives in `~/.coolant/` (`stats.json`, `cc-otel-findings.jsonl`). The work queue lives there too, deliberately not in `$TMPDIR` (a context with `TMPDIR` unset would split it): `~/.coolant/queue/` (tickets) and `~/.coolant/runs.jsonl` (one record per job).
+
+## Work queue door (`scripts/coolant`)
+
+`scripts/coolant` is the machine-wide work queue's door: `coolant run --class <c> -- <cmd>` and `coolant queue [--json]`. The queue itself is Go (`thermo run` / `thermo queue`, package `thermal/internal/workq`); the shim only finds a thermo that answers `--door-version` with `1` (`$COOLANT_THERMO` alone when set, else the checkout's `bin/thermo` resolved through symlinks, else `thermo` on PATH) and execs it. The probe is a flag on purpose — a thermo from before the door fails `flag.Parse` at once, where a bare verb would start its TUI inside a git hook. With no door-capable thermo, `run` warns once and execs the command unqueued; a job never fails because the queue is missing. Interface contract for callers (flags, env, exit codes, record fields): `docs/work-queue.md`.
 
 ## Gate system
 
-`gate.sh` is a PreToolUse hook on Bash with two behaviors. **Test runners** (vitest, jest, cargo test, go test, pytest) are always throttled with agent-count-adaptive concurrency limits: `cap = floor((cores - 2) / agents)`, min 1. **Build tools, linters, and type checkers** (tsc, eslint, cargo build, go vet, etc.) are blocked when user opts in via `/coolant`. Agent count is reconciled against JSONL event log (`_reconcile_counter` in common.sh) to prevent stale counters from orphaned agents. Handles wrappers (`npx`, `env`, `command`, path prefixes) and re-prepends them to the rewritten command — dropping the wrapper hands Claude Code a command missing its launcher. The cap flag attaches to the **gated invocation**, not the end of the command line — `apply_cap` splits at the first unquoted shell control operator (`first_operator_offset`) so `vitest run | tail -5` caps vitest rather than handing `--maxConcurrency N` to `tail`.
+`gate.sh` is a PreToolUse hook on Bash that **routes** typed heavy commands into the work queue: it rewrites `<cmd>` to `<door> run --class <class> -- <cmd>`, where `<door>` is `scripts/coolant` beside the hook (`$COOLANT_DOOR` overrides; quoted when the path needs it). It never caps and never denies — admission is the queue's job (the per-subagent `compute_cap` and the `/coolant` suppression were retired 2026-11-02; each was a partial queue). The door is a **prefix**, so pipes, chains and redirects stay outside it and apply as typed (`vitest run | tail -5` queues only vitest). Wrappers (`npx`, `env`, `command`, `nice`, `time`, `sudo`) and leading assignments (`CI=1 vitest run`) go to the door with the command — the door applies leading `NAME=value` words as env(1) does. The gate skips plain-valued assignments (and `env`'s) only to find the binary; a quoted value (`FOO='a b' vitest`) is not recognized, so that command runs unrouted. Class mapping: vitest/jest/pytest → `files` when the gated segment names a file-shaped word (`*.test.*`, `*.spec.*`, `*.ts`, `*.py`, …; a directory like `test/` is still a whole suite), else `suite`; cargo/go/swift/xcodebuild test → `suite`; tsc/mypy → `typecheck`; eslint/ruff/pylint/swiftlint/cargo clippy|check/go vet → `lint`; esbuild/webpack/tailwindcss/vite build/cargo|go|swift build/xcodebuild build|archive|analyze/gradle/mvn/javac → `build`. prettier is no longer gated.
 
-The gate understands exactly two pieces of shell grammar and no more: **quoting** (an operator inside an argument, `-t 'a|b'`, is not a pipeline) and **fd-prefixed redirects** (`2>&1` splits before the `2`, so the digits stay with the operator — but only when the digit run starts a word, since `f1>out` is the word `f1` followed by `>out`). Because the cap value ends in a digit, `apply_cap` also forces a space when a redirect would otherwise abut it, or `--maxConcurrency 4>out` silently becomes an fd-4 redirect with no flag value.
+The gate understands exactly one piece of shell grammar: **quoting** (an operator inside an argument, `-t 'a|b'`, is not a pipeline). `first_operator_offset` uses it only to scope the files-vs-suite check to the gated segment, so `vitest run | grep a.test.ts` is still a suite. The parse check runs once, after the binary is known to be heavy and before classifying.
 
-Everything past that grammar — command substitution, backticks, subshells, embedded newlines, any backslash (`_nested_command` hands over the raw JSON string and `emit_cap` re-escapes it, so `a\.b` would return as `a\\.b`), and the truncated remnant left by a double-quoted argument — is **refused**, not guessed: `cap_parseable` returns non-zero, `gate_cap` logs `uncapped: <cmd> (unparseable shell)` and exits without rewriting. Capping wrongly corrupts the run silently, which costs more than a skipped cap; keep new grammar rules on that side of the trade. The already-present-flag guard is likewise scoped to the gated segment, so a downstream `grep -n` doesn't look like pytest's `-n`. Both surfaces report `$original_command`, so a `blocked:`/`throttled:` line names what was typed rather than the wrapper-stripped form. The wrapper flag-skip loop must `break` when no space remains — `${rest#* }` is a no-op at that point, and the bare-flag form (`sudo -v`) used to spin there until Claude Code's hook timeout. See `docs/gate-system-report.md`.
+Everything past that grammar — command substitution, backticks, subshells, embedded newlines, any backslash (`_nested_command` hands over the raw JSON string and the rewrite re-escapes it, so `a\.b` would return as `a\\.b`), and the truncated remnant left by a double-quoted argument — is **refused**, not guessed: `route_parseable` returns non-zero, the gate logs `unrouted: <cmd> (unparseable shell)` and exits without rewriting. Rewriting wrongly runs a different command than the one typed, which costs more than an unqueued one; keep new grammar rules on that side of the trade. The wrapper flag-skip loop must `break` when no space remains — `${rest#* }` is a no-op at that point, and the bare-flag form (`sudo -v`) used to spin there until Claude Code's hook timeout. See `docs/gate-system-report.md` (historical).
 
 ### Terminology mapping
 
-User-facing labels were relabeled (commit 9c751e3); JSONL event names and Go constants are unchanged.
-
 | User-facing | JSONL event | Go constant | Trigger |
 |-------------|-------------|-------------|---------|
-| `throttled: <cmd> → <rewritten>` | `gate.cap` | `EventGateCap` | Test runners (automatic) |
-| `blocked: <cmd> (parallel mode — /coolant to release)` | `gate.suppress` | `EventGateSuppress` | Build tools (opt-in via `/coolant`) |
+| `routed: <cmd> → <class>` | `gate.route` | `EventGateRoute` | Typed heavy commands (automatic) |
+| `throttled: <cmd> → <rewritten>` | `gate.cap` | `EventGateCap` | Retired 2026-11-02; still parsed |
+| `blocked: <cmd> (parallel mode — /coolant to release)` | `gate.suppress` | `EventGateSuppress` | Retired 2026-11-02; still parsed |
 
-The intel overlay uses "throttled"/"blocked" in the tools row. `docs/gate-system-report.md` still uses old "capped"/"suppressed" terminology — historical doc, left as-is.
+The intel overlay's tools row counts `routed`. `docs/gate-system-report.md` uses old "capped"/"suppressed" terminology — historical doc, left as-is.
 
 ## Linting
 
@@ -42,10 +45,12 @@ Run `shellcheck <file>` on any bash script you edit or create before reporting t
 
 ```bash
 bats tests/                        # full suite
-bats tests/toggle.bats             # single file
+bats tests/gate.bats               # single file
 bats tests/ -f "reconcile"         # name pattern
 ```
 
+Run bats with `< /dev/null` from an agent harness: several hook tests call `agent-start.sh` with no stdin, and when bats inherits an open pipe the hook's `cat` blocks forever.
+
 `tests/test_helper.bash` provides `setup`/`teardown` that isolates all state to a temp directory — tests never touch real `/tmp/coolant-*` files. Tests set env vars (`COOLANT_LOCKFILE`, etc.) to point at the temp dir; scripts respect these via the defaults in `common.sh`.
 
-One assertion per test, behavior-describing names (`agent-start auto-engages at threshold`). Install via `brew install bats-core`.
+One assertion per test, behavior-describing names (`gate routes tsc as typecheck`). Install via `brew install bats-core`.

@@ -85,7 +85,7 @@ type AppState struct {
 	orphanStops          int                              // monotonic count of stops with no matching start
 	burstCounter         int                              // monotonic within thermo lifetime, not reset on session reset
 	lastStartTime        time.Time                        // timestamp of most recent agent.start (for burst gap detection)
-	gateEvents           *RingBuffer[collector.GateEvent] // capped ring of gate.cap + gate.suppress events
+	gateEvents           *RingBuffer[collector.GateEvent] // capped ring of gate.route (and legacy gate.cap / gate.suppress) events
 	counterDrift         int                              // latest divergence: positive = bash > Go
 	sessionEarliestStart time.Time                        // set on first agent.start, reset on counter.reset
 
@@ -289,6 +289,9 @@ var eventAlerts = map[string]eventAlertSpec{
 		return "blocked: " + ev.Command + " (parallel mode — /coolant to release)"
 	}, ThreatWarm},
 	collector.EventGateCap: {func(ev collector.GateEvent) string { return "throttled: " + ev.Command + " → " + ev.Rewritten }, ThreatWarm},
+	collector.EventGateRoute: {func(ev collector.GateEvent) string {
+		return "routed: " + ev.Command + " → " + ev.Class
+	}, ThreatCool},
 	collector.EventAgentStart: {func(ev collector.GateEvent) string {
 		return "agent " + ev.AgentType + " started (" + shortID(ev.AgentID) + ")"
 	}, ThreatCool},
@@ -379,7 +382,7 @@ func (s *AppState) HandleEvent(ev collector.GateEvent) {
 			}
 		}
 		s.counterDrift = ev.AgentCount - len(s.activeRecords)
-	case collector.EventGateCap, collector.EventGateSuppress:
+	case collector.EventGateCap, collector.EventGateSuppress, collector.EventGateRoute:
 		s.gateEvents.Push(ev)
 	case collector.EventCounterReset:
 		// New session — move all active records to completed as purged.
@@ -472,11 +475,8 @@ func (s *AppState) GateEvents() []collector.GateEvent {
 	return s.gateEvents.Slice()
 }
 
-// GateCapCount returns the number of gate.cap events in the ring buffer.
-func (s *AppState) GateCapCount() int { return s.gateEventCount(collector.EventGateCap) }
-
-// GateSuppressCount returns the number of gate.suppress events in the ring buffer.
-func (s *AppState) GateSuppressCount() int { return s.gateEventCount(collector.EventGateSuppress) }
+// GateRouteCount returns the number of gate.route events in the ring buffer.
+func (s *AppState) GateRouteCount() int { return s.gateEventCount(collector.EventGateRoute) }
 
 func (s *AppState) gateEventCount(kind string) int {
 	count := 0

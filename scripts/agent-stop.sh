@@ -1,6 +1,6 @@
 #!/bin/bash
 set -euo pipefail
-# SubagentStop hook: decrement agent counter, auto-disengage when all agents done
+# SubagentStop hook: decrement agent counter, emit per-agent telemetry
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
@@ -59,9 +59,3 @@ _stop_tail=""
 [ -n "${_agent_duration_s}" ] && _stop_tail=',"duration_s":'"$_agent_duration_s"
 coolant_event '"event":"agent.stop","session_id":"'"$_agent_session_id"'","agent_id":"'"$_agent_id"'","agent_type":"'"$_agent_type"'","cwd":"'"$_agent_cwd"'","project":"'"$_agent_project"'","permission_mode":"'"$_agent_permission_mode"'","transcript_path":"'"$_agent_transcript_path"'","agent_count":'"$next""$_telemetry_tail""$_stop_tail"
 
-if [ "$next" -eq 0 ] && [ -f "$COOLANT_LOCKFILE" ]; then
-  rm -f "$COOLANT_LOCKFILE"
-  coolant_log "parallel mode auto-disengaged (all agents done)"
-  coolant_event '"event":"parallel.disengaged","agent_count":0'
-  echo "{\"systemMessage\":\"[coolant] all agents finished — parallel mode auto-disengaged. Per-edit typecheck re-enabled. Run your build gate now.\"}"
-fi

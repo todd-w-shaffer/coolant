@@ -726,11 +726,11 @@ func TestGateEventBuffer(t *testing.T) {
 	if len(events) != 4 {
 		t.Fatalf("GateEvents len = %d, want 4", len(events))
 	}
-	if s.GateCapCount() != 3 {
-		t.Errorf("GateCapCount = %d, want 3", s.GateCapCount())
+	if n := s.gateEventCount(collector.EventGateCap); n != 3 {
+		t.Errorf("gate.cap count = %d, want 3", n)
 	}
-	if s.GateSuppressCount() != 1 {
-		t.Errorf("GateSuppressCount = %d, want 1", s.GateSuppressCount())
+	if n := s.gateEventCount(collector.EventGateSuppress); n != 1 {
+		t.Errorf("gate.suppress count = %d, want 1", n)
 	}
 }
 
@@ -788,8 +788,8 @@ func TestGateEventBufferEviction(t *testing.T) {
 	if events[0].Command != "vitest-1" {
 		t.Errorf("oldest gate event = %q, want %q", events[0].Command, "vitest-1")
 	}
-	if s.GateCapCount() != config.MaxGateEvents {
-		t.Errorf("GateCapCount = %d, want %d", s.GateCapCount(), config.MaxGateEvents)
+	if n := s.gateEventCount(collector.EventGateCap); n != config.MaxGateEvents {
+		t.Errorf("gate.cap count = %d, want %d", n, config.MaxGateEvents)
 	}
 }
 
@@ -1087,6 +1087,26 @@ func TestHandleEventGateCap(t *testing.T) {
 	}
 	if alert.Level != ThreatWarm {
 		t.Errorf("alert level = %v, want ThreatWarm", alert.Level)
+	}
+}
+
+func TestHandleEventGateRoute(t *testing.T) {
+	s := NewAppState()
+	s.HandleEvent(collector.GateEvent{
+		Timestamp: time.Now(),
+		Event:     collector.EventGateRoute,
+		Command:   "npx vitest run",
+		Class:     "suite",
+	})
+	if s.Alerts.Len() != 1 {
+		t.Fatalf("Alerts.Len = %d, want 1", s.Alerts.Len())
+	}
+	msg := s.Alerts.At(0).Message
+	if !strings.Contains(msg, "routed") || !strings.Contains(msg, "npx vitest run") || !strings.Contains(msg, "suite") {
+		t.Errorf("alert message = %q, want routed + command + class", msg)
+	}
+	if s.GateRouteCount() != 1 {
+		t.Errorf("GateRouteCount = %d, want 1", s.GateRouteCount())
 	}
 }
 

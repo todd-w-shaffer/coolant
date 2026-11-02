@@ -516,6 +516,11 @@ func main() {
 			os.Exit(runCcFindings(os.Stdout, os.Stderr, os.Args[2:], productionStatsConfig()))
 		case upgradeVerb, upgradeFlag:
 			os.Exit(runUpgrade(os.Stdout, os.Stderr))
+		case doorRunVerb, doorQueueVerb:
+			os.Exit(runDoor(os.Args[1], os.Args[2:]))
+		case doorVersionFlag:
+			fmt.Println(doorProtocol)
+			os.Exit(0)
 		}
 	}
 
@@ -539,11 +544,7 @@ func main() {
 	}
 
 	// Load user config: COOLANT_CONFIG env > ~/.config/coolant/config.toml > defaults
-	cfgPath := os.Getenv("COOLANT_CONFIG")
-	if cfgPath == "" {
-		home, _ := os.UserHomeDir()
-		cfgPath = filepath.Join(home, ".config", "coolant", "config.toml")
-	}
+	cfgPath := configPath(os.Getenv, homeDir())
 	if err := config.Load(cfgPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

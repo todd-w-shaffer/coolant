@@ -502,17 +502,14 @@ func (h *Horizontal) intelView() []string {
 		row3 = " " + dim("duration") + "  " + avgStr + sep + longestStr + longestID
 	}
 
-	// Row 4: tools — throttled, blocked
-	capCount := s.GateCapCount()
-	suppressCount := s.GateSuppressCount()
-	var throttledStr string
-	if capCount > 0 {
-		throttledStr = ui.ColorText(h.theme.SpawnColor, fmt.Sprintf("%d throttled", capCount))
+	// Row 4: tools — commands the gate routed into the work queue
+	var routedStr string
+	if n := s.GateRouteCount(); n > 0 {
+		routedStr = ui.ColorText(h.theme.SpawnColor, fmt.Sprintf("%d routed", n))
 	} else {
-		throttledStr = dim("0 throttled")
+		routedStr = dim("0 routed")
 	}
-	blockedStr := ct(fmt.Sprintf("%d blocked", suppressCount))
-	row4 := " " + dim("tools") + "     " + throttledStr + sep + blockedStr
+	row4 := " " + dim("tools") + "     " + routedStr
 
 	// Row 5: output — transcript bytes, orphans, drift
 	totalBytes := s.TotalTranscriptBytes()
