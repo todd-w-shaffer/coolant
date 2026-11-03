@@ -19,18 +19,6 @@ load test_helper
   grep -q "agent started" "$COOLANT_LOG"
 }
 
-@test "agent-start does NOT create lockfile at threshold" {
-  echo "2" > "$COOLANT_COUNTER"
-  run bash "$PROJECT_ROOT/scripts/agent-start.sh"
-  [ ! -f "$COOLANT_LOCKFILE" ]
-}
-
-@test "agent-start does not engage below threshold" {
-  echo "0" > "$COOLANT_COUNTER"
-  run bash "$PROJECT_ROOT/scripts/agent-start.sh"
-  [ ! -f "$COOLANT_LOCKFILE" ]
-}
-
 @test "agent-start emits JSONL agent.start event" {
   echo '{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}' | \
     bash "$PROJECT_ROOT/scripts/agent-start.sh" > /dev/null
@@ -51,8 +39,6 @@ load test_helper
   ! grep -q '"event":"parallel.engaged"' "$COOLANT_EVENTS"
 }
 
-# The queue replaced /coolant suppression (2026-11-02): there is nothing
-# to engage, so the threshold no longer nags.
 @test "agent-start prints nothing at or above the old threshold" {
   echo "5" > "$COOLANT_COUNTER"
   run bash "$PROJECT_ROOT/scripts/agent-start.sh"

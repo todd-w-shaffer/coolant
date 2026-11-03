@@ -4,23 +4,20 @@ load test_helper
 
 @test "common.sh sets default config paths under TMPDIR" {
   # Unset overrides so defaults kick in
-  unset COOLANT_LOCKFILE COOLANT_COUNTER COOLANT_LOG COOLANT_EVENTS
+  unset COOLANT_COUNTER COOLANT_LOG COOLANT_EVENTS
   source "$PROJECT_ROOT/scripts/common.sh"
 
   local dir="${TMPDIR:-/tmp/}"
-  [ "$COOLANT_LOCKFILE" = "${dir}coolant-${USER}.lock" ]
   [ "$COOLANT_COUNTER" = "${dir}coolant-agents-${USER}.count" ]
   [ "$COOLANT_LOG" = "${dir}coolant-${USER}.log" ]
   [ "$COOLANT_EVENTS" = "${dir}coolant-${USER}.events.jsonl" ]
 }
 
 @test "common.sh respects environment overrides" {
-  export COOLANT_LOCKFILE="/custom/lock"
   export COOLANT_COUNTER="/custom/count"
   export COOLANT_LOG="/custom/log"
   source "$PROJECT_ROOT/scripts/common.sh"
 
-  [ "$COOLANT_LOCKFILE" = "/custom/lock" ]
   [ "$COOLANT_COUNTER" = "/custom/count" ]
   [ "$COOLANT_LOG" = "/custom/log" ]
 }

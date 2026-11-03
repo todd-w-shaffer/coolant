@@ -25,18 +25,14 @@ _AS_STDIN='{"session_id":"s1","agent_id":"a1","agent_type":"Explore"}'
   grep -q "agent stopped" "$COOLANT_LOG"
 }
 
-# The queue replaced /coolant suppression (2026-11-02): the last agent
-# stopping has nothing to disengage.
 @test "agent-stop prints nothing when the last agent stops" {
   echo "1" > "$COOLANT_COUNTER"
-  touch "$COOLANT_LOCKFILE"
   run bash -c 'echo "$1" | bash "$2"' _ "$_AS_STDIN" "$PROJECT_ROOT/scripts/agent-stop.sh"
   [ -z "$output" ]
 }
 
 @test "agent-stop emits no parallel.disengaged event" {
   echo "1" > "$COOLANT_COUNTER"
-  touch "$COOLANT_LOCKFILE"
   echo "$_AS_STDIN" | bash "$PROJECT_ROOT/scripts/agent-stop.sh" > /dev/null
   run grep -c '"event":"parallel.disengaged"' "$COOLANT_EVENTS"
   [ "$output" = "0" ]
