@@ -82,30 +82,19 @@ whole = false          # before its cores count
 |---|---|---|
 | `COOLANT_LANE=<name>` | a launcher, for its sessions | The caller is a lane, not interactive. An unmarked caller is interactive and goes to the front of the waiting line. Subagents and child processes inherit it. |
 | `COOLANT_TICKET=<seq>:<pid>` | the door, for its child | The held job's ticket. A `coolant run` inside it passes straight through: it runs at once, takes no ticket, and is recorded `nested`. It passes only while that ticket's holder is alive and is an ancestor of the caller. A stale or leaked ticket is refused with a warning, and the caller takes its own turn. Callers never set this. |
-| `COOLANT_GRANTED_CORES=<n>` | the door, in enforce mode only | The cores this job was admitted with. A repo's vitest config reads it for `maxWorkers`, and so on. Unset in observe mode, so observed runs show unthrottled behaviour. |
+| `COOLANT_GRANTED_CORES=<n>` | the door, in enforce mode only | The cores this job was admitted with: an admission budget, not a worker count. A caller may read it or ignore it. Unset in observe mode. |
 | `COOLANT_QUEUE_MODE` | a person, to try enforce in one shell | `observe` or `enforce`. Overrides config. |
 | `COOLANT_THERMO` | tests, unusual installs | The exact thermo binary to use. |
 | `COOLANT_QUEUE_DIR`, `COOLANT_RUNS`, `COOLANT_CONFIG` | tests | Override the paths below. |
 
-**The grant sets the job's worker count.** A repo that honours it, as
-below, runs that many vitest workers. A check weighted 6 cores runs 6
-workers. Unthrottled, and in observe mode, `vitest run` uses its own default
-of `availableParallelism() − 1` workers: 7 on an 8-core machine. A whole
-class is granted the whole core budget, 8 workers there, one more than
-vitest's default. The weight is therefore both an admission cost and a
-width: lowering a class's cores to admit more beside it also narrows every
-run of it, and a suite can lose more than the workers' share. Time one run
-at the grant before switching, with `COOLANT_QUEUE_MODE=enforce` set in that
-shell only, against the same run in observe mode.
-
-A vitest config that honours the grant:
-
-```js
-const granted = Number(process.env.COOLANT_GRANTED_CORES);
-export default defineConfig({
-  test: { maxWorkers: Number.isInteger(granted) && granted > 0 ? granted : undefined },
-});
-```
+**The grant is an admission budget.** It decides when a job starts, not
+how wide it runs. A caller may ignore it and let its tools pick their own
+width; a vitest suite left at its default runs `availableParallelism() − 1`
+workers in either mode. A job that ignores its grant uses what it really
+uses, so its class's weight must cover that, or enforce admits jobs that
+then contend. Narrowing a job to its grant is the caller's choice and can
+cost more than the workers' share: one vitest check ran 32% longer at a
+6-worker grant than at its default 7.
 
 ## Exit status
 
@@ -219,10 +208,17 @@ within 1 and the core budget. memory_mb = the p90 peak memory, rounded up
 to 256 MB. Never whole. A class with fewer than 5 jobs longer than 1 s gets
 no suggestion. Cores used is an average over the whole run, so it
 understates a job whose phases differ in width: a check that typechecks on
-2 cores and then runs a suite on every core averages about 3.5. Such a
-class, when it honours the grant, wants a weight sized for its widest
-phase (see `COOLANT_GRANTED_CORES` above), and its row needs judgment, not
-the rule alone.
+2 cores and then runs a suite on every core averages about 3.5.
+
+**`check` and `suite` are weighted by policy, not by the rule.** Give each
+more than half the core budget, so two cannot run at once. Measured cores
+used is no evidence that they can share: on one 8-core machine a check
+measured about 3.6 cores, yet two checks at once each ran about twice as
+long (median 249 s alone, 491 s beside another job). Either `cpu_s`
+undercounts, for instance workers that are killed and never reaped add
+nothing to their parent's rusage, or the bottleneck is not CPU. The rule's
+4 cores there would let two overlap. Their `suggested` column still shows
+the rule; override it.
 
 **Waits.** Three tables follow, of jobs that would have waited: as
 recorded (under the weights configured when each job ran), and replayed
