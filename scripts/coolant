@@ -7,9 +7,8 @@
 # The queue itself lives in thermo (`thermo run`, `thermo queue`); this
 # shim only finds a thermo that has the door and execs it. A thermo
 # has the door when it answers `--door-version` with the protocol this
-# shim speaks. The probe is a flag on purpose: a thermo from before the
-# door rejects an unknown flag at once, where a bare word would start
-# its dashboard.
+# shim speaks. The probe is a flag so that a thermo without the door
+# rejects it and exits at once; a bare word would start its dashboard.
 #
 # Search order: $COOLANT_THERMO alone when set (explicit wins, no
 # fallback); otherwise the checkout's bin/thermo beside this script
@@ -48,23 +47,6 @@ has_door() {
   [ -x "$1" ] && [ "$("$1" --door-version 2>/dev/null)" = "$PROTOCOL" ]
 }
 
-find_thermo() {
-  if [ -n "${COOLANT_THERMO:-}" ]; then
-    has_door "$COOLANT_THERMO" && printf '%s' "$COOLANT_THERMO"
-    return
-  fi
-  local candidate
-  candidate="$(self_dir)/../bin/thermo"
-  if has_door "$candidate"; then
-    printf '%s' "$candidate"
-    return
-  fi
-  candidate="$(command -v thermo 2>/dev/null)"
-  if [ -n "$candidate" ] && has_door "$candidate"; then
-    printf '%s' "$candidate"
-  fi
-}
-
 [ $# -ge 1 ] || usage
 verb="$1"
 case "$verb" in
@@ -72,13 +54,43 @@ case "$verb" in
   *) usage ;;
 esac
 
-thermo="$(find_thermo)"
+# The thermo binaries to try, in order, one per line.
+candidates() {
+  if [ -n "${COOLANT_THERMO:-}" ]; then
+    printf '%s\n' "$COOLANT_THERMO"
+    return
+  fi
+  printf '%s\n' "$(self_dir)/../bin/thermo"
+  command -v thermo 2>/dev/null
+}
+
+# Sets $thermo to the first candidate with the door, and $stale to the
+# first one that runs but predates it (so the warning can say "upgrade"
+# rather than "install").
+thermo="" stale=""
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] && [ -x "$candidate" ] || continue
+  if has_door "$candidate"; then
+    thermo="$candidate"
+    break
+  fi
+  [ -n "$stale" ] || stale="$candidate"
+done <<EOF_CANDIDATES
+$(candidates)
+EOF_CANDIDATES
+
+if [ -n "$stale" ]; then
+  why="$stale predates the queue door (run \`thermo upgrade\`)"
+else
+  why="no thermo with the queue door found (set COOLANT_THERMO, or install thermo)"
+fi
+
 if [ -n "$thermo" ]; then
   exec "$thermo" "$@"
 fi
 
 if [ "$verb" = queue ]; then
-  echo "coolant: no thermo with the queue door found (set COOLANT_THERMO, or install thermo)" >&2
+  echo "coolant: $why" >&2
   exit 1
 fi
 
@@ -90,6 +102,6 @@ done
 [ "${1:-}" = "--" ] || usage
 shift
 [ $# -ge 1 ] || usage
-echo "coolant: no thermo with the queue door found; running unqueued" >&2
+echo "coolant: $why; running unqueued" >&2
 # env, so leading NAME=value words apply as they do through thermo.
 exec env "$@"

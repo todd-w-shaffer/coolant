@@ -155,7 +155,7 @@ Bug fixes follow the same cycle: write a test that reproduces the bug (red), fix
 
 ## Project structure
 
-Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization. The bash↔Go seam is a JSONL event log (see "JSONL event bus" below).
+Two layers: **bash** for hooks, plumbing, and data collection; **Go** for visualization, plus the work queue (`thermo run|queue`), which needs flock and libproc that bash lacks. The hooks↔dashboard seam is a JSONL event log (see "JSONL event bus" below); the one direct bash→Go call is the work-queue door, `scripts/coolant` exec'ing `thermo run|queue` (see "Work queue").
 
 **Repo-level layout:**
 
@@ -184,7 +184,7 @@ Historical artifacts kept for nostalgia. May be stale or broken.
 
 ## JSONL event bus (the bash↔Go seam)
 
-Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. This is the *only* bash→Go runtime data path — there are zero direct calls. The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
+Bash hooks write to `$TMPDIR/coolant-$USER.events.jsonl`. Go's event tailer (`collector/events.go`) polls this file at 500ms. It is the only path from the hooks to the dashboard (the work-queue door execs thermo, but as its own process, not the running dashboard). The JSONL schema is defined by `coolant_event` in `common.sh` and parsed by `TailEvents` in `events.go`.
 
 Every line carries `"schema":1` (envelope shape contract — bumps on rename or removal, additive optional fields stay at 1). Writes are serialized via the non-reentrant `coolant_lock` mkdir-mutex so parallel hooks emitting >PIPE_BUF payloads can't splice. Lock-acquisition timeout falls through to an unsynchronized write and bumps `$COOLANT_DEGRADED_COUNT` (out-of-band counter, truncated on cold-start SessionStart — resume/clear skip it so a continued session's bus isn't reset). The Go schema gate at `internal/stats` filters pre-versioning events at parse time — old and new envelopes coexist in the same JSONL ("virtual chop").
 
@@ -192,7 +192,7 @@ A second JSONL bus carries Claude Code's beta OTEL emissions: thermo embeds an O
 
 ## Work queue
 
-One machine-wide queue for CPU- and memory-heavy jobs, every repo and session. The door is `scripts/coolant` (`coolant run --class <c> -- <cmd>`, `coolant queue [--json]`), a bash shim over `thermo run|queue` (Go, `thermal/internal/workq`). It replaced the per-subagent cap and `/coolant` suppression outright (2026-11-02). Ships in **observe** mode (record every job to `~/.coolant/runs.jsonl`, hold none); **enforce** admits against a core budget and memory ceiling in `[queue]` of `~/.config/coolant/config.toml`. Interactive callers jump the waiting line, lanes (`COOLANT_LANE`) wait FIFO, nothing has a clock, nested runs pass through on a live ancestor's `COOLANT_TICKET`, and every failure to use the queue degrades to running the command with one warning. Caller contract (flags, env, exit codes, records): `docs/work-queue.md`.
+One machine-wide queue for CPU- and memory-heavy jobs, every repo and session. The door is `scripts/coolant` (`coolant run --class <c> -- <cmd>`, `coolant queue [--json]`), a bash shim over `thermo run|queue` (Go, `thermal/internal/workq`). Ships in **observe** mode (record every job to `~/.coolant/runs.jsonl`, hold none); **enforce** admits against a core budget and memory ceiling in `[queue]` of `~/.config/coolant/config.toml`. Interactive callers jump the waiting line, lanes (`COOLANT_LANE`) wait FIFO, nothing has a clock, nested runs pass through on a live ancestor's `COOLANT_TICKET`, and every failure to use the queue degrades to running the command with one warning. Caller contract (flags, env, exit codes, records): `docs/work-queue.md`.
 
 ## Distribution
 

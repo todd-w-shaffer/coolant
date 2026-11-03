@@ -140,6 +140,46 @@ route_parseable() {
   [ -z "$q" ]
 }
 
+# Whether the line is the heavy command alone — optionally `2>&1`,
+# optionally piped into read-only filters (tail, head, grep, wc, cat). The
+# rewrite answers "allow", which skips the permission prompt for the whole
+# line, so a chain (`tsc && git push -f`), a background `&`, a redirect into
+# a file or a pipe into anything else must not ride along: those lines are
+# left to the normal permission flow, unqueued. Quote-aware.
+lone_command() {
+  local cmd="$1"
+  local n=${#cmd} i=0 c q="" word
+  while [ "$i" -lt "$n" ]; do
+    c="${cmd:$i:1}"
+    if [ -n "$q" ]; then
+      if [ "$c" = "$q" ]; then q=""; fi
+    else
+      case "$c" in
+        \'|\") q="$c" ;;
+        '>')
+          # Only the fd merge 2>&1, as a word of its own.
+          [ "$i" -ge 1 ] && [ "${cmd:$((i - 1)):4}" = "2>&1" ] || return 1
+          [ "$i" -eq 1 ] || [ "${cmd:$((i - 2)):1}" = " " ] || return 1
+          [ $((i + 3)) -eq "$n" ] || [ "${cmd:$((i + 3)):1}" = " " ] || return 1
+          i=$((i + 2))
+          ;;
+        '|')
+          [ "${cmd:$((i + 1)):1}" != "|" ] || return 1
+          word="${cmd:$((i + 1))}"
+          word="${word#"${word%%[! ]*}"}"
+          case "${word%% *}" in
+            tail|head|grep|wc|cat) ;;
+            *) return 1 ;;
+          esac
+          ;;
+        ';'|'&'|'<') return 1 ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
 # Class of a test-runner invocation: `files` when the gated segment names
 # a test file, `suite` otherwise. A directory filter (test/) still selects
 # a whole suite, so only file-shaped words count; unsure means suite, which
@@ -201,6 +241,10 @@ case "$binary" in
 esac
 if ! route_parseable "$original_command"; then
   coolant_log "unrouted: $original_command (unparseable shell)"
+  exit 0
+fi
+if ! lone_command "$original_command"; then
+  coolant_log "unrouted: $original_command (not a lone command)"
   exit 0
 fi
 

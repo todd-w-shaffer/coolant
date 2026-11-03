@@ -2,7 +2,9 @@ package collector
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -362,4 +364,42 @@ func TestTailEventsHandlesTruncation(t *testing.T) {
 		t.Fatal("timed out waiting for event after truncation")
 	}
 	close(done)
+}
+
+// The bash↔Go contract for gate.route: run the real gate hook and parse
+// what it emits, so a field rename on either side fails here.
+func TestTailEventsParsesGateRouteFromTheRealGate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	gate, err := filepath.Abs("../../../scripts/gate.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", gate)
+	cmd.Stdin = strings.NewReader(`{"session_id":"s","tool_name":"Bash","tool_input":{"command":"npx tsc --noEmit","description":"d"},"hook_event_name":"PreToolUse"}`)
+	cmd.Env = append(os.Environ(),
+		"COOLANT_EVENTS="+path,
+		"COOLANT_LOG="+filepath.Join(dir, "log"),
+		"COOLANT_COUNTER="+filepath.Join(dir, "count"),
+		"COOLANT_DEGRADED_COUNT="+filepath.Join(dir, "degraded"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("gate.sh: %v\n%s", err, out)
+	}
+
+	ch := make(chan GateEvent, 4)
+	done := make(chan struct{})
+	defer close(done)
+	go TailEvents(ch, path, "", 20*time.Millisecond, done)
+	select {
+	case ev := <-ch:
+		if ev.Event != EventGateRoute || ev.Command != "npx tsc --noEmit" || ev.Class != "typecheck" || ev.Schema != 1 {
+			t.Errorf("parsed %+v", ev)
+		}
+		if !strings.Contains(ev.Rewritten, "run --class typecheck -- npx tsc --noEmit") {
+			t.Errorf("rewritten = %q", ev.Rewritten)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no gate.route event parsed")
+	}
 }

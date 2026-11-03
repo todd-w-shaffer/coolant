@@ -38,7 +38,6 @@ DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "
 }
 
 @test "gate never denies" {
-  touch "$COOLANT_LOCKFILE"
   local out
   out=$(run_gate Bash "tsc --noEmit")
   [[ "$out" != *"deny"* ]]
@@ -146,7 +145,7 @@ DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "
   [ -z "$(run_gate Bash "swift --version")" ]
 }
 
-@test "gate no longer gates prettier" {
+@test "gate leaves prettier alone" {
   [ -z "$(run_gate Bash "prettier --write .")" ]
 }
 
@@ -178,8 +177,45 @@ DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "
   [ "$(routed "vitest run | tail -5")" = "$(DOOR_PREFIX suite)vitest run | tail -5" ]
 }
 
-@test "gate leaves a redirect and chain outside the door" {
-  [ "$(routed "tsc --noEmit 2>&1 && echo ok")" = "$(DOOR_PREFIX typecheck)tsc --noEmit 2>&1 && echo ok" ]
+@test "gate keeps 2>&1 and a read-only filter outside the door" {
+  [ "$(routed "tsc --noEmit 2>&1 | grep error | head -20")" = "$(DOOR_PREFIX typecheck)tsc --noEmit 2>&1 | grep error | head -20" ]
+}
+
+# The rewrite answers "allow", which skips the permission prompt for the
+# whole line. So the gate routes only when the line is the heavy command
+# alone (plus 2>&1 and read-only filters); anything else is left to the
+# normal permission flow, unqueued.
+@test "gate declines a command chained with &&" {
+  [ -z "$(run_gate Bash "tsc --noEmit && git push -f" || true)" ]
+}
+
+@test "gate declines a command chained with ;" {
+  [ -z "$(run_gate Bash "vitest run; rm -rf dist" || true)" ]
+}
+
+@test "gate declines a command chained with ||" {
+  [ -z "$(run_gate Bash "vitest run || echo failed" || true)" ]
+}
+
+@test "gate declines a backgrounded command" {
+  [ -z "$(run_gate Bash "vitest run &" || true)" ]
+}
+
+@test "gate declines a redirect into a file" {
+  [ -z "$(run_gate Bash "tsc --noEmit > out.txt" || true)" ]
+}
+
+@test "gate declines a pipe into a program that is not a read-only filter" {
+  [ -z "$(run_gate Bash "vitest run | sh" || true)" ]
+}
+
+@test "gate declines a pipe into tee" {
+  [ -z "$(run_gate Bash "vitest run 2>&1 | tee log.txt" || true)" ]
+}
+
+@test "gate logs a declined chain" {
+  run_gate Bash "tsc && echo ok" || true
+  grep -q "unrouted: tsc && echo ok (not a lone command)" "$COOLANT_LOG"
 }
 
 @test "gate scopes the files check to the gated segment" {
@@ -188,6 +224,10 @@ DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "
 
 @test "gate keeps a quoted argument intact" {
   [ "$(routed "vitest run -t 'a|b'")" = "$(DOOR_PREFIX suite)vitest run -t 'a|b'" ]
+}
+
+@test "gate keeps a quoted grep pattern in a filter" {
+  [ "$(routed "vitest run | grep 'FAIL|Error'")" = "$(DOOR_PREFIX suite)vitest run | grep 'FAIL|Error'" ]
 }
 
 # _nested_command stops at the first escaped quote, so a double-quoted
@@ -226,8 +266,9 @@ DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "
   grep -q "unrouted: vitest run" "$COOLANT_LOG"
 }
 
-# "${rest#* }" is a no-op once rest has no space, so the flag-skip loop
-# spun forever and hung the PreToolUse hook on any bare-flag wrapper call.
+# A bare-flag wrapper ("sudo -v") leaves no space for "${rest#* }" to strip
+# past; the flag-skip loop has to stop there rather than spin until the
+# hook times out.
 @test "gate terminates on a wrapper invoked with only a flag" {
   local rc=0
   make_pre_tool_use Bash "sudo -v" \
@@ -250,7 +291,6 @@ DOOR_PREFIX() { printf '%s run --class %s -- ' "$PROJECT_ROOT/scripts/coolant" "
 }
 
 @test "gate emits no gate.cap or gate.suppress events" {
-  touch "$COOLANT_LOCKFILE"
   run_gate Bash "vitest run" >/dev/null
   run_gate Bash "tsc" >/dev/null
   run grep -c 'gate.cap\|gate.suppress' "$COOLANT_EVENTS"

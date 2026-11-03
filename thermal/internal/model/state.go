@@ -85,7 +85,7 @@ type AppState struct {
 	orphanStops          int                              // monotonic count of stops with no matching start
 	burstCounter         int                              // monotonic within thermo lifetime, not reset on session reset
 	lastStartTime        time.Time                        // timestamp of most recent agent.start (for burst gap detection)
-	gateEvents           *RingBuffer[collector.GateEvent] // capped ring of gate.route (and legacy gate.cap / gate.suppress) events
+	gateEvents           *RingBuffer[collector.GateEvent] // capped ring of gate.* events
 	counterDrift         int                              // latest divergence: positive = bash > Go
 	sessionEarliestStart time.Time                        // set on first agent.start, reset on counter.reset
 
@@ -286,7 +286,7 @@ type eventAlertSpec struct {
 
 var eventAlerts = map[string]eventAlertSpec{
 	collector.EventGateSuppress: {func(ev collector.GateEvent) string {
-		return "blocked: " + ev.Command + " (parallel mode — /coolant to release)"
+		return "blocked: " + ev.Command + " (parallel mode, retired)"
 	}, ThreatWarm},
 	collector.EventGateCap: {func(ev collector.GateEvent) string { return "throttled: " + ev.Command + " → " + ev.Rewritten }, ThreatWarm},
 	collector.EventGateRoute: {func(ev collector.GateEvent) string {
@@ -470,7 +470,7 @@ func (s *AppState) CounterDrift() int {
 	return s.counterDrift
 }
 
-// GateEvents returns a slice of gate.cap + gate.suppress events from the ring buffer.
+// GateEvents returns the gate.* events in the ring buffer.
 func (s *AppState) GateEvents() []collector.GateEvent {
 	return s.gateEvents.Slice()
 }

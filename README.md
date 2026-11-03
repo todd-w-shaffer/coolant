@@ -86,7 +86,7 @@ Five agents each running `vitest`, `tsc`, and `eslint` means 15 build processes 
 <details>
 <summary>How the gate works</summary>
 
-The gate rewrites a typed heavy command to `coolant run --class <class> -- <command>`. Test runners go to `suite`, or `files` when the command names test files; `tsc`/`mypy` go to `typecheck`; linters to `lint`; bundlers and compilers to `build`. The door is a prefix, so `vitest run 2>&1 | tail -4` queues vitest and leaves the pipe as typed. Wrappers (`npx tsc`, `env vitest`) and path prefixes are recognized and kept. Where the command uses shell the gate won't parse — command substitution, subshells, backslashes — it leaves the command alone rather than risk running something other than what was typed.
+The gate rewrites a typed heavy command to `coolant run --class <class> -- <command>`. Test runners go to `suite`, or `files` when the command names test files; `tsc`/`mypy` go to `typecheck`; linters to `lint`; bundlers and compilers to `build`. The door is a prefix, so `vitest run 2>&1 | tail -4` queues vitest and leaves the pipe as typed. Because a rewritten command is auto-approved, the gate only routes a heavy command standing alone (or piped into `tail`/`head`/`grep`/`wc`/`cat`); a chain like `tsc && git push` is left to your normal permission prompts. Wrappers (`npx tsc`, `env vitest`) and path prefixes are recognized and kept. Where the command uses shell the gate won't parse — command substitution, subshells, backslashes — it leaves the command alone rather than risk running something other than what was typed.
 </details>
 
 ## Skills

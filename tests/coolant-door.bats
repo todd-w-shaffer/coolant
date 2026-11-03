@@ -18,7 +18,8 @@ EOF
   chmod +x "$TEST_TMPDIR/thermo"
 }
 
-# A fake thermo from before the door: unknown flags fail flag.Parse.
+# A fake thermo without the door: it rejects an unknown flag, as flag.Parse
+# does, and starts its dashboard on a bare word.
 make_old_thermo() {
   cat > "$TEST_TMPDIR/thermo" <<'EOF'
 #!/bin/bash
@@ -63,6 +64,22 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" != *"TUI STARTED"* ]]
   [[ "$output" == *"ran-unqueued"* ]]
+}
+
+@test "door names a thermo that predates the door and how to upgrade it" {
+  make_old_thermo
+  run env COOLANT_THERMO="$TEST_TMPDIR/thermo" "$DOOR" run --class suite -- true
+  [[ "$output" == *"$TEST_TMPDIR/thermo predates the queue door"* ]]
+  [[ "$output" == *"thermo upgrade"* ]]
+}
+
+# The contract between this shim and the Go side: the protocol the shim
+# expects is the one the built thermo answers (before flag.Parse).
+@test "door protocol matches the built thermo" {
+  [ -x "$PROJECT_ROOT/bin/thermo" ] || skip "bin/thermo not built"
+  local want
+  want="$(sed -n 's/^PROTOCOL=//p' "$DOOR")"
+  [ "$("$PROJECT_ROOT/bin/thermo" --door-version)" = "$want" ]
 }
 
 @test "door queue with no thermo fails with a message" {

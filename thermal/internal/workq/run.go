@@ -93,7 +93,7 @@ func Run(ctx context.Context, s Settings, args []string) int {
 	t := Ticket{
 		PID: os.Getpid(), Lane: lane, Priority: PriorityInteractive,
 		Class: className, Cores: class.Cores, MemMB: class.MemoryMB, Whole: class.Whole,
-		Cwd: cwd, Repo: repo, Worktree: worktree, Cmd: ShellJoin(argv),
+		Cwd: cwd, Repo: repo, Worktree: worktree, Cmd: displayCmd(argv),
 	}
 	if lane != "" {
 		t.Priority = PriorityLane
@@ -319,6 +319,19 @@ func parseRunArgs(args []string) (class string, argv []string, err error) {
 	return class, argv, nil
 }
 
+// displayCmd is argv as tickets, `coolant queue` and records show it:
+// shell-quoted, with leading assignment values redacted (NAME=…), since
+// those are where a token passed to one command would otherwise be kept.
+func displayCmd(argv []string) string {
+	shown := make([]string, len(argv))
+	copy(shown, argv)
+	for i := 0; i < len(shown) && isAssignment(shown[i]); i++ {
+		name, _, _ := strings.Cut(shown[i], "=")
+		shown[i] = name + "=…"
+	}
+	return ShellJoin(shown)
+}
+
 // isAssignment reports whether w is a NAME=value word.
 func isAssignment(w string) bool {
 	name, _, ok := strings.Cut(w, "=")
@@ -419,7 +432,7 @@ func ShellJoin(argv []string) string {
 	parts := make([]string, len(argv))
 	for i, a := range argv {
 		if a != "" && strings.IndexFunc(a, func(r rune) bool {
-			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./=:,+@%", r))
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./=:,+@%…", r))
 		}) < 0 {
 			parts[i] = a
 			continue

@@ -19,8 +19,8 @@ import (
 // and `coolant queue` through the scripts/coolant shim).
 //
 // doorVersionFlag is how the shim asks a thermo whether it has the door.
-// It is flag-shaped on purpose: a thermo too old to know it fails
-// flag.Parse and exits at once, where a bare word would start the TUI.
+// It is flag-shaped so a thermo without the door rejects it in
+// flag.Parse and exits at once; a bare word would start the dashboard.
 const (
 	doorRunVerb     = "run"
 	doorQueueVerb   = "queue"

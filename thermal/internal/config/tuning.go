@@ -96,7 +96,7 @@ const (
 // two burst groups. Agents starting within this window share a BurstID.
 const BurstGapThreshold = 3 * time.Second
 
-// MaxGateEvents is the ring buffer cap for gate.cap + gate.suppress events.
+// MaxGateEvents is the ring buffer cap for gate.* events.
 const MaxGateEvents = 64
 
 // ── Threat classification ──────────────────────────────────

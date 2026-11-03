@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -321,5 +322,93 @@ func TestGitPlaceFindsRepoAndWorktreeWithoutGit(t *testing.T) {
 	}
 	if r, w := gitPlace(root); r != "" || w != "" {
 		t.Errorf("outside a repo: %q %q", r, w)
+	}
+}
+
+func TestRunRedactsAssignmentValuesInTheRecord(t *testing.T) {
+	s, _, _ := testSettings(t, ModeObserve)
+	Run(context.Background(), s, []string{"--class", "files", "--", "TOKEN=hunter2", "sh", "-c", "true"})
+	r := onlyRecord(t, s)
+	if strings.Contains(r.Cmd, "hunter2") || !strings.HasPrefix(r.Cmd, "TOKEN=… sh -c true") {
+		t.Errorf("cmd = %q, want the value redacted", r.Cmd)
+	}
+}
+
+func TestRunAnswers128PlusSignalForAKilledChild(t *testing.T) {
+	s, _, _ := testSettings(t, ModeObserve)
+	if code := Run(context.Background(), s, []string{"--class", "files", "--", "sh", "-c", "kill -TERM $$"}); code != 128+15 {
+		t.Fatalf("exit = %d, want 143", code)
+	}
+}
+
+func TestRunAnswers126ForACommandThatCannotStart(t *testing.T) {
+	s, _, _ := testSettings(t, ModeObserve)
+	notExec := filepath.Join(t.TempDir(), "script")
+	if err := os.WriteFile(notExec, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := Run(context.Background(), s, []string{"--class", "files", "--", notExec}); code != ExitNoExec {
+		t.Fatalf("exit = %d, want %d", code, ExitNoExec)
+	}
+}
+
+func TestRunKeepsTheExitStatusWhenRecordsCannotBeWritten(t *testing.T) {
+	s, _, errb := testSettings(t, ModeObserve)
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.RecordsPath = filepath.Join(blocker, "runs.jsonl") // parent is a file
+	if code := Run(context.Background(), s, []string{"--class", "files", "--", "sh", "-c", "exit 4"}); code != 4 {
+		t.Fatalf("exit = %d, want the command's 4", code)
+	}
+	if !strings.Contains(errb.String(), "could not record") {
+		t.Errorf("stderr = %q", errb.String())
+	}
+}
+
+func TestRunRefusesAMalformedTicket(t *testing.T) {
+	for _, v := range []string{"garbage", "1:", ":5", "a:b"} {
+		s, _, errb := testSettings(t, ModeObserve)
+		s.Env = append(s.Env, "COOLANT_TICKET="+v)
+		if code := Run(context.Background(), s, []string{"--class", "files", "--", "true"}); code != 0 {
+			t.Fatalf("%q: exit = %d", v, code)
+		}
+		if !strings.Contains(errb.String(), "stale") || onlyRecord(t, s).Nested {
+			t.Errorf("%q passed or was not reported: %q", v, errb.String())
+		}
+	}
+}
+
+func TestRunAbandonsAWaitOnSignal(t *testing.T) {
+	s, _, errb := testSettings(t, ModeEnforce)
+	q := openQ(t, s.QueueDir)
+	head, err := q.Take(context.Background(), Ticket{PID: 4242, Class: "suite", Whole: true}, budget8, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer head.Release()
+	done := make(chan int, 1)
+	go func() { done <- Run(context.Background(), s, []string{"--class", "typecheck", "--", "true"}) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(errb.String(), "waiting") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	// Run has signal.Notify registered before it waits, so this TERM is
+	// delivered to it rather than killing the test binary.
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case code := <-done:
+		if code != 128+15 {
+			t.Fatalf("exit = %d, want 143", code)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("wait not abandoned")
+	}
+	waitForWaiters(t, q, 0)
+	if recs := ReadRecent(s.RecordsPath, 1<<20); len(recs) != 0 {
+		t.Errorf("an abandoned wait ran or recorded: %+v", recs)
 	}
 }

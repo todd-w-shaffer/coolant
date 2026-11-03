@@ -30,10 +30,10 @@ type QueueClass struct {
 	Whole    bool
 }
 
-// defaultQueueClasses are sized for the 8-core / 16 GB machine the
-// queue was measured on: one whole vitest suite is ~7 workerd at
-// ~250 MB plus ~1.3 GB of node. They are starting weights — a day of
-// observe-mode records in ~/.coolant/runs.jsonl is what should set them.
+// defaultQueueClasses are starting weights sized for an 8-core / 16 GB
+// machine, where one whole vitest suite is ~7 workerd at ~250 MB plus
+// ~1.3 GB of node. Observe-mode records in ~/.coolant/runs.jsonl show
+// the real figures to set them from.
 func defaultQueueClasses() map[string]QueueClass {
 	return map[string]QueueClass{
 		"suite":     {Cores: 8, MemoryMB: 3584, Whole: true},

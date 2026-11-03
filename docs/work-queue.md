@@ -16,8 +16,10 @@ coolant queue [--json]
 Leading `NAME=value` words after `--` set the command's environment, as
 env(1) does (`coolant run --class suite -- CI=1 vitest run`).
 
-`coolant` is `scripts/coolant` in this repo. On a machine set up for it,
-`~/.local/bin/coolant` is a symlink to that file. The shim finds a
+`coolant` is `scripts/coolant` in this repo (and in the installed
+plugin). Put it on `PATH` by linking it into a directory every shell
+sees, including non-interactive ones (for zsh, one exported from
+`~/.zshenv`), e.g. `ln -s <checkout>/scripts/coolant ~/.local/bin/coolant`. The shim finds a
 `thermo` that has the door (`thermo --door-version` prints `1`) and execs
 `thermo run` / `thermo queue`. It looks in this order:
 
@@ -29,8 +31,8 @@ env(1) does (`coolant run --class suite -- CI=1 vitest run`).
 launcher) uses the same line. Do not depend on `PATH`. Resolve it once:
 
 ```bash
-COOLANT="${COOLANT:-$(command -v coolant || echo "$HOME/Desktop/apps/coolant/scripts/coolant")}"
-if [ -x "$COOLANT" ]; then
+COOLANT="${COOLANT:-$(command -v coolant)}"   # or set COOLANT to the shim's path
+if [ -n "$COOLANT" ] && [ -x "$COOLANT" ]; then
   "$COOLANT" run --class check -- npm run check:inner
 else
   npm run check:inner   # no door on this machine: run as before
@@ -160,7 +162,9 @@ tree under the command (`proc_listchildpids`) and sums each process's
 Monitor's Memory column shows, and unlike RSS it does not count shared
 library pages once per process. The peak is the largest sum seen, max'd
 with the command's own `ru_maxrss`. A spike shorter than 200 ms can be
-missed. A process that daemonizes out of the tree stops being counted.
+missed. A process that daemonizes out of the tree stops being counted —
+notably a Gradle or Maven build daemon, whose work happens outside the
+door's tree, so those records show only the thin client.
 
 **How CPU is measured.** `cpu_s` is user+sys from the command's `wait4`
 rusage. macOS folds each reaped descendant's usage into its parent at
