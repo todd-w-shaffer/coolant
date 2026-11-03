@@ -1,6 +1,6 @@
 {
   "name": "coolant",
-  "version": "0.33.0",
+  "version": "0.34.0",
   "description": "Thermal management for Claude Code parallel agents — one machine-wide work queue for test suites, typechecks, lints and builds, so parallel sessions take turns instead of melting the machine.",
   "author": {
     "name": "Todd Shaffer",
