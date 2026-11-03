@@ -23,6 +23,9 @@ const recordsTail = 4 << 20
 // ShowQueue is `thermo queue [--json]`: running jobs, waiting jobs in
 // service order, and each one's estimate from past records.
 func ShowQueue(s Settings, args []string, now time.Time) int {
+	if len(args) > 0 && args[0] == "weights" {
+		return ShowWeights(s, args[1:])
+	}
 	asJSON := false
 	for _, a := range args {
 		switch a {

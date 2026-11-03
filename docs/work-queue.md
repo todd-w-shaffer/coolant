@@ -11,6 +11,7 @@ builds against.
 ```bash
 coolant run --class <class> -- [NAME=value ...] <command> [args...]
 coolant queue [--json]
+coolant queue weights [--json | --toml] [--since <RFC3339>] [--until <RFC3339>]
 ```
 
 Leading `NAME=value` words after `--` set the command's environment, as
@@ -55,18 +56,24 @@ thermo is found, or the queue directory cannot be used, it prints one
 | `build` | a small build (esbuild, Tailwind) | 1 core, 512 MB |
 
 A class that takes the whole budget runs alone. An unknown class warns and
-weighs 1 core / 512 MB. Weights, the budget and new classes live in
+weighs 1 core / 512 MB. The default weights are a starting point, not a
+measurement of any machine: `coolant queue weights` sets them from your own
+records. Weights, the budget and new classes live in
 `~/.config/coolant/config.toml` (or `$COOLANT_CONFIG`):
 
 ```toml
 [queue]
-mode = "observe"      # "enforce" once a day of records sets the numbers
+mode = "observe"      # "enforce" once `coolant queue weights` has set the numbers
 cores = 8             # core budget (default: hw.ncpu)
 memory_mb = 8192      # memory ceiling (default: half of physical RAM)
 
 [queue.classes.mutation]
 cores = 4
 memory_mb = 3000
+
+[queue.classes.check]  # a class table sets only the keys it names;
+cores = 6              # a shipped whole class needs `whole = false`
+whole = false          # before its cores count
 ```
 
 ## Environment
@@ -79,6 +86,17 @@ memory_mb = 3000
 | `COOLANT_QUEUE_MODE` | a person, to try enforce in one shell | `observe` or `enforce`. Overrides config. |
 | `COOLANT_THERMO` | tests, unusual installs | The exact thermo binary to use. |
 | `COOLANT_QUEUE_DIR`, `COOLANT_RUNS`, `COOLANT_CONFIG` | tests | Override the paths below. |
+
+**The grant sets the job's worker count.** A repo that honours it, as
+below, runs that many vitest workers. A check weighted 6 cores runs 6
+workers. Unthrottled, and in observe mode, `vitest run` uses its own default
+of `availableParallelism() − 1` workers: 7 on an 8-core machine. A whole
+class is granted the whole core budget, 8 workers there, one more than
+vitest's default. The weight is therefore both an admission cost and a
+width: lowering a class's cores to admit more beside it also narrows every
+run of it, and a suite can lose more than the workers' share. Time one run
+at the grant before switching, with `COOLANT_QUEUE_MODE=enforce` set in that
+shell only, against the same run in observe mode.
 
 A vitest config that honours the grant:
 
@@ -169,6 +187,80 @@ door's tree, so those records show only the thin client.
 **How CPU is measured.** `cpu_s` is user+sys from the command's `wait4`
 rusage. macOS folds each reaped descendant's usage into its parent at
 exit, so this covers every process in the tree that was waited for.
+
+## `coolant queue weights`
+
+Reads `runs.jsonl` and prints, per class, what the jobs cost, the weight
+config gives the class, and a weight suggested from the records. It is
+read-only: it never writes config, the records or the queue. Copying a
+suggestion into `config.toml`, and switching to enforce, are the user's
+own edits.
+
+The figures come from top-level observe-mode records. Left out, and
+counted in the header: `nested` records, whose cost is already inside
+their parent's record; `degraded` records, which held no ticket; and
+`enforce` records, which ran at their grant, so feeding them back would
+measure the weight with itself.
+
+| Column | Meaning |
+|---|---|
+| jobs | records of the class |
+| wall p50, p90 | `wall_s` |
+| cores used p50, p90 | `cpu_s / wall_s`, over jobs longer than 1 s |
+| peak MB p50, p90, max | `peak_mem_mb` |
+| would wait | share of jobs recorded `would_wait` |
+| configured | the weight config gives the class now |
+| suggested | the rule below applied to the class |
+
+Percentiles are nearest-rank.
+
+**The rule.** cores = the p90 of cores used, rounded to a whole core, kept
+within 1 and the core budget. memory_mb = the p90 peak memory, rounded up
+to 256 MB. Never whole. A class with fewer than 5 jobs longer than 1 s gets
+no suggestion. Cores used is an average over the whole run, so it
+understates a job whose phases differ in width: a check that typechecks on
+2 cores and then runs a suite on every core averages about 3.5. Such a
+class, when it honours the grant, wants a weight sized for its widest
+phase (see `COOLANT_GRANTED_CORES` above), and its row needs judgment, not
+the rule alone.
+
+**Waits.** Three tables follow, of jobs that would have waited: as
+recorded (under the weights configured when each job ran), and replayed
+against the same overlaps under the configured weights and under the
+suggested ones. Each gives the job's own median wall time and bounds on
+the wait: it lies between when the first and when the last of the jobs
+running at its start ended. These read the observed timeline, where
+nothing waited, so they are rough. A recorded wait with no overlapping
+record (the job ahead left none, e.g. it was killed) counts as
+`unbounded`. To try candidate weights against your history before using
+them, point `COOLANT_CONFIG` at a candidate file: the configured replay
+uses it.
+
+`--toml` prints the suggested `[queue.classes.<name>]` tables, and nothing
+else. `--since` and `--until` keep records whose start is in that window.
+`--json` is the same report:
+
+```json
+{
+  "budget": { "cores": 8, "memory_mb": 8192 },
+  "from": "…", "to": "…",
+  "records": 730, "jobs": 394, "nested": 332, "enforce": 4, "degraded": 0,
+  "rule": "…",
+  "classes": [
+    { "class": "check", "jobs": 40,
+      "wall_s": { "p50": 290.89, "p90": 521.53, "max": 706.47 },
+      "cores_used": { "n": 40, "p50": 3.31, "p90": 3.86, "max": 4.12 },
+      "peak_mem_mb": { "p50": 3585.4, "p90": 3943.65, "max": 4052.1 },
+      "would_wait": { "jobs": 12, "share": 0.3, "own_wall_p50_s": 484.32,
+        "first_end_s": { "p50": 133, "p90": 308, "max": 421 },
+        "last_end_s": { "p50": 133, "p90": 308, "max": 421 } },
+      "configured": { "cores": 6, "memory_mb": 4096, "whole": false },
+      "suggested": { "cores": 4, "memory_mb": 4096, "whole": false },
+      "configured_would_wait": { "…": "…" },
+      "suggested_would_wait": { "…": "…" } }
+  ]
+}
+```
 
 ## `coolant queue --json`
 

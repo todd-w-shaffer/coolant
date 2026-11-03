@@ -16,7 +16,7 @@ For sparkline, gauge, and render architecture internals see `docs/go-design.md`.
 
 ## Entry points (`thermal/cmd/`)
 
-- `cmd/thermal/` — bubbletea app + first-arg subcommand dispatch. User-facing verbs: `thermo stats` (cross-session aggregates summary), `thermo cc-findings` (CC OTEL drift findings review), `thermo upgrade` / `thermo --upgrade` (self-replace from latest GitHub Release; statusline ships separately via `install.sh --upgrade`), `thermo run --class <c> -- <cmd>` / `thermo queue [--json]` (the work-queue door, normally reached as `coolant run|queue` through `scripts/coolant`), and the probe `thermo --door-version` (prints the door protocol, `1`; flag-shaped so an older thermo exits on it instead of starting the TUI). Hidden dev tools: `thermo statsdump` (raw Snapshot JSON, dev/debug).
+- `cmd/thermal/` — bubbletea app + first-arg subcommand dispatch. User-facing verbs: `thermo stats` (cross-session aggregates summary), `thermo cc-findings` (CC OTEL drift findings review), `thermo upgrade` / `thermo --upgrade` (self-replace from latest GitHub Release; statusline ships separately via `install.sh --upgrade`), `thermo run --class <c> -- <cmd>` / `thermo queue [--json]` (the work-queue door, normally reached as `coolant run|queue` through `scripts/coolant`), `thermo queue weights [--json|--toml]` (read-only per-class cost from `runs.jsonl`, configured vs suggested weight, would-wait replay; `workq/weights.go`), and the probe `thermo --door-version` (prints the door protocol, `1`; flag-shaped so an older thermo exits on it instead of starting the TUI). Hidden dev tools: `thermo statsdump` (raw Snapshot JSON, dev/debug).
 - `cmd/swatch/` and `cmd/brailletext/` — preview tools.
 
 ## Go API gotchas

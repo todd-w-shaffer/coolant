@@ -42,6 +42,12 @@ EOF
   [ "$output" = "thermo-called: queue --json" ]
 }
 
+@test "door passes queue weights and its flags to thermo" {
+  make_door_thermo
+  run env COOLANT_THERMO="$TEST_TMPDIR/thermo" "$DOOR" queue weights --toml --since 2026-11-02T00:00:00Z
+  [ "$output" = "thermo-called: queue weights --toml --since 2026-11-02T00:00:00Z" ]
+}
+
 @test "door with no thermo runs the command unqueued" {
   run env COOLANT_THERMO="$TEST_TMPDIR/missing" "$DOOR" run --class suite -- sh -c 'echo ran; exit 7'
   [ "$status" -eq 7 ]

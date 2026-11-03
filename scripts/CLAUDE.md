@@ -17,7 +17,7 @@ State lives in `$TMPDIR/coolant-$USER.*` files — counter, event log, agent-sta
 
 ## Work queue door (`scripts/coolant`)
 
-`scripts/coolant` is the machine-wide work queue's door: `coolant run --class <c> -- <cmd>` and `coolant queue [--json]`. The queue itself is Go (`thermo run` / `thermo queue`, package `thermal/internal/workq`); the shim only finds a thermo that answers `--door-version` with `1` (`$COOLANT_THERMO` alone when set, else the checkout's `bin/thermo` resolved through symlinks, else `thermo` on PATH) and execs it. The probe is a flag so a thermo without the door fails `flag.Parse` and exits at once; a bare verb would start its TUI inside a git hook. With no door-capable thermo, `run` warns once and execs the command unqueued; a job never fails because the queue is missing. Interface contract for callers (flags, env, exit codes, record fields): `docs/work-queue.md`.
+`scripts/coolant` is the machine-wide work queue's door: `coolant run --class <c> -- <cmd>`, `coolant queue [--json]` and `coolant queue weights [--json|--toml]`. The queue itself is Go (`thermo run` / `thermo queue`, package `thermal/internal/workq`); the shim only finds a thermo that answers `--door-version` with `1` (`$COOLANT_THERMO` alone when set, else the checkout's `bin/thermo` resolved through symlinks, else `thermo` on PATH) and execs it. The probe is a flag so a thermo without the door fails `flag.Parse` and exits at once; a bare verb would start its TUI inside a git hook. With no door-capable thermo, `run` warns once and execs the command unqueued; a job never fails because the queue is missing. Interface contract for callers (flags, env, exit codes, record fields): `docs/work-queue.md`.
 
 ## Gate system
 

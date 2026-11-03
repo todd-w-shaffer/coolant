@@ -28,6 +28,16 @@ bash ${CLAUDE_SKILL_DIR}/../../scripts/coolant queue
 bash ${CLAUDE_SKILL_DIR}/../../scripts/coolant queue --json
 ```
 
+`/coolant weights` shows, per class, what the recorded jobs cost, the
+configured weight and a weight suggested from the records:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/../../scripts/coolant queue weights
+```
+
+It never changes config. Show the suggestions; writing them, and switching
+to enforce, are the user's edits to `~/.config/coolant/config.toml`.
+
 Report what is running, what is waiting and in what order, and the
 estimates. If a command of the user's is waiting, say what is ahead of it.
 

@@ -32,8 +32,9 @@ type QueueClass struct {
 
 // defaultQueueClasses are starting weights sized for an 8-core / 16 GB
 // machine, where one whole vitest suite is ~7 workerd at ~250 MB plus
-// ~1.3 GB of node. Observe-mode records in ~/.coolant/runs.jsonl show
-// the real figures to set them from.
+// ~1.3 GB of node. They are a starting point for any machine:
+// `thermo queue weights` reads that machine's observe-mode records in
+// ~/.coolant/runs.jsonl and suggests weights for its config.toml.
 func defaultQueueClasses() map[string]QueueClass {
 	return map[string]QueueClass{
 		"suite":     {Cores: 8, MemoryMB: 3584, Whole: true},

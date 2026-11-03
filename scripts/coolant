@@ -3,6 +3,7 @@
 #
 #   coolant run --class <name> -- <command...>   run through the queue
 #   coolant queue [--json]                        show the horizon
+#   coolant queue weights [--json | --toml]       class weights from the records
 #
 # The queue itself lives in thermo (`thermo run`, `thermo queue`); this
 # shim only finds a thermo that has the door and execs it. A thermo
@@ -27,6 +28,7 @@ PROTOCOL=1
 usage() {
   echo "usage: coolant run --class <name> -- <command...>" >&2
   echo "       coolant queue [--json]" >&2
+  echo "       coolant queue weights [--json | --toml] [--since <time>] [--until <time>]" >&2
   exit 64
 }
 
