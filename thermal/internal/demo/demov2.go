@@ -205,11 +205,6 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 			procs = decayProcs(procs, 0.15)
 		}
 
-		// Slow RSS growth on surviving procs.
-		for j := range procs {
-			procs[j].RSSBytes += int64(rand.Intn(5 * model.MB))
-		}
-
 		// ── Build sessions ───────────────────────────────────
 		sessionMap := make(map[int][]collector.ProcessInfo)
 		for _, p := range procs {
@@ -325,33 +320,11 @@ func RunV2(ch chan<- collector.Snapshot, eventCh chan<- collector.GateEvent, int
 
 // ── Process helpers ───────────────────────────────────────────
 
-// makeProc creates a new ProcessInfo with type-appropriate RSS and CPU.
+// makeProc creates a new ProcessInfo of the given type.
 func makeProc(nextPID *int, ppid int, typeCode string) collector.ProcessInfo {
-	var rss int64
-	var cpu float64
-	switch typeCode {
-	case "N":
-		rss = int64(500+rand.Intn(1000)) * model.MB // 500MB-1.5GB
-		cpu = float64(10 + rand.Intn(20))
-	case "GO":
-		rss = int64(200+rand.Intn(600)) * model.MB // 200MB-800MB
-		cpu = float64(10 + rand.Intn(20))
-	case "T":
-		rss = int64(100+rand.Intn(300)) * model.MB // 100-400MB
-		cpu = float64(15 + rand.Intn(20))
-	case "B":
-		rss = int64(80+rand.Intn(200)) * model.MB // 80-280MB
-		cpu = float64(10 + rand.Intn(15))
-	default: // S, C, X — shells
-		rss = int64(5+rand.Intn(30)) * model.MB // 5-35MB
-		cpu = float64(rand.Intn(5))
-	}
-
 	p := collector.ProcessInfo{
 		PID:      *nextPID,
 		PPID:     ppid,
-		CPUPct:   cpu,
-		RSSBytes: rss,
 		Comm:     typeCodeToComm(typeCode),
 		TypeCode: typeCode,
 	}

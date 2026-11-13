@@ -13,8 +13,7 @@ const (
 	NetCheckTimeout = 3 * time.Second        // context deadline for network check
 	SysExecTimeout  = 2 * time.Second        // per-subprocess timeout (sysctl, vm_stat)
 	SysInitTimeout  = 5 * time.Second        // one-shot static sysctl init
-	ProcTimeout     = 3 * time.Second        // ps process tree collection
-	CollectTimeout  = 5 * time.Second        // overall fast-loop context deadline
+	CollectTimeout  = 5 * time.Second        // slow-loop context deadline
 	EventInterval   = 500 * time.Millisecond // JSONL event log poll rate
 )
 

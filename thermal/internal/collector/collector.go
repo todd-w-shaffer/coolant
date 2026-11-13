@@ -1,5 +1,6 @@
-// Package collector gathers system stats and Claude process trees
-// via cgo, subprocess calls, and JSONL event tailing.
+// Package collector gathers system stats and Claude process trees:
+// the fast loop via cgo kernel reads, the slow loop via subprocess
+// calls, and agent events via JSONL tailing.
 package collector
 
 import (
@@ -12,7 +13,7 @@ import (
 
 // ── Dependency injection for testability ───────────────────
 
-// FastCollector gathers CPU + process trees (no subprocesses for CPU).
+// FastCollector gathers CPU + process trees (no subprocesses).
 type FastCollector func(pc *ProcCollector) Snapshot
 
 // SlowCollector gathers swap/vm_stat/GPU via subprocesses.
@@ -38,7 +39,7 @@ func DefaultRunConfig() RunConfig {
 }
 
 // Run starts two decoupled collector loops:
-//   - Fast loop (interval): CPU (cgo, no subprocess) + procs — drives sparklines.
+//   - Fast loop (interval): CPU + procs (cgo, no subprocess) — drives sparklines.
 //   - Slow loop (1s): network reachability + swap/vm_stat/GPU (subprocess-heavy
 //     stats that change slowly). Cached results merge into each fast-loop Snapshot.
 //
@@ -104,7 +105,7 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 		byPID:    make(map[int]rawProc, 512),
 	}
 
-	// Fast loop: CPU (cgo) + procs
+	// Fast loop: CPU + procs (cgo)
 	fastTicker := time.NewTicker(interval)
 	defer fastTicker.Stop()
 
@@ -138,46 +139,15 @@ func RunWith(ch chan<- Snapshot, interval time.Duration, done <-chan struct{}, c
 	}
 }
 
-// collectFast gathers CPU stats (cgo, no subprocess) and process trees.
+// collectFast gathers CPU stats and process trees. Both are direct
+// kernel reads (cgo), no subprocesses.
 func collectFast(pc *ProcCollector) Snapshot {
-	ctx, cancel := context.WithTimeout(context.Background(), config.CollectTimeout)
-	defer cancel()
-	now := time.Now()
-
-	type procResult struct {
-		sessions []SessionTree
-		allProcs []ProcessInfo
-		err      error
-	}
-
-	procCh := make(chan procResult, 1)
-
-	go func() {
-		sessions, allProcs, err := pc.Collect(ctx)
-		procCh <- procResult{sessions, allProcs, err}
-	}()
-
-	// CPU collection is synchronous — it's a single cgo call, no subprocess
-	stats := CollectCPU()
-
 	snap := Snapshot{
-		Timestamp: now,
-		System:    stats,
+		Timestamp: time.Now(),
+		System:    CollectCPU(),
 	}
-
-	select {
-	case r := <-procCh:
-		if r.err == nil {
-			snap.Sessions = r.sessions
-			snap.AllProcs = r.allProcs
-			snap.DesktopRunning = pc.DesktopRunning
-			snap.ChromeHostRunning = pc.ChromeHostRunning
-		} else {
-			snap.CollectErrs = append(snap.CollectErrs, "procs: "+r.err.Error())
-		}
-	case <-ctx.Done():
-		return snap
-	}
-
+	snap.Sessions, snap.AllProcs = pc.Collect()
+	snap.DesktopRunning = pc.DesktopRunning
+	snap.ChromeHostRunning = pc.ChromeHostRunning
 	return snap
 }

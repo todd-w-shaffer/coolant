@@ -1,12 +1,8 @@
 package collector
 
 import (
-	"context"
-	"os/exec"
-	"strconv"
 	"strings"
-
-	"github.com/toddwshaffer/coolant/thermal/internal/config"
+	"time"
 )
 
 // commToType maps a process name to a single-char type code.
@@ -94,8 +90,6 @@ func classifyComm(comm string) string {
 type rawProc struct {
 	pid  int
 	ppid int
-	cpu  float64
-	rss  int64 // KB from ps
 	comm string
 }
 
@@ -108,6 +102,7 @@ type ProcCollector struct {
 	roots             []int           // reused backing slice
 	queue             []int           // BFS queue, reused
 	visited           map[int]bool    // BFS visited set, reused
+	lister            *procLister     // kernel process reader, created on first Collect
 	DesktopRunning    bool            // true when Claude Desktop main process is detected
 	ChromeHostRunning bool            // true when chrome-native-host (browser extension bridge) is detected
 }
@@ -125,32 +120,22 @@ func (pc *ProcCollector) clearMaps() {
 	}
 }
 
-// Collect finds all Claude root sessions and builds their descendant trees.
-// Reuses pre-allocated maps to avoid allocating every 150ms tick.
-func (pc *ProcCollector) Collect(ctx context.Context) ([]SessionTree, []ProcessInfo, error) {
-	ctx, cancel := context.WithTimeout(ctx, config.ProcTimeout)
-	defer cancel()
-
-	out, err := exec.CommandContext(ctx, "ps", "-Ao", "pid=,ppid=,pcpu=,rss=,comm=").Output()
-	if err != nil {
-		return nil, nil, err
+// Collect finds all Claude root sessions and builds their descendant trees
+// from a direct kernel read (procLister), reusing pre-allocated maps.
+func (pc *ProcCollector) Collect() ([]SessionTree, []ProcessInfo) {
+	if pc.lister == nil {
+		pc.lister = newProcLister(&sysProcs{}, time.Now)
 	}
-
-	return pc.buildTrees(out)
+	return pc.buildTrees(pc.lister.list())
 }
 
-// buildTrees parses ps output and builds session trees.
+// buildTrees builds session trees from a process list.
 // Separated from Collect so it can be tested with synthetic input.
-func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessInfo, error) {
+func (pc *ProcCollector) buildTrees(procs []rawProc) ([]SessionTree, []ProcessInfo) {
 	pc.clearMaps()
 
-	// Parse into raw process list and build parent→children map
-	for _, line := range strings.Split(string(psOutput), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		p := parseProcessLine(line)
+	// Build the parent→children map
+	for _, p := range procs {
 		if p.pid == 0 {
 			continue
 		}
@@ -212,8 +197,6 @@ func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessIn
 					pi := ProcessInfo{
 						PID:      child.pid,
 						PPID:     child.ppid,
-						CPUPct:   child.cpu,
-						RSSBytes: child.rss * 1024, // KB → bytes
 						Comm:     basename(child.comm),
 						TypeCode: classifyComm(child.comm),
 					}
@@ -230,22 +213,7 @@ func (pc *ProcCollector) buildTrees(psOutput []byte) ([]SessionTree, []ProcessIn
 		})
 	}
 
-	return sessions, flatProcs, nil
-}
-
-// parseProcessLine parses one line of "ps -Ao pid=,ppid=,pcpu=,rss=,comm=" output.
-func parseProcessLine(line string) rawProc {
-	fields := strings.Fields(line)
-	if len(fields) < 5 {
-		return rawProc{}
-	}
-	pid, _ := strconv.Atoi(fields[0])
-	ppid, _ := strconv.Atoi(fields[1])
-	cpu, _ := strconv.ParseFloat(fields[2], 64)
-	rss, _ := strconv.ParseInt(fields[3], 10, 64)
-	// comm may contain spaces if it's a path; take everything after field 4
-	comm := strings.Join(fields[4:], " ")
-	return rawProc{pid: pid, ppid: ppid, cpu: cpu, rss: rss, comm: comm}
+	return sessions, flatProcs
 }
 
 func basename(path string) string {

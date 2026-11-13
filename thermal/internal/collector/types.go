@@ -43,8 +43,6 @@ func (s *SystemStats) MemPercent() float64 {
 type ProcessInfo struct {
 	PID      int
 	PPID     int
-	CPUPct   float64
-	RSSBytes int64
 	Comm     string // short name: "node", "vitest", etc.
 	TypeCode string // single char: N, V, T, etc.
 }
@@ -66,7 +64,6 @@ type Snapshot struct {
 	ChromeHostRunning bool          // chrome-native-host (browser extension bridge) detected
 	Timestamp         time.Time
 	SlowAge           time.Duration // time since last successful slow-loop collection
-	CollectErrs       []string      // non-nil when collection partially failed
 }
 
 // Category represents a process-based grouping visible in the dashboard.

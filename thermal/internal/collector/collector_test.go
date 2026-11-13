@@ -93,35 +93,6 @@ func TestRunWith_MergesSlowStats(t *testing.T) {
 	close(done)
 }
 
-func TestRunWith_CollectErrsFlowThrough(t *testing.T) {
-	snapCh := make(chan Snapshot, 16)
-	done := make(chan struct{})
-
-	cfg := RunConfig{
-		FastCollect: func(pc *ProcCollector) Snapshot {
-			return Snapshot{Timestamp: time.Now(), CollectErrs: []string{"procs: timeout"}}
-		},
-		SlowCollect: fakeSlow(0),
-		NetCheck:    fakeNet(true),
-	}
-
-	go RunWith(snapCh, 10*time.Millisecond, done, cfg)
-
-	timeout := time.After(200 * time.Millisecond)
-	select {
-	case s, ok := <-snapCh:
-		if !ok {
-			t.Fatal("snapCh closed unexpectedly")
-		}
-		if len(s.CollectErrs) == 0 {
-			t.Error("expected CollectErrs to be populated")
-		}
-	case <-timeout:
-		t.Fatal("timed out waiting for snapshot")
-	}
-	close(done)
-}
-
 func TestRunWith_TracksSlowAge(t *testing.T) {
 	snapCh := make(chan Snapshot, 16)
 	done := make(chan struct{})
